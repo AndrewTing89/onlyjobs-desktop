@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OnlyJobs - OAuth Callback</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 400px;
+        }
+        h1 {
+            color: #FF7043;
+            margin-bottom: 20px;
+        }
+        .message {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        .error {
+            color: #d32f2f;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #FF7043;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>💼 OnlyJobs</h1>
+        <div id="content">
+            <div class="spinner"></div>
+            <p class="message">Processing authentication...</p>
+        </div>
+    </div>
+
+    <script>
+        // This page will be hosted on your web server
+        // It receives the OAuth callback and redirects to the Electron app
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        const hashParams = new URLSearchParams(window.location.hash.substring(1));
+        
+        // Check for Firebase auth response
+        const error = urlParams.get('error') || hashParams.get('error');
+        const code = urlParams.get('code') || hashParams.get('code');
+        const state = urlParams.get('state') || hashParams.get('state');
+        
+        // Check if we're in Firebase auth handler mode
+        const isFirebaseAuth = window.location.pathname.includes('/__/auth/handler');
+        
+        if (error) {
+            document.getElementById('content').innerHTML = `
+                <p class="error">Authentication failed: ${error}</p>
+                <p class="message">Please close this window and try again.</p>
+            `;
+        } else if (isFirebaseAuth) {
+            // Firebase will handle the auth automatically
+            document.getElementById('content').innerHTML = `
+                <p class="message">Completing authentication with Firebase...</p>
+                <p class="message">You can close this window once signed in.</p>
+            `;
+        } else if (code || state) {
+            // Redirect to Electron app with OAuth data
+            const redirectUrl = `onlyjobs://oauth-callback?code=${code}&state=${state}`;
+            
+            document.getElementById('content').innerHTML = `
+                <p class="message">Authentication successful!</p>
+                <p class="message">Redirecting to OnlyJobs Desktop...</p>
+            `;
+            
+            // Redirect after a short delay
+            setTimeout(() => {
+                window.location.href = redirectUrl;
+            }, 1000);
+        } else {
+            document.getElementById('content').innerHTML = `
+                <p class="error">No authentication data received.</p>
+                <p class="message">Please close this window and try again.</p>
+            `;
+        }
+    </script>
+</body>
+</html>

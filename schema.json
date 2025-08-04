@@ -1,0 +1,97 @@
+{
+  "clustering": {
+    "fields": [
+      "user_id"
+    ]
+  },
+  "creationTime": "1752170542773",
+  "etag": "Cl0BDzZ4+KofEzkGp5c+zg==",
+  "id": "onlyjobs-465420:user_data.job_applications",
+  "kind": "bigquery#table",
+  "lastModifiedTime": "1753159029360",
+  "location": "US",
+  "numActiveLogicalBytes": "1209",
+  "numActivePhysicalBytes": "9638",
+  "numBytes": "1209",
+  "numCurrentPhysicalBytes": "9638",
+  "numLongTermBytes": "0",
+  "numLongTermLogicalBytes": "0",
+  "numLongTermPhysicalBytes": "0",
+  "numPartitions": "3",
+  "numRows": "5",
+  "numTimeTravelPhysicalBytes": "0",
+  "numTotalLogicalBytes": "1209",
+  "numTotalPhysicalBytes": "9638",
+  "partitionDefinition": {
+    "partitionedColumn": [
+      {
+        "field": "inserted_at"
+      }
+    ]
+  },
+  "schema": {
+    "fields": [
+      {
+        "mode": "NULLABLE",
+        "name": "user_id",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "email_id",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "company",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "job_title",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "location",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "status",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "date",
+        "type": "DATE"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "inserted_at",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "raw_email_content",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "email_date",
+        "type": "DATE"
+      }
+    ]
+  },
+  "selfLink": "https://bigquery.googleapis.com/bigquery/v2/projects/onlyjobs-465420/datasets/user_data/tables/job_applications",
+  "tableReference": {
+    "datasetId": "user_data",
+    "projectId": "onlyjobs-465420",
+    "tableId": "job_applications"
+  },
+  "timePartitioning": {
+    "field": "inserted_at",
+    "type": "DAY"
+  },
+  "type": "TABLE"
+}

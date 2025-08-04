@@ -1,0 +1,132 @@
+# Dependencies
+node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output
+
+# Production builds
+build/
+dist/
+out/
+
+# Development
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+electron/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Electron
+electron-builder.yml
+release/
+
+# Firebase
+.firebase/
+.firebaserc
+firebase-debug.log
+firestore-debug.log
+firebase-admin-key.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+*.egg-info/
+.ipynb_checkpoints/
+
+# ML Model data (keep models but not raw data)
+ml-classifier/data/raw/
+ml-classifier/data/processed/
+*.csv
+!ml-classifier/data/models/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+tmp/
+
+# Test files
+test-*.js
+debug-*.js
+fix-*.js
+reset-*.js
+*.test.js
+*.spec.js
+
+# Personal/sensitive data
+gmail_credentials.json
+*_credentials.json
+tokens.json
+*.pem
+*.key
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+!deployments.ipynb
+
+# Documentation drafts
+IMPLEMENTATION_PLAN.md
+MIGRATION_PLAN.md
+PROCESSING_STRATEGY.md
+*_GUIDE.md
+*_EXPLANATION.md
+*_FIX*.md
+SETUP_*.md
+TESTING_*.md
+OAUTH_*.md
+GOOGLE_*.md
+FIREBASE_*.md
+SIMPLE_*.md
+
+# Misc
+.Rhistory
+.claude/
+ml-classifier/config/gmail_credentials.json
+
+# Backend/Frontend specific (not needed for desktop)
+backend/
+frontend/
+functions/
