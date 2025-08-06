@@ -1,0 +1,95 @@
+{
+  "job_applications": {
+    "description": "Enhanced job applications table with email threading",
+    "fields": [
+      {
+        "name": "job_id",
+        "type": "STRING",
+        "mode": "REQUIRED",
+        "description": "Unique identifier for the job application"
+      },
+      {
+        "name": "user_id",
+        "type": "STRING",
+        "mode": "REQUIRED"
+      },
+      {
+        "name": "thread_id",
+        "type": "STRING",
+        "mode": "NULLABLE",
+        "description": "Gmail thread ID to group related emails"
+      },
+      {
+        "name": "company",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "company_domain",
+        "type": "STRING",
+        "mode": "NULLABLE",
+        "description": "Extracted domain for better matching"
+      },
+      {
+        "name": "job_title",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "normalized_job_title",
+        "type": "STRING",
+        "mode": "NULLABLE",
+        "description": "Standardized job title for matching"
+      },
+      {
+        "name": "location",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "status",
+        "type": "STRING",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "status_history",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {"name": "status", "type": "STRING"},
+          {"name": "date", "type": "TIMESTAMP"},
+          {"name": "email_id", "type": "STRING"}
+        ]
+      },
+      {
+        "name": "first_contact_date",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "last_contact_date",
+        "type": "TIMESTAMP",
+        "mode": "NULLABLE"
+      },
+      {
+        "name": "email_count",
+        "type": "INTEGER",
+        "mode": "NULLABLE",
+        "default": "1"
+      },
+      {
+        "name": "emails",
+        "type": "RECORD",
+        "mode": "REPEATED",
+        "fields": [
+          {"name": "email_id", "type": "STRING"},
+          {"name": "subject", "type": "STRING"},
+          {"name": "date", "type": "TIMESTAMP"},
+          {"name": "from_address", "type": "STRING"},
+          {"name": "detected_status", "type": "STRING"},
+          {"name": "content_snippet", "type": "STRING"}
+        ]
+      }
+    ]
+  }
+}

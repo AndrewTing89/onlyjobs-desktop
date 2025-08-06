@@ -261,6 +261,11 @@ export default function GmailConnectionElectron() {
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Connect your Gmail account to automatically import and track job applications from your emails.
               </Typography>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                <Typography variant="body2">
+                  <strong>Note:</strong> This is separate from your OnlyJobs login. You'll need to authorize Gmail access even if you logged in with Google.
+                </Typography>
+              </Alert>
               <Button
                 variant="contained"
                 startIcon={<Link />}

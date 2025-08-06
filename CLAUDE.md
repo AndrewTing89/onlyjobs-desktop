@@ -4,86 +4,76 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OnlyJobs is an AI-powered job application tracking system with a React frontend and Google Cloud Platform backend. It automatically syncs with Gmail, uses AI to classify job applications, and provides real-time analytics.
+OnlyJobs is an AI-powered job application tracking desktop application built with Electron, React, and TypeScript. It automatically syncs with Gmail, uses local ML models to classify job applications, and provides real-time analytics.
 
 ## Common Development Commands
 
-### Frontend Development
+### Development
 ```bash
-cd frontend
 npm install                 # Install dependencies
-npm start                   # Start dev server on http://localhost:3000
+npm start                   # Start React dev server on http://localhost:3000
+npm run electron-dev       # Start Electron in development mode (run in separate terminal)
 npm run build              # Production build
 npm test                   # Run tests
 ```
 
-### Backend Development
+### Building Distributable
 ```bash
-cd backend
-pip install -r requirements.txt    # Install Python dependencies
-
-# Run services locally
-cd services/process_emails
-python main.py
-
-# Run tests
-python -m pytest tests/
-```
-
-### Deployment
-```bash
-# Use automated deployment notebook
-jupyter notebook deployments.ipynb
-
-# Or manual deployment
-gcloud run deploy process-emails --source backend/services/process_emails
-firebase deploy    # Deploy frontend
+npm run electron-dist      # Build and package Electron app
+npm run dist              # Build without publishing
 ```
 
 ## High-Level Architecture
 
-### Frontend Architecture
-- **Single Page Application**: React 19 + TypeScript
-- **State Management**: React Context API for authentication
-- **Routing**: React Router v7 with protected routes
-- **UI Components**: Material-UI v7 + Chakra UI hybrid approach
-- **Data Fetching**: Custom hooks with Firebase Firestore real-time listeners
-- **Authentication**: Firebase Auth with email/password and OAuth
+### Desktop Application Architecture
+- **Electron Main Process**: Handles OAuth flows, Gmail API, ML classification
+- **React Frontend**: Single Page Application with TypeScript
+- **Authentication**: Hybrid approach:
+  - AppAuth-JS for Gmail OAuth 2.0 flow (to access Gmail API)
+  - Firebase Auth for user authentication (login/signup)
+- **Local ML Classifier**: Python-based email classification running locally
+- **Data Storage**: Local SQLite database (via better-sqlite3)
 
-### Backend Architecture
-- **Microservices**: Deployed as separate Cloud Run services
-- **Event-Driven**: Gmail → Pub/Sub → AI Processing → Storage
-- **AI Processing**: Vertex AI (Gemini 2.5 Flash) for email classification
-- **Data Storage**: 
-  - BigQuery for analytics and historical data
-  - Firestore for real-time user data and quick access
-- **Data Pipeline**: dbt for transformations in BigQuery
+### Key Components
+1. **Electron Main Process** (`electron/main.js`):
+   - Manages app lifecycle and windows
+   - Handles IPC communication with renderer
+   - Manages OAuth flows via AppAuth-JS
 
-### Key Service Boundaries
-1. **Gmail Fetch Service**: OAuth token management, periodic email fetching
-2. **Email Processing Service**: AI classification, data extraction, storage
-3. **dbt Trigger Function**: Scheduled data transformations
-4. **Frontend API**: Direct Firestore access via Firebase SDK
+2. **Gmail Integration** (`electron/gmail-multi-auth.js`):
+   - Multi-account Gmail support
+   - OAuth token management using AppAuth-JS
+   - Email fetching and parsing
+
+3. **ML Classification** (`ml-classifier/`):
+   - Local Python model for job email classification
+   - Invoked via python-shell from Electron
+   - Pre-trained model included in distribution
+
+4. **React Frontend** (`src/`):
+   - Material-UI v7 + Chakra UI components
+   - React Router v7 for navigation
+   - Context API for state management
 
 ## Important Development Patterns
 
 ### Frontend Patterns
-- Components in `frontend/src/components/` should be reusable and typed
-- Pages in `frontend/src/pages/` handle routing and data fetching
-- Services in `frontend/src/services/` wrap Firebase operations
-- All TypeScript types defined in `frontend/src/types/`
+- Components in `src/components/` should be reusable and typed
+- Pages in `src/pages/` handle routing and data fetching
+- Services in `src/services/` handle API calls and Firebase operations
+- All TypeScript types defined in `src/types/`
 - Authentication state managed via AuthContext
 
-### Backend Patterns
-- Each service has its own directory under `backend/services/`
-- Cloud Functions in `backend/functions/` handle specific tasks
-- Environment variables managed through Google Cloud Console
-- All services containerized with Dockerfile
+### Electron Patterns
+- IPC handlers in `electron/ipc-handlers.js`
+- OAuth flows handled by `electron/auth-flow.js` using AppAuth-JS
+- Gmail operations in `electron/gmail-multi-auth.js`
+- ML processing via `electron/ml-handler.js`
 
 ### Data Schema
 - Job application schema defined in `schema.json`
-- BigQuery tables follow naming convention: `onlyjobs.core.*`
-- Firestore collections: `users/{userId}/jobs`, `users/{userId}/settings`
+- Local SQLite database for job data storage
+- Gmail tokens stored securely via electron-store
 
 ## Testing Approach
 - Frontend: Jest + React Testing Library (run with `npm test`)

@@ -165,7 +165,7 @@ export default function LoginPage() {
                     }
                   }}
                 >
-                  {loading ? <CircularProgress size={24} /> : "[FIREBASE] Continue with Google"}
+                  {loading ? <CircularProgress size={24} /> : "Continue with Google"}
                 </Button>
                 
                 <Divider sx={{ my: 3 }}>
@@ -199,7 +199,7 @@ export default function LoginPage() {
                   }
                 }}
               >
-                {loading ? <CircularProgress size={24} /> : "[FIREBASE] Continue with Google"}
+                {loading ? <CircularProgress size={24} /> : "Continue with Google"}
               </Button>
             )}
 

@@ -31,8 +31,24 @@ class GmailMultiAuth extends EventEmitter {
     super();
     
     // Initialize database
-    const dbPath = path.join(os.homedir(), 'Library', 'Application Support', 'onlyjobs-desktop', 'jobs.db');
-    this.db = new Database(dbPath);
+    try {
+      const appDir = path.join(os.homedir(), 'Library', 'Application Support', 'onlyjobs-desktop');
+      const dbPath = path.join(appDir, 'jobs.db');
+      
+      // Ensure directory exists
+      const fs = require('fs');
+      if (!fs.existsSync(appDir)) {
+        fs.mkdirSync(appDir, { recursive: true });
+        console.log('GmailMultiAuth: Created app directory:', appDir);
+      }
+      
+      console.log('GmailMultiAuth: Initializing database at:', dbPath);
+      this.db = new Database(dbPath);
+      console.log('GmailMultiAuth: Database initialized successfully');
+    } catch (error) {
+      console.error('GmailMultiAuth: Failed to initialize database:', error);
+      throw error;
+    }
     
     // Gmail OAuth configuration
     this.clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || '12002195951-6s2kd59s10acoh6bb43fq2dif0m5volv.apps.googleusercontent.com';

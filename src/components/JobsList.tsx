@@ -269,6 +269,7 @@ export default function JobsList() {
                         )}
                       </Box>
                     }
+                    secondaryTypographyProps={{ component: 'div' }}
                     secondary={
                       <Box sx={{ mt: 1.5 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>

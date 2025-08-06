@@ -129,6 +129,7 @@ function fallbackClassifier(content) {
 const ElectronAuthFlow = require('./auth-flow');
 const GmailAuth = require('./gmail-auth');
 const GmailMultiAuth = require('./gmail-multi-auth');
+const IntegratedEmailProcessor = require('./integrated-email-processor');
 
 console.log('Loading IPC handlers...');
 
@@ -608,6 +609,8 @@ try {
   console.log('Gmail multi-auth initialized successfully');
 } catch (error) {
   console.error('Failed to initialize Gmail multi-auth:', error);
+  console.error('Full error details:', error.stack);
+  // Don't set gmailMultiAuth to prevent undefined errors
 }
 
 // Listen for Gmail auth events
@@ -1576,6 +1579,20 @@ ipcMain.handle('gmail:get-accounts', async () => {
 ipcMain.handle('gmail:add-account', async () => {
   try {
     console.log('IPC: gmail:add-account called');
+    
+    if (!gmailMultiAuth) {
+      console.error('GmailMultiAuth is not initialized!');
+      // Try to initialize it now
+      try {
+        const GmailMultiAuth = require('./gmail-multi-auth');
+        gmailMultiAuth = new GmailMultiAuth();
+        console.log('GmailMultiAuth initialized on demand');
+      } catch (initError) {
+        console.error('Failed to initialize GmailMultiAuth:', initError);
+        throw new Error('Gmail multi-account support not available. Please check the logs.');
+      }
+    }
+    
     const account = await gmailMultiAuth.addAccount();
     console.log('IPC: Gmail account added:', account.email);
     return { success: true, account };
