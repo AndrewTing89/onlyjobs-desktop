@@ -10,7 +10,9 @@ const Database = require('better-sqlite3');
 class IntegratedEmailProcessor {
   constructor(gmailAuth, mlHandler) {
     this.gmailAuth = gmailAuth;
-    this.mlHandler = mlHandler;
+    // Use enhanced ML handler if available
+    const EnhancedMLHandler = require('./enhanced-ml-handler');
+    this.mlHandler = mlHandler || new EnhancedMLHandler();
     this.emailMatcher = new EmailMatcher();
     
     // Initialize job summary database
@@ -34,12 +36,12 @@ class IntegratedEmailProcessor {
         // Extract email data
         const emailData = this.extractEmailData(message);
         
-        // Classify email
-        const classification = await this.mlHandler.classifyEmail({
-          subject: emailData.subject,
-          content: emailData.content,
-          from: emailData.from
-        });
+        // Classify email - Enhanced ML handler expects different parameters
+        const classification = await this.mlHandler.classifyEmail(
+          emailData.content,
+          emailData.subject,
+          emailData.from
+        );
 
         // Skip if not job-related
         if (!classification.is_job_related || classification.confidence < 0.6) {
@@ -51,9 +53,9 @@ class IntegratedEmailProcessor {
           emailData,
           {
             company: classification.company || this.extractCompanyFromEmail(emailData),
-            job_title: classification.job_title || this.extractJobTitleFromSubject(emailData.subject),
+            job_title: classification.position || classification.job_title || this.extractJobTitleFromSubject(emailData.subject),
             location: classification.location,
-            status: this.detectStatus(emailData, classification),
+            status: classification.job_type || this.detectStatus(emailData, classification),
             confidence: classification.confidence
           }
         );

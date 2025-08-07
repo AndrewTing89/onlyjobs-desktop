@@ -158,7 +158,22 @@ function getDb() {
 // Initialize database schema
 function initializeDatabase() {
   getDb().exec(`
-    -- Raw emails table (new)
+    -- Gmail accounts table for multi-account support
+    CREATE TABLE IF NOT EXISTS gmail_accounts (
+      id TEXT,
+      email TEXT PRIMARY KEY,
+      display_name TEXT,
+      access_token TEXT,
+      refresh_token TEXT,
+      token_expiry TIMESTAMP,
+      sync_enabled BOOLEAN DEFAULT 1,
+      is_active BOOLEAN DEFAULT 1,
+      last_sync TIMESTAMP,
+      connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Raw emails table (enhanced)
     CREATE TABLE IF NOT EXISTS emails (
       id TEXT PRIMARY KEY,
       gmail_message_id TEXT UNIQUE NOT NULL,
@@ -168,6 +183,8 @@ function initializeDatabase() {
       date DATE,
       snippet TEXT,
       raw_content TEXT,
+      account_email TEXT,  -- Added for multi-account support
+      internal_date TEXT,  -- Added for Gmail internal date
       fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       
       -- Classification fields
@@ -200,6 +217,13 @@ function initializeDatabase() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Email sync tracking table
+    CREATE TABLE IF NOT EXISTS email_sync (
+      gmail_message_id TEXT PRIMARY KEY,
+      processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      is_job_related BOOLEAN DEFAULT 0
+    );
+
     -- Sync status
     CREATE TABLE IF NOT EXISTS sync_status (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -216,16 +240,13 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_emails_job_related ON emails(is_job_related);
     CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date);
     CREATE INDEX IF NOT EXISTS idx_emails_gmail_id ON emails(gmail_message_id);
+    CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_email);
     CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_email_id ON jobs(email_id);
 
     -- Initialize sync status if not exists
     INSERT OR IGNORE INTO sync_status (id) VALUES (1);
-    
-    -- Migrate existing data if needed
-    -- Check if email_sync table exists and migrate
-    SELECT name FROM sqlite_master WHERE type='table' AND name='email_sync';
   `);
 }
 

@@ -103,8 +103,14 @@ class GmailMultiAuth extends EventEmitter {
   
   // Get all connected accounts
   getAllAccounts() {
-    const stmt = this.db.prepare('SELECT * FROM gmail_accounts WHERE is_active = 1 ORDER BY connected_at DESC');
-    return stmt.all();
+    try {
+      const stmt = this.db.prepare('SELECT * FROM gmail_accounts WHERE is_active = 1 ORDER BY connected_at DESC');
+      return stmt.all();
+    } catch (error) {
+      console.error('GmailMultiAuth: Error getting accounts:', error);
+      // Return empty array if table doesn't exist yet
+      return [];
+    }
   }
   
   // Get specific account
@@ -134,9 +140,13 @@ class GmailMultiAuth extends EventEmitter {
   
   // Remove account
   removeAccount(email) {
-    const stmt = this.db.prepare('UPDATE gmail_accounts SET is_active = 0 WHERE email = ?');
-    stmt.run(email);
-    this.oauthClients.delete(email);
+    try {
+      const stmt = this.db.prepare('UPDATE gmail_accounts SET is_active = 0 WHERE email = ?');
+      stmt.run(email);
+      this.oauthClients.delete(email);
+    } catch (error) {
+      console.error('GmailMultiAuth: Error removing account:', error);
+    }
   }
   
   // Add new Gmail account
