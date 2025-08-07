@@ -26,10 +26,12 @@ An AI-powered job application tracking desktop app that automatically syncs with
 
 ## Installation
 
-1. Clone the repository:
+1. Clone the repository (including the ML classifier submodule):
 ```bash
-git clone https://github.com/yourusername/onlyjobs-desktop.git
+git clone --recurse-submodules https://github.com/yourusername/onlyjobs-desktop.git
 cd onlyjobs-desktop
+# if you already cloned without submodules
+git submodule update --init --recursive
 ```
 
 2. Install dependencies:
@@ -37,28 +39,28 @@ cd onlyjobs-desktop
 npm install
 ```
 
-3. Install Python dependencies for ML classifier:
+3. Install Python dependencies for the ML classifier:
 ```bash
 cd ml-classifier
 pip install -r requirements.txt
 cd ..
 ```
 
-4. Set up Google OAuth credentials:
-   - Go to [Google Cloud Console](https://console.cloud.google.com)
-   - Create a new project or select existing
-   - Enable Gmail API
-   - Create OAuth 2.0 credentials (Desktop application type)
-   - Add redirect URIs:
-     - `http://127.0.0.1:8000`
-     - `http://127.0.0.1:8001`
-   - Download credentials and save as `gmail_credentials.json` in project root
+4. Add configuration files:
+   - Place `gmail_credentials.json` in the project root (downloaded from Google Cloud Console).
+   - Create a `.env` file in the project root with values for:
+     - `GOOGLE_CLIENT_ID`
+     - `GOOGLE_CLIENT_SECRET`
+     - `GOOGLE_REDIRECT_URI`
+     - any `REACT_APP_*` Firebase variables required by the React app
+   - Create `electron/.env` with:
+     - `GOOGLE_OAUTH_CLIENT_ID`
+     - `GOOGLE_OAUTH_CLIENT_SECRET`
+     - `GOOGLE_OAUTH_REDIRECT_URI`
 
-5. Create `.env` file in project root:
-```env
-GOOGLE_CLIENT_ID=your_client_id
-GOOGLE_CLIENT_SECRET=your_client_secret
-GOOGLE_REDIRECT_URI=http://127.0.0.1:8000
+5. (Optional) Run the setup script to install all dependencies automatically:
+```bash
+bash setup.sh
 ```
 
 ## Running the App
@@ -83,6 +85,14 @@ npm run build
 
 # Package Electron app
 npm run electron-pack
+```
+
+## Testing
+
+Run the Jest test suite:
+
+```bash
+npm test
 ```
 
 ## Project Structure
@@ -175,3 +185,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - ML classifier model provided by contributor
 - Built with Electron and React
 - Gmail API integration powered by Google APIs
+
