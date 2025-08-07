@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Email classification
   classifyEmail: (content) => ipcRenderer.invoke('classify-email', content),
+
+  // LLM parsing
+  parseEmail: (payload) => ipcRenderer.invoke('onlyjobs.parseEmail', payload),
   
   // ML Model operations
   getMlStatus: () => ipcRenderer.invoke('ml:get-status'),

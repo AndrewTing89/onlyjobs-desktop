@@ -1,5 +1,11 @@
 const { app, BrowserWindow, ipcMain, Menu, Tray, shell, dialog, protocol } = require('electron');
 const path = require('path');
+// Allow requiring TypeScript files in Electron main process (development/runtime)
+try {
+  require('ts-node/register/transpile-only');
+} catch (e) {
+  // ts-node may not be installed in packaged builds; that's OK
+}
 const isDev = process.env.NODE_ENV === 'development';
 
 // Enable live reload for Electron
@@ -254,6 +260,12 @@ function createMenu() {
 
 // Load IPC handlers before app is ready
 require('./ipc-handlers');
+// Register LLM parse IPC (TypeScript)
+try {
+  require('./ipc/parseEmail.ts');
+} catch (e) {
+  console.warn('LLM IPC registration skipped:', e?.message || e);
+}
 
 // App event handlers
 app.whenReady().then(() => {

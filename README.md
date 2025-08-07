@@ -95,6 +95,18 @@ Run the Jest test suite:
 npm test
 ```
 
+## Local LLM Setup
+
+- Model: place a 3B Q4 GGUF model at `./models/model.gguf` (e.g., `Llama-3.2-3B-Instruct-Q4_K_M.gguf`).
+- Environment variables (optional):
+  - `ONLYJOBS_MODEL_PATH` (default `./models/model.gguf`)
+  - `ONLYJOBS_TEMPERATURE` (default `0.2`)
+  - `ONLYJOBS_MAX_TOKENS` (default `256`)
+  - `ONLYJOBS_CTX` (default `2048`)
+  - `ONLYJOBS_N_GPU_LAYERS` (default `0`)
+- Install deps: `npm run llm:deps`
+- Run manual test: `npm run llm:test`
+
 ## Project Structure
 
 ```
