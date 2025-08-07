@@ -14,7 +14,8 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "llm:deps": "npm i node-llama-cpp ts-node vitest @types/node",
-    "llm:test": "ts-node ./electron/llm/manualTest.ts"
+    "llm:test": "ts-node ./electron/llm/manualTest.ts",
+    "llm:download": "ts-node ./electron/llm/downloadModel.ts"
   },
   "repository": {
     "type": "git",

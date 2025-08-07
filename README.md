@@ -105,7 +105,10 @@ npm test
   - `ONLYJOBS_CTX` (default `2048`)
   - `ONLYJOBS_N_GPU_LAYERS` (default `0`)
 - Install deps: `npm run llm:deps`
-- Run manual test: `npm run llm:test`
+- Download model automatically:
+  - `npm run llm:download`
+  - Saves to `./models/model.gguf`. Skip occurs if file exists and size matches the remote.
+- Run manual test after download: `npm run llm:test` (prints strict JSON)
 
 ## Project Structure
 
