@@ -110,6 +110,16 @@ npm test
   - Saves to `./models/model.gguf`. Skip occurs if file exists and size matches the remote.
 - Run manual test after download: `npm run llm:test` (prints strict JSON)
 
+### Run the Gmail → LLM script
+
+- Fetch and parse your most recent emails locally using the LLM:
+  - `npm run gmail:llm` (defaults to `--limit=20`)
+  - `npm run gmail:llm -- --limit=5 --save` to write results into the local SQLite DB
+- Storage mapping when `--save` is used:
+  - `emails.gmail_message_id` = Gmail message ID
+  - `emails.subject`, `emails.raw_content`
+  - Extracted `company_extracted`, `position_extracted`, `is_job_related`, `job_type`
+
 ## Project Structure
 
 ```

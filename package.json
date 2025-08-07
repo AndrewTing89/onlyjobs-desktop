@@ -15,7 +15,8 @@
     "eject": "react-scripts eject",
     "llm:deps": "npm i node-llama-cpp ts-node vitest @types/node",
     "llm:test": "ts-node ./electron/llm/manualTest.ts",
-    "llm:download": "ts-node ./electron/llm/downloadModel.ts"
+    "llm:download": "ts-node ./electron/llm/downloadModel.ts",
+    "gmail:llm": "ts-node ./electron/gmail/runLLMOnRecent.ts"
   },
   "repository": {
     "type": "git",
