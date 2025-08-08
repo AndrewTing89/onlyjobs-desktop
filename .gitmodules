@@ -1,3 +1,0 @@
-[submodule "ml-classifier"]
-	path = ml-classifier
-	url = https://github.com/zichengalexzhao/onlyjobs-classfication.git

@@ -94,7 +94,7 @@ function createWindow() {
 // Create system tray
 function createTray() {
   try {
-    const iconPath = path.join(__dirname, '..', 'assets', 'tray-icon.png');
+    const iconPath = path.join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'assets', 'tray-icon.png');
     
     // Skip tray if icon doesn't exist
     const fs = require('fs');

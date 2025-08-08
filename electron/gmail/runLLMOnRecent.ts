@@ -17,7 +17,7 @@ import { getStatusHint } from "../llm/rules";
 import { ApplicationLinker } from "../llm/linker/service";
 
 function parseArgs(argv: string[]) {
-  const args = { limit: 20, save: false } as { limit: number; save: boolean };
+  const args = { limit: 50, save: false } as { limit: number; save: boolean };
   for (const token of argv.slice(2)) {
     if (token.startsWith("--limit=")) {
       const n = Number(token.split("=")[1]);

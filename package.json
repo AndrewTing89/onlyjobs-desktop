@@ -13,15 +13,16 @@
     "dist": "npm run build && electron-builder --publish=never",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "llm:deps": "npm i node-llama-cpp ts-node vitest @types/node",
-    "llm:test": "ts-node ./electron/llm/manualTest.ts",
+    "llm:deps": "npm i node-llama-cpp --legacy-peer-deps",
+    "llm:test": "tsx electron/llm/manualTest.ts",
     "llm:download": "tsx electron/llm/downloadModel.ts",
     "gmail:llm": "tsx electron/gmail/runLLMOnRecent.ts",
     "llm:evaluate": "tsx scripts/evaluateLLM.ts",
     "llm:labels": "tsx scripts/exportLabelsTemplate.ts",
     "db:inspect": "tsx scripts/dbInspect.ts",
     "apps:backfill": "tsx scripts/backfillApplications.ts",
-    "sync:jobs": "tsx electron/gmail/runLLMOnRecent.ts --limit=30 --save"
+    "sync:jobs": "tsx electron/gmail/runLLMOnRecent.ts --limit=50 --save",
+    "dev": "TS_NODE_TRANSPILE_ONLY=1 electron -r ts-node/register/transpile-only ./electron/main.js"
   },
   "repository": {
     "type": "git",
