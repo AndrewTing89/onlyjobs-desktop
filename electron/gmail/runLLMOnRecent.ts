@@ -7,6 +7,7 @@
 import path from "path";
 import fs from "fs";
 import Database from "better-sqlite3";
+// @ts-ignore - local build lacks type declarations for 'html-to-text'
 import { convert } from "html-to-text";
 import { parseEmailWithLLM } from "../llm/llmEngine";
 
