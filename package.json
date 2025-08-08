@@ -15,10 +15,12 @@
     "eject": "react-scripts eject",
     "llm:deps": "npm i node-llama-cpp ts-node vitest @types/node",
     "llm:test": "ts-node ./electron/llm/manualTest.ts",
-    "llm:download": "ts-node ./electron/llm/downloadModel.ts",
+    "llm:download": "tsx electron/llm/downloadModel.ts",
     "gmail:llm": "tsx electron/gmail/runLLMOnRecent.ts",
     "llm:evaluate": "tsx scripts/evaluateLLM.ts",
-    "llm:labels": "node ./scripts/exportLabelsTemplate.js"
+    "llm:labels": "tsx scripts/exportLabelsTemplate.ts",
+    "db:inspect": "tsx scripts/dbInspect.ts",
+    "apps:backfill": "tsx scripts/backfillApplications.ts"
   },
   "repository": {
     "type": "git",

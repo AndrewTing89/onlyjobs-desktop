@@ -1,16 +1,20 @@
 /*
- Run recent Gmail messages through local LLM and optionally store results.
+ Run recent Gmail messages through local LLM and store only job-related results.
  Usage:
    npm run gmail:llm -- --limit=5 --save
 */
 
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import Database from "better-sqlite3";
 // @ts-ignore - local build lacks type declarations for 'html-to-text'
 import { convert } from "html-to-text";
 import { parseEmailWithLLM } from "../llm/llmEngine";
-// Reuse existing Gmail client (CommonJS module) via dynamic import for ESM compatibility
+import { getDbPath, PROMPT_VERSION, MODEL_NAME } from "../llm/config";
+import { initNewSchema } from "../../scripts/initNewSchema";
+import { getStatusHint } from "../llm/rules";
+import { ApplicationLinker } from "../llm/linker/service";
 
 function parseArgs(argv: string[]) {
   const args = { limit: 20, save: false } as { limit: number; save: boolean };
@@ -33,6 +37,26 @@ function decodeBase64Url(data: string): string {
 
 function extractSubject(headers: Array<{ name: string; value: string }>): string {
   return headers.find((h) => h.name === "Subject")?.value || "";
+}
+
+function extractFromEmail(headers: Array<{ name: string; value: string }>): string {
+  return headers.find((h) => h.name === "From")?.value || "";
+}
+
+function extractDate(headers: Array<{ name: string; value: string }>, internalDate?: string): number {
+  // Try Date header first, then internalDate
+  const dateHeader = headers.find((h) => h.name === "Date")?.value;
+  if (dateHeader) {
+    const parsed = new Date(dateHeader).getTime();
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  
+  if (internalDate) {
+    const parsed = Number(internalDate);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  
+  return Date.now(); // fallback
 }
 
 function findPart(parts: any[] | undefined, mime: string): any | null {
@@ -63,96 +87,99 @@ function extractPlaintextFromMessage(message: any): string {
   return "";
 }
 
-function mapStatusToJobType(status: "applied" | "interview" | "rejected" | "offer" | null): string | null {
-  if (status === "applied") return "application_sent";
-  if (status === "interview") return "interview";
-  if (status === "offer") return "offer";
-  if (status === "rejected") return "rejection";
+function extractHtmlFromMessage(message: any): string | null {
+  const payload = message?.payload || {};
+  const htmlPart = findPart(payload.parts, "text/html");
+  if (htmlPart?.body?.data) {
+    return decodeBase64Url(htmlPart.body.data);
+  }
   return null;
 }
 
-function getElectronUserDataDir(): string {
-  // Derive the Electron userData dir based on platform and productName
-  const productName = "OnlyJobs Desktop"; // matches package.json build.productName
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
-  if (process.platform === "darwin") return path.join(home, "Library", "Application Support", productName);
-  if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), productName);
-  return path.join(home, ".config", productName);
+function computeBodySha256(plaintext: string): string {
+  return crypto.createHash("sha256").update(plaintext, "utf-8").digest("hex");
 }
 
-function getDbPath(): string {
-  const override = process.env.ONLYJOBS_DB_PATH;
-  if (override && override.trim().length > 0) return path.resolve(override);
-  const dir = getElectronUserDataDir();
-  return path.join(dir, "jobs.db");
+function shouldReparse(db: Database.Database, gmailMessageId: string, bodySha256: string): boolean {
+  const existing = db.prepare(
+    "SELECT gmail_message_id FROM job_email_bodies WHERE gmail_message_id = ? AND body_plain = ?"
+  ).get(gmailMessageId, bodySha256) as { gmail_message_id: string } | undefined;
+  
+  return !existing; // Re-parse if not found or body changed
 }
 
-function ensureEmailsTable(db: Database.Database) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS emails (
-      id TEXT PRIMARY KEY,
-      gmail_message_id TEXT UNIQUE NOT NULL,
-      subject TEXT,
-      from_address TEXT,
-      to_address TEXT,
-      date DATE,
-      snippet TEXT,
-      raw_content TEXT,
-      account_email TEXT,
-      internal_date TEXT,
-      fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      is_classified BOOLEAN DEFAULT 0,
-      is_job_related BOOLEAN,
-      job_type TEXT,
-      ml_confidence REAL,
-      classification_method TEXT,
-      classified_at TIMESTAMP,
-      company_extracted TEXT,
-      position_extracted TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_emails_gmail_id ON emails(gmail_message_id);
-    CREATE INDEX IF NOT EXISTS idx_emails_classified ON emails(is_classified);
-  `);
-}
-
-function upsertEmail(db: Database.Database, email: {
-  gmail_message_id: string;
+function upsertJobEmail(db: Database.Database, data: {
+  gmailMessageId: string;
   subject: string;
-  raw_content: string;
-  is_job_related: boolean;
-  job_type: string | null;
-  company_extracted: string | null;
-  position_extracted: string | null;
+  company: string | null;
+  position: string | null;
+  status: string | null;
+  messageDate: number;
+  threadId: string | null;
+  fromEmail: string;
+  ruleHintUsed: boolean;
 }) {
-  const exists = db.prepare("SELECT id FROM emails WHERE gmail_message_id = ?").get(email.gmail_message_id) as { id: string } | undefined;
-  if (exists) {
-    db.prepare(
-      `UPDATE emails SET subject = ?, raw_content = ?, is_classified = 1, is_job_related = ?, job_type = ?, company_extracted = ?, position_extracted = ?, classified_at = CURRENT_TIMESTAMP WHERE gmail_message_id = ?`
-    ).run(
-      email.subject,
-      email.raw_content,
-      email.is_job_related ? 1 : 0,
-      email.job_type,
-      email.company_extracted,
-      email.position_extracted,
-      email.gmail_message_id
-    );
-    return exists.id;
-  }
-  const id = `email_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-  db.prepare(
-    `INSERT INTO emails (id, gmail_message_id, subject, raw_content, is_classified, is_job_related, job_type, company_extracted, position_extracted, classified_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
-  ).run(
-    id,
-    email.gmail_message_id,
-    email.subject,
-    email.raw_content,
-    email.is_job_related ? 1 : 0,
-    email.job_type,
-    email.company_extracted,
-    email.position_extracted
+  const now = Date.now();
+  
+  db.prepare(`
+    INSERT INTO job_emails (
+      gmail_message_id, subject, company, position, status, message_date,
+      thread_id, from_email, parsed_at, model_name, prompt_version, rule_hint_used
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(gmail_message_id) DO UPDATE SET
+      subject = excluded.subject,
+      company = excluded.company,
+      position = excluded.position,
+      status = excluded.status,
+      message_date = excluded.message_date,
+      thread_id = excluded.thread_id,
+      from_email = excluded.from_email,
+      parsed_at = excluded.parsed_at,
+      model_name = excluded.model_name,
+      prompt_version = excluded.prompt_version,
+      rule_hint_used = excluded.rule_hint_used
+  `).run(
+    data.gmailMessageId,
+    data.subject,
+    data.company,
+    data.position,
+    data.status,
+    data.messageDate,
+    data.threadId,
+    data.fromEmail,
+    now,
+    MODEL_NAME,
+    PROMPT_VERSION,
+    data.ruleHintUsed ? 1 : 0
   );
-  return id;
+}
+
+function upsertJobEmailBody(db: Database.Database, data: {
+  gmailMessageId: string;
+  bodyPlain: string;
+  bodyHtml: string | null;
+  bodyExcerpt: string;
+}) {
+  const now = Date.now();
+  
+  db.prepare(`
+    INSERT INTO job_email_bodies (
+      gmail_message_id, body_plain, body_html, body_excerpt, stored_at
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(gmail_message_id) DO UPDATE SET
+      body_plain = excluded.body_plain,
+      body_html = excluded.body_html,
+      body_excerpt = excluded.body_excerpt,
+      stored_at = excluded.stored_at
+  `).run(
+    data.gmailMessageId,
+    data.bodyPlain,
+    data.bodyHtml,
+    data.bodyExcerpt,
+    now
+  );
 }
 
 async function main() {
@@ -168,38 +195,114 @@ async function main() {
   }
 
   let db: Database.Database | null = null;
+  let linker: ApplicationLinker | null = null;
   if (save) {
     const dbPath = getDbPath();
     await fs.promises.mkdir(path.dirname(dbPath), { recursive: true });
     db = new Database(dbPath);
-    ensureEmailsTable(db);
+    initNewSchema(db); // Ensure tables exist
+    linker = new ApplicationLinker(db); // Initialize application linker
   }
+
+  let processedCount = 0;
+  let skippedCount = 0;
+  let jobCount = 0;
 
   for (const msg of messages) {
     try {
       const headers = msg.payload?.headers || [];
       const subject = extractSubject(headers);
+      const fromEmail = extractFromEmail(headers);
+      const messageDate = extractDate(headers, msg.internalDate);
+      const threadId = msg.threadId || null;
       const plaintext = extractPlaintextFromMessage(msg);
+      const htmlBody = extractHtmlFromMessage(msg);
+      const bodySha256 = computeBodySha256(plaintext);
+
+      // Check if we need to reparse (only for job emails)
+      if (save && db && !shouldReparse(db, msg.id, bodySha256)) {
+        skippedCount++;
+        console.log(`{"id":"${msg.id}","subject":"${subject}","skipped":true,"reason":"already_processed"}`);
+        continue;
+      }
+
+      // Check if rule hint would be used
+      const ruleHint = getStatusHint(subject, plaintext);
+      const ruleHintUsed = !!ruleHint;
 
       const result = await parseEmailWithLLM({ subject, plaintext });
-      // Print JSON for each message
-      process.stdout.write(JSON.stringify({ id: msg.id, subject, ...result }) + "\n");
 
-      if (save && db) {
-        const jobType = mapStatusToJobType(result.status);
-        upsertEmail(db, {
-          gmail_message_id: msg.id,
+      // Only store if job-related
+      if (result.is_job_related && save && db && linker) {
+        // Validate status values
+        const validStatuses = ["Applied", "Interview", "Declined", "Offer"];
+        const validStatus = validStatuses.includes(result.status || "") ? result.status : null;
+        
+        upsertJobEmail(db, {
+          gmailMessageId: msg.id,
           subject,
-          raw_content: plaintext,
-          is_job_related: result.is_job_related,
-          job_type: jobType,
-          company_extracted: result.company,
-          position_extracted: result.position,
+          company: result.company,
+          position: result.position,
+          status: validStatus,
+          messageDate,
+          threadId,
+          fromEmail,
+          ruleHintUsed
         });
+
+        const bodyExcerpt = plaintext.slice(0, 400);
+        upsertJobEmailBody(db, {
+          gmailMessageId: msg.id,
+          bodyPlain: plaintext,
+          bodyHtml: htmlBody,
+          bodyExcerpt
+        });
+
+        // Link email to application
+        try {
+          const applicationId = linker.linkEmail(
+            msg.id,
+            result.company,
+            result.position,
+            validStatus,
+            subject,
+            plaintext,
+            fromEmail,
+            headers,
+            threadId,
+            messageDate,
+            [], // toEmails - not available in this context
+            []  // ccEmails - not available in this context
+          );
+          
+          // Add application info to output
+          process.stdout.write(JSON.stringify({ 
+            id: msg.id, 
+            subject, 
+            ...result, 
+            application_id: applicationId 
+          }) + "\n");
+        } catch (linkError) {
+          console.error(`Error linking email ${msg.id}:`, linkError);
+          // Still output the original result
+          process.stdout.write(JSON.stringify({ id: msg.id, subject, ...result }) + "\n");
+        }
+
+        jobCount++;
+      } else {
+        // Print JSON for each message (non-job-related or not saving)
+        process.stdout.write(JSON.stringify({ id: msg.id, subject, ...result }) + "\n");
       }
+      // If not job-related, we don't store anything - privacy!
+
+      processedCount++;
     } catch (e) {
       console.error(`Error processing message ${msg?.id}:`, e);
     }
+  }
+
+  if (save && db) {
+    console.error(`\nProcessing complete: ${processedCount} processed, ${skippedCount} skipped, ${jobCount} job-related emails stored`);
   }
 
   if (db) db.close();

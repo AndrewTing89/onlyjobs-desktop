@@ -7,7 +7,7 @@ const DEFAULT_URL = process.env.ONLYJOBS_MODEL_URL ??
 const DEST_DIR = path.resolve(process.cwd(), "models");
 const DEST_PATH = path.join(DEST_DIR, "model.gguf");
 
-function followRedirect(url: string, method: "HEAD" | "GET"): Promise<{ url: string; res: https.IncomingMessage }>{
+function followRedirect(url: string, method: "HEAD" | "GET"): Promise<{ url: string; res: any }>{
   return new Promise((resolve, reject) => {
     const req = https.request(url, { method, headers: { "User-Agent": "onlyjobs-desktop/llm-downloader" } }, (res) => {
       const status = res.statusCode || 0;
@@ -74,7 +74,7 @@ async function main() {
   const file = fs.createWriteStream(tmpPath);
 
   const { res } = await followRedirect(url, "GET");
-  const total = remoteSize ?? Number(res.headers["content-length"]) || 0;
+  const total = remoteSize ?? (Number(res.headers["content-length"]) || 0);
   let downloaded = 0;
   const started = Date.now();
   let lastDraw = 0;

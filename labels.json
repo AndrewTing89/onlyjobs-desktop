@@ -1,1 +1,74 @@
-[]
+[
+  {
+    "gmail_message_id": "198869aad03459c2",
+    "subject": "AndrewTing89 invited you to AndrewTing89/onlyjobs-desktop",
+    "is_job_related": null,
+    "job_type": null
+  },
+  {
+    "gmail_message_id": "1988699561df389a",
+    "subject": "you.com Application Received!",
+    "is_job_related": null,
+    "job_type": "application_sent"
+  },
+  {
+    "gmail_message_id": "198869a945f50106",
+    "subject": "Your ChatGPT code is 269346",
+    "is_job_related": null,
+    "job_type": null
+  },
+  {
+    "gmail_message_id": "19886a6e98f49fa4",
+    "subject": "Your ChatGPT code is 929917",
+    "is_job_related": null,
+    "job_type": null
+  },
+  {
+    "gmail_message_id": "19886a78619672cd",
+    "subject": "You've enabled multi-factor authentication",
+    "is_job_related": null,
+    "job_type": null
+  },
+  {
+    "gmail_message_id": "19886f2292e8ad15",
+    "subject": "Hello Zicheng: You have a special opportunity waiting — up to $500 per calendar year!",
+    "is_job_related": null,
+    "job_type": null
+  },
+  {
+    "gmail_message_id": "19886fcc5c02eb5a",
+    "subject": "CA DMV Receipt",
+    "is_job_related": null,
+    "job_type": null
+  },
+  {
+    "gmail_message_id": "198870817701b4a3",
+    "subject": "Thank you for your interest in Instacart!",
+    "is_job_related": null,
+    "job_type": "application_sent"
+  },
+  {
+    "gmail_message_id": "1988708cd9c0c8a2",
+    "subject": "Verify your candidate account",
+    "is_job_related": null,
+    "job_type": null
+  },
+  {
+    "gmail_message_id": "1988709f6fe5d750",
+    "subject": "Thanks for Applying to Business Reporting Analyst II - 1585131",
+    "is_job_related": null,
+    "job_type": "application_sent"
+  },
+  {
+    "gmail_message_id": "1988714fa0bf271b",
+    "subject": "BCG Application Confirmation",
+    "is_job_related": null,
+    "job_type": "application_sent"
+  },
+  {
+    "gmail_message_id": "1988715516c50a6b",
+    "subject": "Application received for Business Intelligence Intern",
+    "is_job_related": null,
+    "job_type": "application_sent"
+  }
+]

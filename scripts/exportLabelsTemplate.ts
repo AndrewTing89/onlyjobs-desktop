@@ -1,15 +1,22 @@
 /*
- Export a labels.json template from recent emails in the DB.
+ Export labeling template from job emails for evaluation.
  Usage:
-   npm run llm:labels -- --limit=10 [--db=/path/to/jobs.db]
+   npm run llm:labels -- --limit=12 [--db=/path/to/jobs.db]
 */
 
 import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
+import { getDbPath } from "../electron/llm/config";
+
+type Label = {
+  gmail_message_id: string;
+  subject: string;
+  status: "Applied" | "Interview" | "Declined" | "Offer" | null;
+};
 
 function parseArgs(argv: string[]) {
-  const args: { limit: number; db?: string } = { limit: 20 };
+  const args: { limit?: number; db?: string } = {};
   for (const token of argv.slice(2)) {
     if (token.startsWith("--limit=")) {
       const n = Number(token.slice("--limit=".length));
@@ -21,51 +28,51 @@ function parseArgs(argv: string[]) {
   return args;
 }
 
-function getElectronUserDataDir(): string {
-  const productName = "OnlyJobs Desktop"; // matches build.productName
-  const home = process.env.HOME || process.env.USERPROFILE || ".";
-  if (process.platform === "darwin") return path.join(home, "Library", "Application Support", productName);
-  if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), productName);
-  return path.join(home, ".config", productName);
-}
 
-function getDefaultDbPath(): string {
-  const override = process.env.ONLYJOBS_DB_PATH;
-  if (override && override.trim().length > 0) return path.resolve(override);
-  return path.join(getElectronUserDataDir(), "jobs.db");
-}
+function main() {
+  const { limit = 20, db: dbArg } = parseArgs(process.argv);
+  const dbPath = dbArg ? path.resolve(dbArg) : getDbPath();
 
-function fetchRecent(dbPath: string, limit: number) {
+  console.log(`Exporting labels from: ${dbPath}`);
+  console.log(`Limit: ${limit}`);
+
   const db = new Database(dbPath);
+  const labels: Label[] = [];
+
   try {
-    const stmt = db.prepare(`
-      SELECT gmail_message_id, subject
-      FROM emails
-      WHERE gmail_message_id IS NOT NULL
-      ORDER BY COALESCE(classified_at, fetched_at, date, internal_date) DESC
+    // Query job emails only (privacy-first: non-job emails are never stored)
+    const rows = db.prepare(`
+      SELECT 
+        gmail_message_id,
+        subject,
+        status
+      FROM job_emails
+      ORDER BY parsed_at DESC
       LIMIT ?
-    `);
-    return stmt.all(limit) as Array<{ gmail_message_id: string; subject: string | null }>;
+    `).all(limit) as Array<{
+      gmail_message_id: string;
+      subject: string;
+      status: string | null;
+    }>;
+
+    console.log(`Query returned ${rows.length} rows`);
+    for (const row of rows) {
+      labels.push({
+        gmail_message_id: row.gmail_message_id,
+        subject: row.subject,
+        status: null // null = needs labeling
+      });
+    }
+
+    // Write to labels.json
+    const outputPath = path.resolve(process.cwd(), "labels.json");
+    fs.writeFileSync(outputPath, JSON.stringify(labels, null, 2));
+    
+    console.log(`Wrote ${labels.length} labels to ${outputPath}`);
+
   } finally {
     db.close();
   }
-}
-
-function main() {
-  const { limit, db } = parseArgs(process.argv);
-  const dbPath = db ? path.resolve(db) : getDefaultDbPath();
-
-  const rows = fetchRecent(dbPath, limit);
-  const out = rows.map((r) => ({
-    gmail_message_id: r.gmail_message_id,
-    subject: r.subject || "",
-    is_job_related: null as null,
-    job_type: null as null,
-  }));
-
-  const dest = path.resolve(process.cwd(), "labels.json");
-  fs.writeFileSync(dest, JSON.stringify(out, null, 2), "utf-8");
-  console.log(`Wrote ${out.length} labels to ${dest}`);
 }
 
 main();

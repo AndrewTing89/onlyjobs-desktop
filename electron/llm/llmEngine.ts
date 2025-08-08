@@ -26,7 +26,7 @@ export type ParseResult = {
   is_job_related: boolean;
   company: string | null;
   position: string | null;
-  status: "applied" | "interview" | "rejected" | "offer" | null;
+  status: "Applied" | "Interview" | "Declined" | "Offer" | null;
 };
 
 const schema = {
@@ -35,7 +35,7 @@ const schema = {
     is_job_related: { type: "boolean" },
     company: { type: ["string", "null"] },
     position: { type: ["string", "null"] },
-    status: { type: ["string", "null"], enum: ["applied", "interview", "rejected", "offer", null] },
+    status: { type: ["string", "null"], enum: ["Applied", "Interview", "Declined", "Offer", null] },
   },
   required: ["is_job_related", "company", "position", "status"],
   additionalProperties: false,
@@ -48,21 +48,21 @@ const SYSTEM_PROMPT = [
   "If job-related, extract:",
   "- company: prefer official name from signature/body; map sender domain if helpful.",
   "- position: the role title if present.",
-  "- status: one of applied | interview | rejected | offer; if uncertain use null.",
-  "No 'unknown' anywhere. Use null per the schema.",
+  "- status: one of Applied | Interview | Declined | Offer; if uncertain use null.",
+  "Use low temperature (0.1-0.2). No 'unknown' anywhere. Use null per the schema.",
   "",
   "Examples:",
   "Input\nSubject: Application received – Data Analyst\nBody: Thanks for applying to Acme. We received your application for Data Analyst.\nOutput",
-  '{"is_job_related":true,"company":"Acme","position":"Data Analyst","status":"applied"}',
+  '{"is_job_related":true,"company":"Acme","position":"Data Analyst","status":"Applied"}',
   "",
-  "Input\nSubject: Interview availability – Globex\nBody: We’d like to schedule a 30-min interview this week regarding your application at Globex.\nOutput",
-  '{"is_job_related":true,"company":"Globex","position":null,"status":"interview"}',
+  "Input\nSubject: Interview availability – Globex\nBody: We'd like to schedule a 30-min interview this week regarding your application at Globex.\nOutput",
+  '{"is_job_related":true,"company":"Globex","position":null,"status":"Interview"}',
   "",
   "Input\nSubject: Your application at Initech\nBody: We regret to inform you we will not move forward with your candidacy at Initech.\nOutput",
-  '{"is_job_related":true,"company":"Initech","position":null,"status":"rejected"}',
+  '{"is_job_related":true,"company":"Initech","position":null,"status":"Declined"}',
   "",
-  "Input\nSubject: Offer – Backend Engineer\nBody: Congratulations! We’re excited to extend you an offer for Backend Engineer at Umbrella Corp.\nOutput",
-  '{"is_job_related":true,"company":"Umbrella Corp","position":"Backend Engineer","status":"offer"}',
+  "Input\nSubject: Offer – Backend Engineer\nBody: Congratulations! We're excited to extend you an offer for Backend Engineer at Umbrella Corp.\nOutput",
+  '{"is_job_related":true,"company":"Umbrella Corp","position":"Backend Engineer","status":"Offer"}',
   "",
   "Input\nSubject: Career tips and market insights for August\nBody: Newsletter: industry news and general career advice.\nOutput",
   '{"is_job_related":false,"company":null,"position":null,"status":null}',
@@ -79,10 +79,12 @@ async function ensureSession(modelPath: string) {
   if (loadedSession && loadedModelPath === modelPath) return loadedSession;
 
   const module = await loadLlamaModule();
-  const llama = await module.getLlama();
-  loadedModel = await llama.loadModelFromFile({ modelPath });
-  loadedContext = await loadedModel.createContext({ contextSize: LLM_CONTEXT, gpuLayers: GPU_LAYERS });
-  loadedSession = new module.LlamaChatSession({ context: loadedContext, systemPrompt: SYSTEM_PROMPT });
+  const { getLlama, LlamaModel, LlamaContext, LlamaChatSession } = module;
+  const llama = await getLlama();
+  loadedModel = await llama.loadModel({ modelPath });
+  loadedContext = await loadedModel.createContext({ contextSize: LLM_CONTEXT, batchSize: 512 });
+  const sequence = loadedContext.getSequence();
+  loadedSession = new LlamaChatSession({ contextSequence: sequence, systemPrompt: SYSTEM_PROMPT });
   loadedModelPath = modelPath;
   return loadedSession;
 }
