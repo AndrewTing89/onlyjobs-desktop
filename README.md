@@ -1,17 +1,16 @@
 # OnlyJobs Desktop
 
-An AI-powered job application tracking desktop app that automatically syncs with Gmail, classifies job-related emails using machine learning, and provides real-time analytics.
+An AI-powered job application tracking desktop app that automatically syncs with Gmail, classifies job-related emails using local LLM, and provides real-time analytics.
 
 [![Electron](https://img.shields.io/badge/Electron-37-47848F?logo=electron)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?logo=typescript)](https://www.typescriptlang.org/)
-[![Python](https://img.shields.io/badge/Python-3.8+-3776AB?logo=python)](https://www.python.org/)
-[![ML Powered](https://img.shields.io/badge/ML-scikit--learn-F7931E?logo=scikit-learn)](https://scikit-learn.org/)
+[![LLM Powered](https://img.shields.io/badge/LLM-node--llama--cpp-00D4AA?logo=openai)](https://github.com/withcatai/node-llama-cpp)
 
 ## Features
 
 - 🔐 **Gmail Integration**: Secure OAuth 2.0 authentication with Gmail
-- 🤖 **AI Classification**: Automatically identifies and classifies job-related emails
+- 🤖 **LLM Classification**: Uses local language models to identify and classify job-related emails
 - 📊 **Real-time Dashboard**: Track your job applications with live updates
 - 🔄 **Multi-Account Support**: Connect multiple Gmail accounts
 - 💾 **Local Storage**: All data stored locally using SQLite
@@ -20,71 +19,67 @@ An AI-powered job application tracking desktop app that automatically syncs with
 ## Prerequisites
 
 - Node.js (v18 or higher)
-- Python 3.8+
 - Gmail account
 - Google Cloud Platform project with Gmail API enabled
 
 ## Installation
 
-1. Clone the repository (including the ML classifier submodule):
+1. Clone the repository:
 ```bash
-git clone --recurse-submodules https://github.com/yourusername/onlyjobs-desktop.git
+git clone https://github.com/AndrewTing89/onlyjobs-desktop.git
 cd onlyjobs-desktop
-# if you already cloned without submodules
-git submodule update --init --recursive
 ```
 
-2. Install dependencies:
-```bash
-npm install
-```
-
-3. Install Python dependencies for the ML classifier:
-```bash
-cd ml-classifier
-pip install -r requirements.txt
-cd ..
-```
-
-4. Add configuration files:
-   - Place `gmail_credentials.json` in the project root (downloaded from Google Cloud Console).
-   - Create a `.env` file in the project root with values for:
-     - `GOOGLE_CLIENT_ID`
-     - `GOOGLE_CLIENT_SECRET`
-     - `GOOGLE_REDIRECT_URI`
-     - any `REACT_APP_*` Firebase variables required by the React app
-   - Create `electron/.env` with:
-     - `GOOGLE_OAUTH_CLIENT_ID`
-     - `GOOGLE_OAUTH_CLIENT_SECRET`
-     - `GOOGLE_OAUTH_REDIRECT_URI`
-
-5. (Optional) Run the setup script to install all dependencies automatically:
+2. Run the automated setup script:
 ```bash
 bash setup.sh
 ```
 
+This will:
+- Install all npm dependencies (including better-sqlite3 rebuild)  
+- Check for LLM model and provide download instructions if needed
+- Create `.env` file template
+
+3. Download LLM model (if not present):
+```bash
+npm run llm:download
+```
+
+4. Add Gmail API credentials:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a project and enable Gmail API
+   - Download `gmail_credentials.json` and place in project root
+   - Update `.env` file with your OAuth client ID and secret
+
 ## Running the App
 
-### Development Mode
+### Quick Start (Recommended)
 
-Start both React and Electron in development mode:
+Start the complete application with one command:
+
+```bash
+npm run dev
+```
+
+This starts both React dev server and Electron automatically.
+
+### Manual Development Mode
+
+If you prefer separate terminals:
 
 ```bash
 # Terminal 1 - Start React dev server
 npm start
 
-# Terminal 2 - Start Electron
+# Terminal 2 - Start Electron (after React server is running)
 npm run electron-dev
 ```
 
 ### Production Build
 
 ```bash
-# Build React app
-npm run build
-
-# Package Electron app
-npm run electron-pack
+# Build and package Electron app
+npm run dist
 ```
 
 ## Testing
@@ -154,19 +149,26 @@ npm run llm:labels -- --limit=10
 
 ```
 onlyjobs-desktop/
-├── electron/           # Electron main process files
-│   ├── main.js        # Main entry point
-│   ├── ipc-handlers.js # IPC communication handlers
-│   ├── gmail-auth.js  # Gmail authentication
-│   └── gmail-multi-auth.js # Multi-account support
-├── src/               # React app source
-│   ├── components/    # React components
-│   ├── pages/        # Page components
-│   └── ElectronApp.tsx # Main Electron app component
-├── ml-classifier/     # Python ML classifier
-│   ├── scripts/      # Classification scripts
-│   └── data/models/  # Trained ML models
-└── public/           # Static assets
+├── electron/              # Electron main process files
+│   ├── main.js           # Main entry point
+│   ├── ipc-handlers.js   # IPC communication handlers  
+│   ├── gmail-auth.js     # Gmail authentication
+│   ├── llm/              # Local LLM engine
+│   │   ├── llmEngine.ts  # LLM inference engine
+│   │   ├── config.ts     # Model configuration
+│   │   └── linker/       # Application linking system
+│   └── ipc/              # IPC handlers
+│       ├── emailFetch.js # Email processing pipeline
+│       └── gmailAuth.js  # Gmail OAuth flow
+├── src/                  # React app source
+│   ├── components/       # React components
+│   │   ├── GmailConnect.tsx # Gmail OAuth UI
+│   │   └── JobsList.tsx  # Job applications list
+│   ├── pages/           # Page components
+│   └── ElectronApp.tsx  # Main Electron app component
+├── models/              # Local LLM models
+│   └── model.gguf      # GGUF model file
+└── public/             # Static assets
 ```
 
 ## Key Technologies
@@ -174,16 +176,18 @@ onlyjobs-desktop/
 - **Frontend**: React 19, TypeScript, Material-UI
 - **Desktop**: Electron 37
 - **Database**: SQLite3 (better-sqlite3)
-- **ML**: Python, scikit-learn
+- **LLM**: node-llama-cpp with GGUF models
 - **Authentication**: Google OAuth 2.0 (AppAuth-JS)
 
 ## Development Notes
 
 ### Gmail Sync Process
 
-1. **Fetch Stage**: Downloads emails from Gmail with full content
-2. **Classification Stage**: Processes emails through ML classifier
-3. **Storage**: Saves job-related emails to local SQLite database
+1. **OAuth Authentication**: Connect Gmail account through secure OAuth flow
+2. **Email Fetching**: Download recent emails from Gmail via API
+3. **LLM Classification**: Process emails through local language model
+4. **Data Extraction**: Extract company, position, status information
+5. **Local Storage**: Save job-related emails to local SQLite database
 
 ### Database Schema
 
@@ -193,13 +197,24 @@ The app uses SQLite with the following main tables:
 - `gmail_accounts`: Manages multiple Gmail accounts
 - `sync_status`: Tracks sync progress
 
-### ML Classification
+### LLM Classification
 
-The classifier uses a trained model to identify job-related emails based on:
-- Email content and structure
-- Keywords and patterns
-- Sender information
-- Subject line analysis
+The local LLM engine identifies job-related emails and extracts structured data:
+- **Context Understanding**: Analyzes full email content and context
+- **Structured Output**: Returns JSON with company, position, status
+- **High Accuracy**: Better than traditional keyword-based approaches
+- **Privacy First**: All processing happens locally, no data sent to external APIs
+- **Fast Inference**: Optimized GGUF models for quick classification
+
+### User Interface Workflow
+
+1. **Launch App**: `npm run dev` → Electron window opens
+2. **Connect Gmail**: Click "Connect Gmail" → OAuth browser flow → Shows "Connected: email@domain.com"
+3. **Fetch Emails**: Click "Fetch Latest 50 Emails" → LLM processes emails → Jobs list updates automatically
+4. **View Results**: Browse job applications in the dashboard
+5. **Email Details**: Click on any job to view full email content and application timeline
+
+All processing happens through the UI - no terminal commands needed for normal use!
 
 ## Troubleshooting
 
@@ -208,11 +223,11 @@ The classifier uses a trained model to identify job-related emails based on:
 If you encounter module version mismatch errors:
 
 ```bash
-# For Electron
-npm rebuild better-sqlite3 --runtime=electron --target=37.2.5 --dist-url=https://electronjs.org/headers
+# The postinstall script should handle this automatically, but you can run manually:
+npm rebuild better-sqlite3 --build-from-source
 
-# For Node.js (testing)
-npm rebuild better-sqlite3
+# Or use the electron rebuilder:
+./node_modules/.bin/electron-rebuild
 ```
 
 ### OAuth Redirect Issues
@@ -237,7 +252,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- ML classifier model provided by contributor
-- Built with Electron and React
+- Local LLM processing powered by node-llama-cpp
+- Built with Electron and React  
 - Gmail API integration powered by Google APIs
+- GGUF model format support from llama.cpp community
 
