@@ -22,7 +22,7 @@
     "db:inspect": "tsx scripts/dbInspect.ts",
     "apps:backfill": "tsx scripts/backfillApplications.ts",
     "sync:jobs": "tsx electron/gmail/runLLMOnRecent.ts --limit=50 --save",
-    "dev": "TS_NODE_TRANSPILE_ONLY=1 electron -r ts-node/register/transpile-only ./electron/main.js"
+    "dev": "NODE_ENV=development electron ./electron/main.js"
   },
   "repository": {
     "type": "git",

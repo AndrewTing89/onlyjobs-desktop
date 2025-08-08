@@ -1,5 +1,5 @@
-const { app, BrowserWindow, ipcMain, Menu, Tray, shell, dialog, protocol } = require('electron');
-const path = require('path');
+import { app, BrowserWindow, ipcMain, Menu, Tray, shell, dialog, protocol } from 'electron';
+import path from 'path';
 // Allow requiring TypeScript files in Electron main process (development/runtime)
 try {
   require('ts-node/register/transpile-only');
@@ -273,10 +273,9 @@ try {
 } catch (e) {
   console.warn('Job Inbox IPC registration skipped:', e?.message || e);
 }
-
-// Register Gmail Auth IPC
+// Register Gmail Auth IPC (TypeScript)  
 try {
-  const { registerGmailAuthIPC } = require('./ipc/gmailAuth.js');
+  const { registerGmailAuthIPC } = require('./ipc/gmailAuth.ts');
   registerGmailAuthIPC();
 } catch (e) {
   console.warn('Gmail Auth IPC registration skipped:', e?.message || e);
@@ -325,4 +324,4 @@ app.on('web-contents-created', (event, contents) => {
 });
 
 // Export for use in other modules
-module.exports = { mainWindow };
+export { mainWindow };

@@ -32,8 +32,7 @@ import {
 } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
 import { LookerDashboard } from "../components/LookerDashboard";
-import GmailConnectionElectron from "../components/GmailConnectionElectron";
-import { GmailMultiAccount } from "../components/GmailMultiAccount";
+import GmailConnect from "../components/GmailConnect";
 import JobsList from "../components/JobsList";
 // Import the appropriate auth context based on environment
 import { useAuth as useFirebaseAuth } from "../contexts/AuthContext";
@@ -248,8 +247,8 @@ export default function Dashboard() {
         {/* Main Content */}
         {isElectron ? (
           <Box sx={{ p: 3 }}>
-            {/* Multi-account Gmail management */}
-            <GmailMultiAccount />
+            {/* Gmail Connection */}
+            <GmailConnect />
             
             {/* Jobs List */}
             <Box sx={{ mt: 3 }}>
