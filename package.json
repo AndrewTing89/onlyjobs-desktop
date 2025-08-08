@@ -16,9 +16,9 @@
     "llm:deps": "npm i node-llama-cpp ts-node vitest @types/node",
     "llm:test": "ts-node ./electron/llm/manualTest.ts",
     "llm:download": "ts-node ./electron/llm/downloadModel.ts",
-    "gmail:llm": "ts-node ./electron/gmail/runLLMOnRecent.ts",
+    "gmail:llm": "ts-node-esm --transpile-only ./electron/gmail/runLLMOnRecent.ts",
     "llm:evaluate": "ts-node ./scripts/evaluateLLM.ts",
-    "llm:labels": "ts-node ./scripts/exportLabelsTemplate.ts"
+    "llm:labels": "node ./scripts/exportLabelsTemplate.js"
   },
   "repository": {
     "type": "git",
@@ -31,6 +31,7 @@
     "url": "https://github.com/AndrewTing89/onlyjobs-desktop/issues"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/jest": "^27.5.2",
     "@types/node": "^16.18.126",
     "@types/react": "^19.1.8",
