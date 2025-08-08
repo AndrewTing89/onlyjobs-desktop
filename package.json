@@ -16,7 +16,7 @@
     "llm:deps": "npm i node-llama-cpp ts-node vitest @types/node",
     "llm:test": "ts-node ./electron/llm/manualTest.ts",
     "llm:download": "ts-node ./electron/llm/downloadModel.ts",
-    "gmail:llm": "ts-node-esm --transpile-only electron/gmail/runLLMOnRecent.ts",
+    "gmail:llm": "TS_NODE_TRANSPILE_ONLY=1 node --loader ts-node/esm --no-warnings --experimental-specifier-resolution=node electron/gmail/runLLMOnRecent.ts",
     "llm:evaluate": "ts-node ./scripts/evaluateLLM.ts",
     "llm:labels": "node ./scripts/exportLabelsTemplate.js"
   },
