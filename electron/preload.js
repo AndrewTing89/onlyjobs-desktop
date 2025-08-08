@@ -15,6 +15,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // LLM parsing
   parseEmail: (payload) => ipcRenderer.invoke('onlyjobs.parseEmail', payload),
+
+  // OnlyJobs new schema API
+  onlyjobs: {
+    fetchJobInbox: (options) => ipcRenderer.invoke('onlyjobs.fetchJobInbox', options),
+    fetchEmailDetail: (options) => ipcRenderer.invoke('onlyjobs.fetchEmailDetail', options),
+    fetchApplications: (options) => ipcRenderer.invoke('onlyjobs.fetchApplications', options),
+    fetchApplicationTimeline: (options) => ipcRenderer.invoke('onlyjobs.fetchApplicationTimeline', options),
+  },
   
   // ML Model operations
   getMlStatus: () => ipcRenderer.invoke('ml:get-status'),

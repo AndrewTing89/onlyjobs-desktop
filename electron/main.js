@@ -266,6 +266,13 @@ try {
 } catch (e) {
   console.warn('LLM IPC registration skipped:', e?.message || e);
 }
+// Register Job Inbox IPC (TypeScript)
+try {
+  const { registerJobInboxHandlers } = require('./ipc/jobInbox.ts');
+  registerJobInboxHandlers();
+} catch (e) {
+  console.warn('Job Inbox IPC registration skipped:', e?.message || e);
+}
 
 // App event handlers
 app.whenReady().then(() => {

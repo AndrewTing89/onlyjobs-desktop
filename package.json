@@ -20,7 +20,8 @@
     "llm:evaluate": "tsx scripts/evaluateLLM.ts",
     "llm:labels": "tsx scripts/exportLabelsTemplate.ts",
     "db:inspect": "tsx scripts/dbInspect.ts",
-    "apps:backfill": "tsx scripts/backfillApplications.ts"
+    "apps:backfill": "tsx scripts/backfillApplications.ts",
+    "sync:jobs": "tsx electron/gmail/runLLMOnRecent.ts --limit=30 --save"
   },
   "repository": {
     "type": "git",

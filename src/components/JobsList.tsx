@@ -15,7 +15,10 @@ import {
   Menu,
   MenuItem,
   TextField,
-  InputAdornment
+  InputAdornment,
+  FormControl,
+  Select,
+  SelectChangeEvent
 } from '@mui/material';
 import {
   MoreVert,
@@ -27,78 +30,41 @@ import {
   Visibility
 } from '@mui/icons-material';
 import { EmailViewModal } from './EmailViewModal';
+import { onlyJobsClient, type JobEmail, type EmailDetail } from '../lib/onlyjobsClient';
 
 const accent = "#FF7043";
 
-interface Job {
-  id: string;
-  company: string;
-  position: string;
-  status: string;
-  job_type?: string;
-  applied_date: string;
-  location?: string;
-  salary_range?: string;
-  notes?: string;
-  email_id?: string;
-  ml_confidence?: number;
-  created_at: string;
-  updated_at: string;
-  account_email?: string;
-  from_address?: string;
-  raw_content?: string;
-}
-
 const statusColors: Record<string, string> = {
-  active: '#4CAF50',
-  applied: '#2196F3',
-  interviewing: '#FF9800',
-  offered: '#9C27B0',
-  rejected: '#F44336',
-  withdrawn: '#9E9E9E'
-};
-
-const jobTypeLabels: Record<string, string> = {
-  application_sent: 'Applied',
-  interview: 'Interview',
-  offer: 'Offer',
-  rejection: 'Rejected',
-  follow_up: 'Follow-up'
+  Applied: '#2196F3',
+  Interview: '#FF9800', 
+  Declined: '#F44336',
+  Offer: '#4CAF50'
 };
 
 export default function JobsList() {
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobs, setJobs] = useState<JobEmail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'Applied' | 'Interview' | 'Declined' | 'Offer' | ''>('');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-  const [syncStatus, setSyncStatus] = useState<any>(null);
+  const [selectedJob, setSelectedJob] = useState<JobEmail | null>(null);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
-  const [viewingJob, setViewingJob] = useState<Job | null>(null);
+  const [emailDetail, setEmailDetail] = useState<EmailDetail | null>(null);
 
   useEffect(() => {
     loadJobs();
-    loadSyncStatus();
-    
-    // Listen for new jobs
-    const handleJobFound = (job: Job) => {
-      setJobs(prev => [job, ...prev]);
-    };
-    
-    window.electronAPI.on('job-found', handleJobFound);
-    
-    return () => {
-      window.electronAPI.removeListener('job-found', handleJobFound);
-    };
-  }, []);
+  }, [statusFilter]);
 
   const loadJobs = async () => {
     try {
       setLoading(true);
-      const result = await window.electronAPI.getJobs();
+      const result = await onlyJobsClient.fetchJobInbox({
+        status: statusFilter || undefined,
+        limit: 100
+      });
       console.log('Loaded jobs:', result); // Debug log
-      setJobs(result);
+      setJobs(result.rows);
     } catch (error: any) {
       console.error('Error loading jobs:', error);
       setError('Failed to load jobs');
@@ -107,16 +73,7 @@ export default function JobsList() {
     }
   };
 
-  const loadSyncStatus = async () => {
-    try {
-      const status = await window.electronAPI.gmail.getSyncStatus();
-      setSyncStatus(status);
-    } catch (error) {
-      console.error('Error loading sync status:', error);
-    }
-  };
-
-  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, job: Job) => {
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, job: JobEmail) => {
     setAnchorEl(event.currentTarget);
     setSelectedJob(job);
   };
@@ -126,54 +83,27 @@ export default function JobsList() {
     setSelectedJob(null);
   };
 
-  const handleStatusChange = async (newStatus: string) => {
-    if (!selectedJob) return;
-    
+  const handleViewEmail = async (job: JobEmail) => {
     try {
-      await window.electronAPI.updateJob(selectedJob.id, { status: newStatus });
-      setJobs(jobs.map(j => 
-        j.id === selectedJob.id ? { ...j, status: newStatus } : j
-      ));
+      const detail = await onlyJobsClient.fetchEmailDetail(job.gmail_message_id);
+      console.log('Fetched email detail:', detail); // Debug log
+      setEmailDetail(detail);
+      setEmailModalOpen(true);
     } catch (error) {
-      console.error('Error updating job:', error);
+      console.error('Error fetching email details:', error);
+      setError('Failed to load email details');
     }
-    
-    handleMenuClose();
   };
 
-  const handleDelete = async () => {
-    if (!selectedJob) return;
-    
-    try {
-      await window.electronAPI.deleteJob(selectedJob.id);
-      setJobs(jobs.filter(j => j.id !== selectedJob.id));
-    } catch (error) {
-      console.error('Error deleting job:', error);
-    }
-    
-    handleMenuClose();
+  const handleStatusFilterChange = (event: SelectChangeEvent<string>) => {
+    setStatusFilter(event.target.value as 'Applied' | 'Interview' | 'Declined' | 'Offer' | '');
   };
 
-  const handleViewEmail = async (job: Job) => {
-    // Always fetch the full job details to ensure we have the email content
-    try {
-      const fullJob = await window.electronAPI.getJob(job.id);
-      console.log('Fetched job details:', fullJob); // Debug log
-      console.log('Raw content exists:', !!fullJob?.raw_content);
-      console.log('Raw content length:', fullJob?.raw_content?.length);
-      console.log('Raw content preview:', fullJob?.raw_content?.substring(0, 100));
-      setViewingJob(fullJob);
-    } catch (error) {
-      console.error('Error fetching job details:', error);
-      setViewingJob(job);
-    }
-    setEmailModalOpen(true);
-  };
-
-  const filteredJobs = jobs.filter(job => 
-    job.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    job.position.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredJobs = jobs.filter(job => {
+    const companyMatch = job.company?.toLowerCase().includes(searchTerm.toLowerCase()) || false;
+    const positionMatch = job.position?.toLowerCase().includes(searchTerm.toLowerCase()) || false;
+    return companyMatch || positionMatch;
+  });
 
   if (loading) {
     return (
@@ -189,15 +119,20 @@ export default function JobsList() {
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
             <Typography variant="h6">Job Applications</Typography>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              {syncStatus && (
-                <Typography variant="body2" color="text.secondary">
-                  {syncStatus.last_sync_time ? 
-                    `Last sync: ${new Date(syncStatus.last_sync_time).toLocaleString()}` : 
-                    'Not synced yet'}
-                  {syncStatus.total_jobs_found && ` • ${syncStatus.total_jobs_found} jobs found`}
-                </Typography>
-              )}
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <Select
+                  value={statusFilter}
+                  onChange={handleStatusFilterChange}
+                  displayEmpty
+                >
+                  <MenuItem value="">All</MenuItem>
+                  <MenuItem value="Applied">Applied</MenuItem>
+                  <MenuItem value="Interview">Interview</MenuItem>
+                  <MenuItem value="Declined">Declined</MenuItem>
+                  <MenuItem value="Offer">Offer</MenuItem>
+                </Select>
+              </FormControl>
               <IconButton size="small" onClick={loadJobs} title="Refresh">
                 <Refresh />
               </IconButton>
@@ -252,68 +187,48 @@ export default function JobsList() {
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                             <Business sx={{ fontSize: 18, color: accent }} />
                             <Typography variant="h6" sx={{ fontSize: '1.1rem', fontWeight: 500 }}>
-                              {job.company}
+                              {job.company || 'Unknown Company'}
                             </Typography>
                           </Box>
                           <Typography variant="body1" color="text.secondary">
-                            {job.position}
+                            {job.position || 'Unknown Position'}
                           </Typography>
                         </Box>
-                        {job.from_address && (
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-                            <Email sx={{ fontSize: 14, color: 'primary.main' }} />
-                            <Typography variant="body2" color="primary.main">
-                              {job.from_address}
-                            </Typography>
-                          </Box>
-                        )}
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                          <Email sx={{ fontSize: 14, color: 'primary.main' }} />
+                          <Typography variant="body2" color="primary.main">
+                            {job.from_email}
+                          </Typography>
+                        </Box>
                       </Box>
                     }
                     secondaryTypographyProps={{ component: 'div' }}
                     secondary={
                       <Box sx={{ mt: 1.5 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-                          <Chip
-                            label={job.status}
-                            size="small"
-                            sx={{
-                              backgroundColor: statusColors[job.status] + '20',
-                              color: statusColors[job.status],
-                              border: `1px solid ${statusColors[job.status]}40`,
-                              fontWeight: 500
-                            }}
-                          />
-                          {job.job_type && (
+                          {job.status && (
                             <Chip
-                              label={jobTypeLabels[job.job_type] || job.job_type}
+                              label={job.status}
                               size="small"
-                              variant="outlined"
-                              color="primary"
+                              sx={{
+                                backgroundColor: statusColors[job.status] + '20',
+                                color: statusColors[job.status],
+                                border: `1px solid ${statusColors[job.status]}40`,
+                                fontWeight: 500
+                              }}
                             />
                           )}
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                             <CalendarToday sx={{ fontSize: 16, color: 'text.secondary' }} />
                             <Typography variant="body2" color="text.secondary">
-                              {new Date(job.applied_date).toLocaleDateString('en-US', {
+                              {new Date(job.message_date).toLocaleDateString('en-US', {
                                 month: 'short',
                                 day: 'numeric',
                                 year: 'numeric'
                               })}
                             </Typography>
                           </Box>
-                          {job.ml_confidence && (
-                            <Typography variant="body2" color="text.secondary">
-                              {Math.round(job.ml_confidence * 100)}% match
-                            </Typography>
-                          )}
                         </Box>
-                        {job.account_email && (
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
-                            <Typography variant="caption" color="text.secondary">
-                              Received at: {job.account_email}
-                            </Typography>
-                          </Box>
-                        )}
                       </Box>
                     }
                   />
@@ -348,40 +263,30 @@ export default function JobsList() {
         onClose={handleMenuClose}
       >
         <MenuItem dense disabled>
-          <Typography variant="caption">Change Status</Typography>
+          <Typography variant="caption">Job Actions</Typography>
         </MenuItem>
-        {Object.entries(statusColors).map(([status, color]) => (
-          <MenuItem
-            key={status}
-            onClick={() => handleStatusChange(status)}
-            selected={selectedJob?.status === status}
-          >
-            <Chip
-              label={status}
-              size="small"
-              sx={{
-                backgroundColor: color + '20',
-                color: color,
-                border: `1px solid ${color}40`
-              }}
-            />
-          </MenuItem>
-        ))}
-        <MenuItem divider />
-        <MenuItem onClick={handleDelete} sx={{ color: 'error.main' }}>
-          Delete
+        <MenuItem onClick={handleMenuClose}>
+          View Details
         </MenuItem>
       </Menu>
 
-      {emailModalOpen && viewingJob && (
+      {emailModalOpen && emailDetail && (
         <EmailViewModal
           open={emailModalOpen}
           onClose={() => {
             setEmailModalOpen(false);
-            setViewingJob(null);
+            setEmailDetail(null);
           }}
-          emailContent={viewingJob.raw_content || ''}
-          job={viewingJob}
+          emailContent={emailDetail.body?.body_plain || emailDetail.body?.body_excerpt || ''}
+          job={{
+            id: emailDetail.meta.gmail_message_id,
+            company: emailDetail.meta.company || 'Unknown',
+            position: emailDetail.meta.position || 'Unknown',
+            status: emailDetail.meta.status || 'Unknown',
+            applied_date: new Date(emailDetail.meta.message_date).toISOString(),
+            from_address: emailDetail.meta.from_email,
+            raw_content: emailDetail.body?.body_plain || emailDetail.body?.body_html || ''
+          }}
         />
       )}
     </Box>
