@@ -22,7 +22,8 @@
     "db:inspect": "tsx scripts/dbInspect.ts",
     "apps:backfill": "tsx scripts/backfillApplications.ts",
     "sync:jobs": "tsx electron/gmail/runLLMOnRecent.ts --limit=50 --save",
-    "dev": "NODE_ENV=development electron ./electron/main.js"
+    "dev": "NODE_ENV=development electron ./electron/main.js",
+    "postinstall": "npm rebuild better-sqlite3 --build-from-source"
   },
   "repository": {
     "type": "git",

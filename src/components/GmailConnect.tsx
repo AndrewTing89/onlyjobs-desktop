@@ -18,7 +18,11 @@ interface AuthStatus {
   accountEmail?: string;
 }
 
-export default function GmailConnect() {
+interface GmailConnectProps {
+  onJobsUpdated?: () => void;
+}
+
+export default function GmailConnect({ onJobsUpdated }: GmailConnectProps) {
   const [loading, setLoading] = React.useState(false);
   const [syncLoading, setSyncLoading] = React.useState(false);
   const [status, setStatus] = React.useState<AuthStatus>({ connected: false });
@@ -72,11 +76,16 @@ export default function GmailConnect() {
     try {
       setSyncLoading(true);
       setError(null);
-      // This would ideally call an IPC method to run the sync
-      // For now, we'll just show a message
-      alert('Sync started! Check the console for progress or run "npm run sync:jobs" manually.');
+      const result = await window.electronAPI.onlyjobs.emails.fetch({ limit: 50, save: true });
+      if (result.success) {
+        setError(null);
+        // Notify parent to refresh jobs list
+        if (onJobsUpdated) {
+          onJobsUpdated();
+        }
+      }
     } catch (e: any) {
-      setError(e?.message || 'Sync failed');
+      setError(e?.message || 'Email fetch failed');
     } finally {
       setSyncLoading(false);
     }

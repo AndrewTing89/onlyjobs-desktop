@@ -282,6 +282,14 @@ try {
   console.warn('Gmail Auth IPC registration skipped:', e?.message || e);
 }
 
+// Register Email Fetch IPC
+try {
+  const { registerEmailFetchIPC } = require('./ipc/emailFetch.js');
+  registerEmailFetchIPC();
+} catch (e) {
+  console.warn('Email Fetch IPC registration skipped:', e?.message || e);
+}
+
 // App event handlers
 app.whenReady().then(() => {
   createWindow();

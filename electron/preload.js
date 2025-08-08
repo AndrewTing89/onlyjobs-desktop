@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       status: () => ipcRenderer.invoke('onlyjobs.auth.status'),
       disconnect: () => ipcRenderer.invoke('onlyjobs.auth.disconnect'),
     },
+    emails: {
+      fetch: (options) => ipcRenderer.invoke('onlyjobs.emails.fetch', options),
+    },
   },
   
   // ML Model operations

@@ -33,7 +33,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { LookerDashboard } from "../components/LookerDashboard";
 import GmailConnect from "../components/GmailConnect";
-import JobsList from "../components/JobsList";
+import JobsList, { JobsListRef } from "../components/JobsList";
 // Import the appropriate auth context based on environment
 import { useAuth as useFirebaseAuth } from "../contexts/AuthContext";
 import { useAuth as useElectronAuth } from "../contexts/ElectronAuthContext";
@@ -60,6 +60,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" as "success" | "error" });
   const [profileMenuAnchor, setProfileMenuAnchor] = useState<null | HTMLElement>(null);
+  const jobsListRef = React.useRef<JobsListRef>(null);
 
   // For Electron, we use simplified auth
   const currentUser = isElectron ? authData.currentUser : authData.currentUser;
@@ -124,6 +125,26 @@ export default function Dashboard() {
       console.error('Logout failed:', error);
     }
     handleProfileMenuClose();
+  };
+
+  const handleJobsUpdated = async () => {
+    try {
+      if (jobsListRef.current) {
+        await jobsListRef.current.refresh();
+      }
+      setSnackbar({
+        open: true,
+        message: 'Jobs list refreshed successfully',
+        severity: 'success'
+      });
+    } catch (error) {
+      console.error('Failed to refresh jobs:', error);
+      setSnackbar({
+        open: true,
+        message: 'Failed to refresh jobs list',
+        severity: 'error'
+      });
+    }
   };
 
   return (
@@ -248,11 +269,11 @@ export default function Dashboard() {
         {isElectron ? (
           <Box sx={{ p: 3 }}>
             {/* Gmail Connection */}
-            <GmailConnect />
+            <GmailConnect onJobsUpdated={handleJobsUpdated} />
             
             {/* Jobs List */}
             <Box sx={{ mt: 3 }}>
-              <JobsList />
+              <JobsList ref={jobsListRef} />
             </Box>
           </Box>
         ) : (

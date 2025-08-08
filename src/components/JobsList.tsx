@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import {
   Box,
   Card,
@@ -41,7 +41,11 @@ const statusColors: Record<string, string> = {
   Offer: '#4CAF50'
 };
 
-export default function JobsList() {
+export interface JobsListRef {
+  refresh: () => Promise<void>;
+}
+
+const JobsList = forwardRef<JobsListRef>((props, ref) => {
   const [jobs, setJobs] = useState<JobEmail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -55,6 +59,10 @@ export default function JobsList() {
   useEffect(() => {
     loadJobs();
   }, [statusFilter]);
+
+  useImperativeHandle(ref, () => ({
+    refresh: loadJobs
+  }));
 
   const loadJobs = async () => {
     try {
@@ -291,4 +299,6 @@ export default function JobsList() {
       )}
     </Box>
   );
-}
+});
+
+export default JobsList;
