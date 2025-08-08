@@ -9,6 +9,19 @@ let loadedContext: any | null = null; // LlamaContext
 let loadedModel: any | null = null;   // LlamaModel
 let loadedModelPath: string | null = null;
 
+async function loadLlamaModule() {
+  if (llamaModule) return llamaModule;
+  
+  try {
+    llamaModule = await import('node-llama-cpp');
+    return llamaModule;
+  } catch (error) {
+    throw new Error(
+      "node-llama-cpp is not installed or failed to build. Run: npm i node-llama-cpp --legacy-peer-deps (or with --build-from-source)"
+    );
+  }
+}
+
 export type ParseResult = {
   is_job_related: boolean;
   company: string | null;
@@ -65,15 +78,11 @@ function makeCacheKey(subject: string, plaintext: string): string {
 async function ensureSession(modelPath: string) {
   if (loadedSession && loadedModelPath === modelPath) return loadedSession;
 
-  if (!llamaModule) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    llamaModule = require("node-llama-cpp");
-  }
-
-  const llama = await llamaModule.getLlama();
+  const module = await loadLlamaModule();
+  const llama = await module.getLlama();
   loadedModel = await llama.loadModelFromFile({ modelPath });
   loadedContext = await loadedModel.createContext({ contextSize: LLM_CONTEXT, gpuLayers: GPU_LAYERS });
-  loadedSession = new llamaModule.LlamaChatSession({ context: loadedContext, systemPrompt: SYSTEM_PROMPT });
+  loadedSession = new module.LlamaChatSession({ context: loadedContext, systemPrompt: SYSTEM_PROMPT });
   loadedModelPath = modelPath;
   return loadedSession;
 }

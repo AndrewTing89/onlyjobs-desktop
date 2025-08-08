@@ -89,6 +89,27 @@ class GmailAuth extends EventEmitter {
     return this.startOAuthFlow();
   }
   
+  async openAuthUrl(authUrl) {
+    try {
+      // Try Electron's shell.openExternal if available
+      if (shell && shell.openExternal) {
+        await shell.openExternal(authUrl);
+        return;
+      }
+    } catch (error) {
+      // Electron shell failed, try fallback
+    }
+    
+    try {
+      // Try dynamic import of 'open' package
+      const open = (await import('open')).default;
+      await open(authUrl);
+    } catch (error) {
+      // Best-effort fallback failed, just log the URL
+      console.log("GmailAuth: Please open this URL manually:", authUrl);
+    }
+  }
+
   async startOAuthFlow() {
     // Start local server to handle callback
     await this.startLocalServer();
@@ -103,8 +124,8 @@ class GmailAuth extends EventEmitter {
     console.log('GmailAuth: Opening browser for authentication...');
     console.log('GmailAuth: Auth URL:', authUrl);
     
-    // Open in system browser
-    await shell.openExternal(authUrl);
+    // Open in system browser with fallbacks
+    await this.openAuthUrl(authUrl);
     
     // Wait for the OAuth callback
     return new Promise((resolve, reject) => {
