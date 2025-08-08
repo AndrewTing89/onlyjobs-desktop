@@ -10,9 +10,11 @@ import Database from "better-sqlite3";
 // @ts-ignore - local build lacks type declarations for 'html-to-text'
 import { convert } from "html-to-text";
 import { parseEmailWithLLM } from "../llm/llmEngine";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
 
 // Reuse existing Gmail client (CommonJS module)
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// Use Node ESM-compatible require
 const GmailAuth = require("../gmail-auth.js");
 
 function parseArgs(argv: string[]) {
