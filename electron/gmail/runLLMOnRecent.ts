@@ -10,12 +10,7 @@ import Database from "better-sqlite3";
 // @ts-ignore - local build lacks type declarations for 'html-to-text'
 import { convert } from "html-to-text";
 import { parseEmailWithLLM } from "../llm/llmEngine";
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-
-// Reuse existing Gmail client (CommonJS module)
-// Use Node ESM-compatible require
-const GmailAuth = require("../gmail-auth.js");
+// Reuse existing Gmail client (CommonJS module) via dynamic import for ESM compatibility
 
 function parseArgs(argv: string[]) {
   const args = { limit: 20, save: false } as { limit: number; save: boolean };
@@ -162,7 +157,9 @@ function upsertEmail(db: Database.Database, email: {
 
 async function main() {
   const { limit, save } = parseArgs(process.argv);
-  const gmail = new GmailAuth();
+  const GmailAuthModule = await import("../gmail-auth.js");
+  const GmailAuth = GmailAuthModule.default || GmailAuthModule;
+  const gmail = new (GmailAuth as any)();
 
   const { messages } = await gmail.fetchEmails({ maxResults: limit, query: "in:inbox" });
   if (!messages || messages.length === 0) {
