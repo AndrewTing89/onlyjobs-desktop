@@ -141,6 +141,15 @@ npm run llm:evaluate -- --label-file=./labels.json --db=/path/to/jobs.db
 
 The script prints total evaluated, `is_job_related` accuracy, `job_type` accuracy (only for ground-truth job-related), a confusion matrix, and up to 5 example mismatches for each category.
 
+#### Generate a labels.json template
+
+Export a starter `labels.json` from recent emails, then fill in ground truth:
+
+```bash
+npm run llm:labels -- --limit=10
+# Opens/edits ./labels.json and update is_job_related (true/false) and job_type ("applied"|"interview"|"rejected"|"offer"|null)
+```
+
 ## Project Structure
 
 ```

@@ -17,7 +17,8 @@
     "llm:test": "ts-node ./electron/llm/manualTest.ts",
     "llm:download": "ts-node ./electron/llm/downloadModel.ts",
     "gmail:llm": "ts-node ./electron/gmail/runLLMOnRecent.ts",
-    "llm:evaluate": "ts-node ./scripts/evaluateLLM.ts"
+    "llm:evaluate": "ts-node ./scripts/evaluateLLM.ts",
+    "llm:labels": "ts-node ./scripts/exportLabelsTemplate.ts"
   },
   "repository": {
     "type": "git",
