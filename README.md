@@ -120,6 +120,27 @@ npm test
   - `emails.subject`, `emails.raw_content`
   - Extracted `company_extracted`, `position_extracted`, `is_job_related`, `job_type`
 
+### Evaluate LLM accuracy with labels
+
+1) Create a `labels.json` with ground truth entries (example):
+
+```json
+[
+  { "gmail_message_id": "17c123abc...", "is_job_related": true,  "job_type": "interview" },
+  { "gmail_message_id": "17c456def...", "is_job_related": false, "job_type": null }
+]
+```
+
+2) Run evaluation (DB path auto-detected; override with `ONLYJOBS_DB_PATH` or `--db`):
+
+```bash
+npm run llm:evaluate -- --label-file=./labels.json
+# or specify DB
+npm run llm:evaluate -- --label-file=./labels.json --db=/path/to/jobs.db
+```
+
+The script prints total evaluated, `is_job_related` accuracy, `job_type` accuracy (only for ground-truth job-related), a confusion matrix, and up to 5 example mismatches for each category.
+
 ## Project Structure
 
 ```
