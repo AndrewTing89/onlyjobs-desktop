@@ -4,82 +4,60 @@ const fs = require('fs').promises;
 const Database = require('better-sqlite3');
 const Store = require('electron-store').default || require('electron-store');
 const { app } = require('electron');
-const { spawn } = require('child_process');
 const { convert } = require('html-to-text');
-const mlHandler = {
+
+// LLM-based email classification
+const llmHandler = {
   classifyEmail: async (content) => {
-    return new Promise((resolve) => {
-      console.log('Using Python ML classifier');
+    try {
+      console.log('Using LLM for email classification');
+      const { parseEmailWithLLM } = require('./llm/llmEngine');
+      const { getStatusHint } = require('./llm/rules');
       
-      const scriptPath = path.join(__dirname, '..', 'ml-classifier', 'scripts', 'classify_email_simple.py');
+      const statusHint = getStatusHint('', content); // No subject available in this context
+      const result = await parseEmailWithLLM(content, statusHint);
       
-      // Spawn Python process from the main directory
-      const python = spawn('python3', [
-        scriptPath,
-        '--text', content,
-        '--format', 'json'
-      ]);
-      
-      let output = '';
-      let error = '';
-      
-      python.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-      
-      python.stderr.on('data', (data) => {
-        error += data.toString();
-      });
-      
-      python.on('close', (code) => {
-        if (code !== 0) {
-          console.error('ML classifier error:', error);
-          // Fallback to keyword classifier
-          resolve(fallbackClassifier(content));
-        } else {
-          try {
-            const result = JSON.parse(output);
-            console.log('ML classification result:', result);
-            
-            // Extract job type if job-related
-            let jobType = null;
-            if (result.is_job_related) {
-              const lowerContent = content.toLowerCase();
-              if (lowerContent.includes('interview')) jobType = 'interview';
-              else if (lowerContent.includes('offer')) jobType = 'offer';
-              else if (lowerContent.includes('reject') || lowerContent.includes('unfortunately')) jobType = 'rejection';
-              else if (lowerContent.includes('follow up')) jobType = 'follow_up';
-              else jobType = 'application_sent';
-            }
-            
-            resolve({
-              ...result,
-              job_type: jobType
-            });
-          } catch (e) {
-            console.error('Failed to parse ML output:', e);
-            resolve(fallbackClassifier(content));
-          }
-        }
-      });
-      
-      python.on('error', (err) => {
-        console.error('Failed to start Python:', err);
-        resolve(fallbackClassifier(content));
-      });
-    });
+      console.log('LLM classification result:', result);
+      return {
+        is_job_related: result.isJobRelated || false,
+        company: result.applicationDetails?.company || null,
+        position: result.applicationDetails?.position || null,
+        status: result.applicationDetails?.status || null,
+        job_type: result.applicationDetails?.status?.toLowerCase().replace(' ', '_') || null
+      };
+    } catch (error) {
+      console.error('LLM classification error:', error);
+      return fallbackClassifier(content);
+    }
   },
   initialize: async () => {
-    console.log('ML handler initialized');
-    return true;
+    try {
+      console.log('Initializing LLM handler...');
+      // Test if LLM module can be loaded
+      await require('./llm/llmEngine');
+      console.log('LLM handler initialized successfully');
+      return true;
+    } catch (error) {
+      console.error('Failed to initialize LLM handler:', error);
+      return false;
+    }
   },
-  isModelReady: async () => true,
-  getModelStatus: async () => ({ 
-    status: 'Using Python ML model',
-    model_ready: true 
-  }),
-  trainModel: async () => {
-    throw new Error('Training not implemented');
+  isModelReady: async () => {
+    try {
+      const { DEFAULT_MODEL_PATH } = require('./llm/config');
+      const fs = require('fs');
+      return fs.existsSync(DEFAULT_MODEL_PATH);
+    } catch {
+      return false;
+    }
+  },
+  getModelStatus: async () => {
+    const ready = await llmHandler.isModelReady();
+    return { 
+      status: ready ? 'LLM model ready' : 'LLM model not found',
+      model_ready: ready,
+      model_type: 'node-llama-cpp'
+    };
   }
 };
 
@@ -403,7 +381,7 @@ ipcMain.handle('db:delete-job', async (event, id) => {
 ipcMain.handle('classify-email', async (event, content) => {
   try {
     console.log('📧 Classifying email content...');
-    const result = await mlHandler.classifyEmail(content);
+    const result = await llmHandler.classifyEmail(content);
     
     // Enhance result with additional job extraction logic
     const enhancedResult = {
@@ -558,7 +536,7 @@ function _extractPosition(content) {
 // ML Model management
 ipcMain.handle('ml:get-status', async () => {
   try {
-    const status = await mlHandler.getModelStatus();
+    const status = await llmHandler.getModelStatus();
     return status;
   } catch (error) {
     console.error('Error getting ML model status:', error);
@@ -568,7 +546,7 @@ ipcMain.handle('ml:get-status', async () => {
 
 ipcMain.handle('ml:is-ready', async () => {
   try {
-    const isReady = await mlHandler.isModelReady();
+    const isReady = await llmHandler.isModelReady();
     return { ready: isReady };
   } catch (error) {
     console.error('Error checking ML model readiness:', error);
@@ -576,37 +554,12 @@ ipcMain.handle('ml:is-ready', async () => {
   }
 });
 
-ipcMain.handle('ml:train-model', async (event, options = {}) => {
-  try {
-    console.log('🏋️  Starting ML model training...');
-    const result = await mlHandler.trainModel(options);
-    
-    // Notify frontend of training completion
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    if (mainWindow) {
-      mainWindow.webContents.send('ml-training-complete', result);
-    }
-    
-    return result;
-  } catch (error) {
-    console.error('❌ ML model training failed:', error);
-    
-    // Notify frontend of training error
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    if (mainWindow) {
-      mainWindow.webContents.send('ml-training-error', { error: error.message });
-    }
-    
-    throw error;
-  }
-});
-
 ipcMain.handle('ml:initialize', async () => {
   try {
-    const result = await mlHandler.initialize();
+    const result = await llmHandler.initialize();
     return { success: result };
   } catch (error) {
-    console.error('Error initializing ML handler:', error);
+    console.error('Error initializing LLM handler:', error);
     return { success: false, error: error.message };
   }
 });
@@ -921,7 +874,7 @@ ipcMain.handle('emails:classify', async (event, options = {}) => {
     for (const email of emails) {
       try {
         // Classify email
-        const classification = await mlHandler.classifyEmail(email.raw_content);
+        const classification = await llmHandler.classifyEmail(email.raw_content);
         
         // Update email with classification
         const updateStmt = getDb().prepare(`
@@ -1114,7 +1067,7 @@ ipcMain.handle('gmail:sync', async (event, options = {}) => {
     
     for (const email of unclassifiedEmails) {
       try {
-        const classification = await mlHandler.classifyEmail(email.raw_content);
+        const classification = await llmHandler.classifyEmail(email.raw_content);
         
         // Update email with classification
         const updateStmt = getDb().prepare(`
@@ -1738,7 +1691,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     
     for (const email of unclassifiedEmails) {
       try {
-        const classification = await mlHandler.classifyEmail(email.raw_content);
+        const classification = await llmHandler.classifyEmail(email.raw_content);
         
         // Update email with classification
         const updateStmt = getDb().prepare(`

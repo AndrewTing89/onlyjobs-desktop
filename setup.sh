@@ -12,26 +12,21 @@ else
     exit 1
 fi
 
-# Check Python
-echo -n "Checking Python... "
-if command -v python3 &> /dev/null; then
-    echo "✓ ($(python3 --version))"
-else
-    echo "✗ Python 3 not found. Please install Python 3.8+"
-    exit 1
-fi
-
 # Install npm dependencies
 echo ""
 echo "📦 Installing npm dependencies..."
 npm install
 
-# Install Python dependencies
+# Download LLM model if not present
 echo ""
-echo "🐍 Installing Python dependencies..."
-cd ml-classifier
-pip3 install -r requirements.txt
-cd ..
+echo "🤖 Checking for LLM model..."
+if [ ! -f models/model.gguf ]; then
+    echo "📥 LLM model not found. You can download one using:"
+    echo "   npm run llm:download"
+    echo "   This will download a compatible GGUF model for email classification."
+else
+    echo "✓ LLM model found"
+fi
 
 # Create .env file if it doesn't exist
 if [ ! -f .env ]; then
@@ -59,7 +54,7 @@ echo ""
 echo "Next steps:"
 echo "1. Add your Google OAuth credentials to .env file"
 echo "2. Download Gmail API credentials from Google Cloud Console"
-echo "3. Run 'npm start' in one terminal"
-echo "4. Run 'npm run electron-dev' in another terminal"
+echo "3. Download LLM model: npm run llm:download (if not already present)"
+echo "4. Run the app: npm run dev"
 echo ""
 echo "Happy job hunting! 🎯"

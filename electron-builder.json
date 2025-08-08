@@ -7,7 +7,7 @@
   "files": [
     "build/**/*",
     "electron/**/*",
-    "ml-classifier/**/*",
+    "models/**/*",
     "node_modules/**/*",
     "public/**/*",
     "package.json"

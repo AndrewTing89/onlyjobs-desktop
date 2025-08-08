@@ -31,7 +31,7 @@ npm run dist              # Build without publishing
 - **Authentication**: Hybrid approach:
   - AppAuth-JS for Gmail OAuth 2.0 flow (to access Gmail API)
   - Firebase Auth for user authentication (login/signup)
-- **Local ML Classifier**: Python-based email classification running locally
+- **Local LLM Engine**: Node.js-based LLM email classification using node-llama-cpp
 - **Data Storage**: Local SQLite database (via better-sqlite3)
 
 ### Key Components
@@ -45,10 +45,10 @@ npm run dist              # Build without publishing
    - OAuth token management using AppAuth-JS
    - Email fetching and parsing
 
-3. **ML Classification** (`ml-classifier/`):
-   - Local Python model for job email classification
-   - Invoked via python-shell from Electron
-   - Pre-trained model included in distribution
+3. **LLM Classification** (`electron/llm/`):
+   - Local LLM model for job email classification
+   - Uses node-llama-cpp for high-performance inference
+   - GGUF model format with structured JSON output
 
 4. **React Frontend** (`src/`):
    - Material-UI v7 + Chakra UI components
