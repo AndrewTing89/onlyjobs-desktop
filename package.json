@@ -12,7 +12,10 @@
     "electron-dist": "npm run build && electron-builder",
     "dist": "npm run build && electron-builder --publish=never",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "llm:deps": "npm i node-llama-cpp --legacy-peer-deps",
+    "llm:download": "tsx electron/llm/downloadModel.ts",
+    "llm:test": "tsx electron/llm/manualTest.ts"
   },
   "repository": {
     "type": "git",
@@ -32,9 +35,11 @@
     "@types/react-router-dom": "^5.3.3",
     "electron": "^37.2.5",
     "electron-builder": "^26.0.12",
+    "electron-rebuild": "^3.2.9",
     "electron-reload": "^2.0.0-alpha.1",
     "firebase-tools": "^14.11.2",
-    "http-proxy-middleware": "^3.0.5"
+    "http-proxy-middleware": "^3.0.5",
+    "tsx": "^4.20.3"
   },
   "dependencies": {
     "@chakra-ui/react": "^3.22.0",
@@ -54,6 +59,7 @@
     "framer-motion": "^12.23.1",
     "googleapis": "^154.1.0",
     "html-to-text": "^9.0.5",
+    "node-llama-cpp": "^3.11.0",
     "python-shell": "^5.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

@@ -28,9 +28,14 @@ An AI-powered job application tracking desktop app that automatically syncs with
 
 The app supports a local LLM provider for enhanced email classification in Electron mode only. The default provider is "keyword" so web builds work unchanged. 
 
-- Model path: `./models/model.gguf` (downloaded automatically in later setup)
-- Provider toggle: Set `CLASSIFIER_PROVIDER=llm` in `.env`
-- **Important**: `node-llama-cpp` must never be imported in renderer/web code - it's Electron main process only
+- **Default Model**: Llama-3.2-3B-Instruct Q4_K_M (lightweight, CPU-optimized)
+- **Model Path**: `./models/model.gguf`
+- **Provider Toggle**: Set `CLASSIFIER_PROVIDER=llm` in `.env`
+- **Setup Commands**:
+  - `npm run llm:deps` - Install node-llama-cpp dependencies
+  - `npm run llm:download` - Download the model file
+  - `npm run llm:test` - Test LLM classification with sample emails
+- **Important**: `node-llama-cpp` must never be imported in renderer/web code - Electron main process only
 
 ## Installation
 
