@@ -243,7 +243,7 @@ async function parseEmailWithLLM(input) {
             
             // Truncate content if needed
             const truncatedContent = truncateContent(input.plaintext);
-            const userPrompt = prompts_1.USER_PROMPT_TEMPLATE(input.subject, truncatedContent);
+            const userMessage = prompts_1.userPrompt(input.subject, truncatedContent);
             
             console.log('🧠 Querying LLM for email classification...');
             
@@ -251,7 +251,7 @@ async function parseEmailWithLLM(input) {
             const response = await withTimeout(
               loadedSession.prompt([
                 { role: 'system', content: prompts_1.SYSTEM_PROMPT },
-                { role: 'user', content: userPrompt }
+                { role: 'user', content: userMessage }
               ], {
                 temperature: config_1.ONLYJOBS_TEMPERATURE,
                 maxTokens: config_1.ONLYJOBS_MAX_TOKENS,

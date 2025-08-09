@@ -19,7 +19,7 @@ import {
   ONLYJOBS_PREFILTER_REGEX
 } from './config';
 import { getCachedResult, setCachedResult, cleanupExpiredCache } from './cache';
-import { SYSTEM_PROMPT, USER_PROMPT_TEMPLATE } from './prompts';
+import { SYSTEM_PROMPT, userPrompt } from './prompts';
 import { normalizeStatus, cleanText } from './normalize';
 
 export type ParseInput = {
@@ -273,7 +273,7 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
       
       // Truncate content if needed
       const truncatedContent = truncateContent(input.plaintext);
-      const userPrompt = USER_PROMPT_TEMPLATE(input.subject, truncatedContent);
+      const userMessage = userPrompt(input.subject, truncatedContent);
       
       console.log('🧠 Querying LLM for email classification...');
       
@@ -281,7 +281,7 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
       const response = await withTimeout(
         loadedSession.prompt([
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt }
+          { role: 'user', content: userMessage }
         ], {
           temperature: ONLYJOBS_TEMPERATURE,
           maxTokens: ONLYJOBS_MAX_TOKENS,
