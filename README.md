@@ -35,6 +35,17 @@ The app supports a local LLM provider for enhanced email classification in Elect
   - `npm run llm:deps` - Install node-llama-cpp dependencies
   - `npm run llm:download` - Download the model file
   - `npm run llm:test` - Test LLM classification with sample emails (runs under Electron)
+- **Performance Features**:
+  - **Prefilter**: Skips LLM for obvious non-job emails using regex matching
+  - **Caching**: Results cached for 7 days (configurable TTL) for faster repeated classification
+  - **Timeout Protection**: Falls back to keyword classifier after 8s timeout
+  - **Content Truncation**: Long emails truncated to 5000 chars (preserves header/footer)
+  - **Concurrency Control**: Limits concurrent LLM requests to prevent resource exhaustion
+- **Configuration**:
+  - `ONLYJOBS_ENABLE_PREFILTER=1` - Enable/disable regex prefilter
+  - `ONLYJOBS_INFER_TIMEOUT_MS=8000` - LLM inference timeout in milliseconds
+  - `ONLYJOBS_CACHE_TTL_HOURS=168` - Cache expiration (7 days default)
+  - `ONLYJOBS_INFER_MAX_CHARS=5000` - Max email length before truncation
 - **Troubleshooting**:
   - `npm run diagnose:native` - Diagnose native module loading issues
   - `npm run rebuild:llm` - Rebuild native modules for Electron

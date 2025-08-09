@@ -5,13 +5,20 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import {
   ONLYJOBS_MODEL_PATH,
   ONLYJOBS_TEMPERATURE,
   ONLYJOBS_MAX_TOKENS,
   ONLYJOBS_CTX,
-  ONLYJOBS_N_GPU_LAYERS
+  ONLYJOBS_N_GPU_LAYERS,
+  ONLYJOBS_INFER_TIMEOUT_MS,
+  ONLYJOBS_INFER_MAX_CHARS,
+  ONLYJOBS_CACHE_TTL_HOURS,
+  ONLYJOBS_ENABLE_PREFILTER,
+  ONLYJOBS_PREFILTER_REGEX
 } from './config';
+import { getCachedResult, setCachedResult, cleanupExpiredCache } from './cache';
 
 export type ParseInput = {
   subject: string;
@@ -33,16 +40,17 @@ let loadedModel: any | null = null;
 let loadedContext: any | null = null;
 let loadedSession: any | null = null;
 let loadedModelPath: string | null = null;
+let concurrentRequests = 0;
+const MAX_CONCURRENT_REQUESTS = 2;
 
-const SYSTEM_PROMPT = `You are an email classifier for job applications. Output ONLY strict JSON matching this exact schema:
+const SYSTEM_PROMPT = `You are an email classifier for job applications. Output ONLY strict JSON matching the schema. No markdown, no extra text.
+
+Schema:
 {"is_job_related": boolean, "company": string|null, "position": string|null, "status": "Applied"|"Interview"|"Declined"|"Offer"|null, "confidence": number}
 
 Examples:
-Input: "Thank you for applying to Data Analyst position at Acme Corp. We received your application."
-Output: {"is_job_related": true, "company": "Acme Corp", "position": "Data Analyst", "status": "Applied", "confidence": 0.95}
-
-Input: "Your subscription renewal is due next month."
-Output: {"is_job_related": false, "company": null, "position": null, "status": null, "confidence": 0.9}`;
+Job: {"is_job_related": true, "company": "Acme Corp", "position": "Data Analyst", "status": "Applied", "confidence": 0.95}
+Non-job: {"is_job_related": false, "company": null, "position": null, "status": null, "confidence": 0.9}`;
 
 async function initializeLLM(): Promise<void> {
   const currentModelPath = path.resolve(ONLYJOBS_MODEL_PATH);
@@ -139,14 +147,38 @@ function parseJsonResponse(response: string): ParseResult {
         const parsed = JSON.parse(jsonMatch[0]);
         return validateAndFixParseResult(parsed);
       } catch (secondError) {
-        console.warn('Failed to parse extracted JSON:', secondError);
+        // Try simple repair: fix trailing commas, quotes
+        const repaired = repairJson(jsonMatch[0]);
+        if (repaired) {
+          try {
+            const parsed = JSON.parse(repaired);
+            console.log('🔧 JSON repair successful');
+            return validateAndFixParseResult(parsed);
+          } catch (thirdError) {
+            console.warn('JSON repair failed:', thirdError.message);
+          }
+        }
       }
     }
     
-    // Last resort: try to extract key-value pairs manually
-    console.warn('Could not parse JSON response, attempting manual extraction');
+    // Last resort failed
+    console.warn('Could not parse JSON response after repair attempts');
     console.warn('Raw response:', response);
     throw new Error(`Failed to parse LLM response as JSON: ${firstError.message}`);
+  }
+}
+
+function repairJson(jsonText: string): string | null {
+  try {
+    // Common repairs: trailing commas, unquoted keys, single quotes
+    let repaired = jsonText
+      .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+      .replace(/([{,]\s*)(\w+):/g, '$1"$2":') // Quote unquoted keys
+      .replace(/'/g, '"'); // Convert single quotes to double quotes
+    
+    return repaired;
+  } catch (error) {
+    return null;
   }
 }
 
@@ -169,34 +201,139 @@ function validateAndFixParseResult(obj: any): ParseResult {
   return result;
 }
 
+function applyPrefilter(subject: string, plaintext: string): boolean {
+  if (!ONLYJOBS_ENABLE_PREFILTER) {
+    return true; // Pass through if prefilter disabled
+  }
+  
+  const combined = `${subject} ${plaintext}`.toLowerCase();
+  const regex = new RegExp(ONLYJOBS_PREFILTER_REGEX, 'i');
+  const matches = regex.test(combined);
+  
+  console.log(`🔍 Prefilter: ${matches ? 'PASS' : 'SKIP'} (regex: ${ONLYJOBS_PREFILTER_REGEX})`);
+  return matches;
+}
+
+function truncateContent(plaintext: string): string {
+  if (plaintext.length <= ONLYJOBS_INFER_MAX_CHARS) {
+    return plaintext;
+  }
+  
+  const keepEnd = 800;
+  const keepStart = ONLYJOBS_INFER_MAX_CHARS - keepEnd - 10; // 10 for separator
+  
+  const start = plaintext.substring(0, keepStart);
+  const end = plaintext.substring(plaintext.length - keepEnd);
+  const truncated = `${start}\n...\n${end}`;
+  
+  console.log(`✂️ Truncated content: ${plaintext.length} -> ${truncated.length} chars`);
+  return truncated;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs);
+    })
+  ]);
+}
+
 export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult> {
+  const startTime = Date.now();
+  let decisionPath = '';
+  
   try {
-    await initializeLLM();
-    
-    if (!loadedSession) {
-      throw new Error('Chat session not available');
+    // Concurrency guard
+    if (concurrentRequests >= MAX_CONCURRENT_REQUESTS) {
+      console.warn(`⚠️ Too many concurrent requests (${concurrentRequests}), falling back to keyword`);
+      const keywordProvider = await import('../classifier/providers/keywordProvider');
+      return keywordProvider.parse(input);
     }
     
-    const emailContent = `Subject: ${input.subject}\n\nContent: ${input.plaintext}`;
+    concurrentRequests++;
     
-    console.log('🧠 Querying LLM for email classification...');
-    const response = await loadedSession.prompt([
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: emailContent }
-    ], {
-      temperature: ONLYJOBS_TEMPERATURE,
-      maxTokens: ONLYJOBS_MAX_TOKENS,
-    });
-    
-    console.log('📝 LLM response:', response);
-    
-    const parsedResult = parseJsonResponse(response);
-    console.log('✅ Parsed result:', parsedResult);
-    
-    return parsedResult;
+    try {
+      // Check cache first
+      const cached = getCachedResult(input.subject, input.plaintext);
+      if (cached) {
+        decisionPath = 'cache_hit';
+        console.log(`⚡ ${decisionPath} (${Date.now() - startTime}ms)`);
+        return cached;
+      }
+      
+      // Apply prefilter
+      if (!applyPrefilter(input.subject, input.plaintext)) {
+        decisionPath = 'prefilter_skip';
+        console.log(`⚡ ${decisionPath} (${Date.now() - startTime}ms)`);
+        const keywordProvider = await import('../classifier/providers/keywordProvider');
+        return keywordProvider.parse(input);
+      }
+      
+      // Initialize LLM
+      await initializeLLM();
+      
+      if (!loadedSession) {
+        throw new Error('Chat session not available');
+      }
+      
+      // Truncate content if needed
+      const truncatedContent = truncateContent(input.plaintext);
+      const emailContent = `Subject: ${input.subject}\n\nContent: ${truncatedContent}`;
+      
+      console.log('🧠 Querying LLM for email classification...');
+      
+      // Run inference with timeout
+      const response = await withTimeout(
+        loadedSession.prompt([
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: emailContent }
+        ], {
+          temperature: ONLYJOBS_TEMPERATURE,
+          maxTokens: ONLYJOBS_MAX_TOKENS,
+        }),
+        ONLYJOBS_INFER_TIMEOUT_MS
+      );
+      
+      console.log('📝 LLM response:', response);
+      
+      const parsedResult = parseJsonResponse(response);
+      decisionPath = 'llm_success';
+      
+      // Cache the result
+      setCachedResult(input.subject, input.plaintext, parsedResult);
+      
+      console.log(`✅ ${decisionPath} (${Date.now() - startTime}ms)`, parsedResult);
+      
+      // Periodic cache cleanup
+      if (Math.random() < 0.1) { // 10% chance
+        cleanupExpiredCache();
+      }
+      
+      return parsedResult;
+      
+    } finally {
+      concurrentRequests--;
+    }
     
   } catch (error) {
-    console.error('❌ LLM parsing failed:', error);
-    throw error;
+    const errorTime = Date.now() - startTime;
+    
+    if (error.message.includes('timed out')) {
+      decisionPath = 'timeout_fallback';
+      console.warn(`⏱️ ${decisionPath} (${errorTime}ms):`, error.message);
+    } else if (error.message.includes('parse')) {
+      decisionPath = 'parse_fail_fallback';
+      console.warn(`🔧 ${decisionPath} (${errorTime}ms):`, error.message);
+    } else {
+      decisionPath = 'llm_error_fallback';
+      console.error(`❌ ${decisionPath} (${errorTime}ms):`, error);
+    }
+    
+    // Fallback to keyword provider
+    const keywordProvider = await import('../classifier/providers/keywordProvider');
+    const result = await keywordProvider.parse(input);
+    console.log(`🔄 Fallback result (${Date.now() - startTime}ms):`, result);
+    return result;
   }
 }
