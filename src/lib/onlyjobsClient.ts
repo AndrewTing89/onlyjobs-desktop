@@ -68,39 +68,19 @@ interface PaginatedResponse<T> {
   total: number;
 }
 
-// Get electronAPI from window
-declare global {
-  interface Window {
-    electronAPI: {
-      onlyjobs: {
-        fetchJobInbox: (options?: {
-          status?: 'Applied' | 'Interview' | 'Declined' | 'Offer';
-          limit?: number;
-          offset?: number;
-        }) => Promise<PaginatedResponse<JobEmail>>;
-        fetchEmailDetail: (options: {
-          gmail_message_id: string;
-        }) => Promise<EmailDetail>;
-        fetchApplications: (options?: {
-          company?: string;
-          status?: 'Applied' | 'Interview' | 'Declined' | 'Offer';
-          limit?: number;
-          offset?: number;
-        }) => Promise<PaginatedResponse<Application>>;
-        fetchApplicationTimeline: (options: {
-          application_id: string;
-        }) => Promise<ApplicationTimeline>;
-      };
-    };
-  }
-}
+// Type declarations are in src/electron.d.ts
 
 export class OnlyJobsClient {
   private api = window.electronAPI?.onlyjobs;
+  private isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 
   constructor() {
-    if (!this.api) {
-      throw new Error('OnlyJobs IPC API not available');
+    // Don't throw error in constructor - let individual methods handle it
+  }
+
+  private ensureElectron(): void {
+    if (!this.isElectron || !this.api) {
+      throw new Error('OnlyJobs IPC API not available - this feature requires Electron environment');
     }
   }
 
@@ -109,10 +89,12 @@ export class OnlyJobsClient {
     limit?: number;
     offset?: number;
   }): Promise<PaginatedResponse<JobEmail>> {
+    this.ensureElectron();
     return this.api.fetchJobInbox(options);
   }
 
   async fetchEmailDetail(gmailMessageId: string): Promise<EmailDetail> {
+    this.ensureElectron();
     return this.api.fetchEmailDetail({ gmail_message_id: gmailMessageId });
   }
 
@@ -122,11 +104,17 @@ export class OnlyJobsClient {
     limit?: number;
     offset?: number;
   }): Promise<PaginatedResponse<Application>> {
+    this.ensureElectron();
     return this.api.fetchApplications(options);
   }
 
   async fetchApplicationTimeline(applicationId: string): Promise<ApplicationTimeline> {
+    this.ensureElectron();
     return this.api.fetchApplicationTimeline({ application_id: applicationId });
+  }
+
+  isAvailable(): boolean {
+    return this.isElectron && !!this.api;
   }
 }
 

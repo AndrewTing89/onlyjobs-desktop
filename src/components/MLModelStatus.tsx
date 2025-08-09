@@ -85,17 +85,25 @@ const MLModelStatus: React.FC = () => {
   useEffect(() => {
     loadStatus();
 
-    // Set up event listeners for training events
-    window.electronAPI.onMlTrainingComplete((result) => {
+    // Set up event listeners for training events using generic on()
+    const handleTrainingComplete = (result: any) => {
       console.log('ML training completed:', result);
       setTraining(false);
       loadStatus(); // Reload status after training
-    });
-
-    window.electronAPI.onMlTrainingError((error) => {
+    };
+    
+    const handleTrainingError = (error: any) => {
       console.error('ML training error:', error);
       setTraining(false);
-    });
+    };
+    
+    window.electronAPI.on('llm-complete', handleTrainingComplete);
+    window.electronAPI.on('llm-error', handleTrainingError);
+    
+    return () => {
+      window.electronAPI.removeAllListeners('llm-complete');
+      window.electronAPI.removeAllListeners('llm-error');
+    };
   }, []);
 
   const getStatusIcon = (ready: boolean, error?: string) => {

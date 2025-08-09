@@ -32,31 +32,32 @@ export const ElectronAuthProvider: React.FC<{ children: React.ReactNode }> = ({ 
   useEffect(() => {
     checkAuth();
     
-    // Listen for auth events
+    // Listen for auth events using generic on()
     if (window.electronAPI) {
-      window.electronAPI.onAuthSuccess((data: any) => {
+      const handleAuthSuccess = (data: any) => {
         console.log('ElectronAuth: Auth success:', data);
         if (data.user) {
           setCurrentUser(data.user);
           setIsAuthenticated(true);
         }
         setLoading(false);
-      });
+      };
       
-      window.electronAPI.onAuthError((error: string) => {
+      const handleAuthError = (error: string) => {
         console.error('ElectronAuth: Auth error:', error);
         setIsAuthenticated(false);
         setCurrentUser(null);
         setLoading(false);
-      });
-    }
-    
-    return () => {
-      if (window.electronAPI?.removeAllListeners) {
+      };
+      
+      window.electronAPI.on('auth-success', handleAuthSuccess);
+      window.electronAPI.on('auth-error', handleAuthError);
+      
+      return () => {
         window.electronAPI.removeAllListeners('auth-success');
         window.electronAPI.removeAllListeners('auth-error');
-      }
-    };
+      };
+    }
   }, []);
 
   const checkAuth = async () => {

@@ -1,0 +1,160 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.parseEmailWithLLM = void 0;
+const crypto_1 = __importDefault(require("crypto"));
+const config_1 = require("./config");
+const rules_1 = require("./rules");
+// We import lazily since node-llama-cpp is heavy
+let llamaModule = null;
+let loadedSession = null; // LlamaChatSession
+let loadedContext = null; // LlamaContext
+let loadedModel = null; // LlamaModel
+let loadedModelPath = null;
+async function loadLlamaModule() {
+    if (llamaModule)
+        return llamaModule;
+    try {
+        llamaModule = await Promise.resolve().then(() => __importStar(require('node-llama-cpp')));
+        return llamaModule;
+    }
+    catch (error) {
+        throw new Error("node-llama-cpp is not installed or failed to build. Run: npm i node-llama-cpp --legacy-peer-deps (or with --build-from-source)");
+    }
+}
+const schema = {
+    type: "object",
+    properties: {
+        is_job_related: { type: "boolean" },
+        company: { type: ["string", "null"] },
+        position: { type: ["string", "null"] },
+        status: { type: ["string", "null"], enum: ["Applied", "Interview", "Declined", "Offer", null] },
+    },
+    required: ["is_job_related", "company", "position", "status"],
+    additionalProperties: false,
+};
+const SYSTEM_PROMPT = [
+    "You are an email parser. Output ONLY JSON matching the schema, with no extra text.",
+    "Decide if the email is job-related (job application, recruiting, ATS, interview, offer, rejection, etc.).",
+    "If not job-related → is_job_related=false, and company=null, position=null, status=null.",
+    "If job-related, extract:",
+    "- company: prefer official name from signature/body; map sender domain if helpful.",
+    "- position: the role title if present.",
+    "- status: one of Applied | Interview | Declined | Offer; if uncertain use null.",
+    "Use low temperature (0.1-0.2). No 'unknown' anywhere. Use null per the schema.",
+    "",
+    "Examples:",
+    "Input\nSubject: Application received – Data Analyst\nBody: Thanks for applying to Acme. We received your application for Data Analyst.\nOutput",
+    '{"is_job_related":true,"company":"Acme","position":"Data Analyst","status":"Applied"}',
+    "",
+    "Input\nSubject: Interview availability – Globex\nBody: We'd like to schedule a 30-min interview this week regarding your application at Globex.\nOutput",
+    '{"is_job_related":true,"company":"Globex","position":null,"status":"Interview"}',
+    "",
+    "Input\nSubject: Your application at Initech\nBody: We regret to inform you we will not move forward with your candidacy at Initech.\nOutput",
+    '{"is_job_related":true,"company":"Initech","position":null,"status":"Declined"}',
+    "",
+    "Input\nSubject: Offer – Backend Engineer\nBody: Congratulations! We're excited to extend you an offer for Backend Engineer at Umbrella Corp.\nOutput",
+    '{"is_job_related":true,"company":"Umbrella Corp","position":"Backend Engineer","status":"Offer"}',
+    "",
+    "Input\nSubject: Career tips and market insights for August\nBody: Newsletter: industry news and general career advice.\nOutput",
+    '{"is_job_related":false,"company":null,"position":null,"status":null}',
+].join("\n");
+const cache = new Map();
+function makeCacheKey(subject, plaintext) {
+    const canonical = subject + "\n" + plaintext.slice(0, 1000);
+    return crypto_1.default.createHash("sha256").update(canonical).digest("hex");
+}
+async function ensureSession(modelPath) {
+    if (loadedSession && loadedModelPath === modelPath)
+        return loadedSession;
+    const module = await loadLlamaModule();
+    const { getLlama, LlamaModel, LlamaContext, LlamaChatSession } = module;
+    const llama = await getLlama();
+    loadedModel = await llama.loadModel({ modelPath });
+    loadedContext = await loadedModel.createContext({ contextSize: config_1.LLM_CONTEXT, batchSize: 512 });
+    const sequence = loadedContext.getSequence();
+    loadedSession = new LlamaChatSession({ contextSequence: sequence, systemPrompt: SYSTEM_PROMPT });
+    loadedModelPath = modelPath;
+    return loadedSession;
+}
+async function parseEmailWithLLM(input) {
+    var _a, _b, _c, _d, _e;
+    const subject = (_a = input.subject) !== null && _a !== void 0 ? _a : "";
+    const plaintext = (_b = input.plaintext) !== null && _b !== void 0 ? _b : "";
+    const modelPath = (_c = input.modelPath) !== null && _c !== void 0 ? _c : config_1.DEFAULT_MODEL_PATH;
+    const temperature = (_d = input.temperature) !== null && _d !== void 0 ? _d : config_1.LLM_TEMPERATURE;
+    const maxTokens = (_e = input.maxTokens) !== null && _e !== void 0 ? _e : config_1.LLM_MAX_TOKENS;
+    const key = makeCacheKey(subject, plaintext);
+    const cached = cache.get(key);
+    if (cached)
+        return cached;
+    const session = await ensureSession(modelPath);
+    const hint = (0, rules_1.getStatusHint)(subject, plaintext);
+    const userPrompt = [
+        hint ? `${hint}` : null,
+        `Input`,
+        `Subject: ${subject}`,
+        `Body: ${plaintext}`,
+        `Output`,
+    ]
+        .filter(Boolean)
+        .join("\n");
+    const response = await session.prompt(userPrompt, {
+        temperature,
+        maxTokens,
+        responseFormat: {
+            type: "json_schema",
+            schema,
+            schema_id: "OnlyJobsEmailParseSchema",
+        },
+    });
+    // node-llama-cpp with responseFormat json_schema guarantees valid JSON matching schema
+    // but we still defensively parse and coerce nulls instead of 'unknown'
+    let parsed;
+    try {
+        parsed = JSON.parse(response);
+    }
+    catch (err) {
+        // Should not happen with json_schema, but ensure hard fallback
+        parsed = { is_job_related: false, company: null, position: null, status: null };
+    }
+    // Enforce rules: if not job-related, everything else null
+    if (!parsed.is_job_related) {
+        parsed.company = null;
+        parsed.position = null;
+        parsed.status = null;
+    }
+    // Never return 'unknown' strings
+    if (parsed.company && /^unknown$/i.test(parsed.company))
+        parsed.company = null;
+    if (parsed.position && /^unknown$/i.test(parsed.position))
+        parsed.position = null;
+    cache.set(key, parsed);
+    return parsed;
+}
+exports.parseEmailWithLLM = parseEmailWithLLM;

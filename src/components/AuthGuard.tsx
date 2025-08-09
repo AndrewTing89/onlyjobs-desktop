@@ -40,13 +40,11 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         }
       };
       
-      window.electronAPI.onOAuthCallback(handleOAuthCallback);
+      window.electronAPI.on('oauth-callback', handleOAuthCallback);
       
       // Cleanup
       return () => {
-        if (window.electronAPI?.removeAllListeners) {
-          window.electronAPI.removeAllListeners('oauth-callback');
-        }
+        window.electronAPI.removeAllListeners('oauth-callback');
       };
     }
   }, []);

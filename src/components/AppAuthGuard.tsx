@@ -22,27 +22,28 @@ export default function AppAuthGuard({ children }: AppAuthGuardProps) {
   useEffect(() => {
     checkAuth();
     
-    // Listen for auth events
+    // Listen for auth events using generic on()
     if (window.electronAPI) {
-      window.electronAPI.onAuthSuccess((data: any) => {
+      const handleAuthSuccess = (data: any) => {
         console.log('AppAuthGuard: Auth success received:', data);
         setAuthenticated(true);
         setChecking(false);
         setLoading(false);
-      });
+      };
       
-      window.electronAPI.onAuthError((error: string) => {
+      const handleAuthError = (error: string) => {
         console.error('AppAuthGuard: Auth error received:', error);
         setLoading(false);
-      });
-    }
-    
-    return () => {
-      if (window.electronAPI?.removeAllListeners) {
+      };
+      
+      window.electronAPI.on('auth-success', handleAuthSuccess);
+      window.electronAPI.on('auth-error', handleAuthError);
+      
+      return () => {
         window.electronAPI.removeAllListeners('auth-success');
         window.electronAPI.removeAllListeners('auth-error');
-      }
-    };
+      };
+    }
   }, []);
   
   const checkAuth = async () => {

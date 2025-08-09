@@ -177,7 +177,7 @@ const JobsList = forwardRef<JobsListRef>((props, ref) => {
             <List sx={{ py: 0 }}>
               {filteredJobs.map((job) => (
                 <ListItem 
-                  key={job.id} 
+                  key={job.gmail_message_id} 
                   sx={{ 
                     py: 2.5,
                     px: 2,
@@ -287,10 +287,8 @@ const JobsList = forwardRef<JobsListRef>((props, ref) => {
           }}
           emailContent={emailDetail.body?.body_plain || emailDetail.body?.body_excerpt || ''}
           job={{
-            id: emailDetail.meta.gmail_message_id,
             company: emailDetail.meta.company || 'Unknown',
             position: emailDetail.meta.position || 'Unknown',
-            status: emailDetail.meta.status || 'Unknown',
             applied_date: new Date(emailDetail.meta.message_date).toISOString(),
             from_address: emailDetail.meta.from_email,
             raw_content: emailDetail.body?.body_plain || emailDetail.body?.body_html || ''
