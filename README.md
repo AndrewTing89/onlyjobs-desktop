@@ -180,6 +180,39 @@ The classifier uses a trained model to identify job-related emails based on:
 - Sender information
 - Subject line analysis
 
+## LLM Prompt & Evaluation
+
+The local LLM provider includes advanced prompt engineering and evaluation capabilities:
+
+### Testing & Evaluation
+
+- **Manual Testing**: `npm run llm:test` - Test LLM on sample emails with performance metrics
+- **Offline Evaluation**: `npm run llm:evaluate` - Run systematic evaluation against anonymized fixtures
+
+### Configuration Tuning
+
+- `ONLYJOBS_CTX=1024` - Context window size (tokens)
+- `ONLYJOBS_MAX_TOKENS=128` - Max output tokens per inference
+- `ONLYJOBS_N_GPU_LAYERS=0` - GPU acceleration layers (Metal/CUDA)
+- `ONLYJOBS_INFER_TIMEOUT_MS=8000` - Timeout before fallback
+- `ONLYJOBS_ENABLE_PREFILTER=0/1` - Toggle regex-based prefiltering
+
+### Output Normalization
+
+The system automatically normalizes LLM outputs:
+- **Status Mapping**: "screening"→"Interview", "application received"→"Applied", "rejected"→"Declined", "verbal offer"→"Offer"
+- **Text Cleaning**: Trims whitespace, removes quotes, collapses spaces
+- **JSON Contract**: Strict schema validation with automatic field coercion
+
+### Evaluation Metrics
+
+The evaluator computes:
+- Job classification accuracy (binary)
+- Status classification accuracy (4-class + null)
+- Macro-F1 score across status classes
+- Latency distribution by decision path
+- Decision path breakdown (cache_hit/prefilter_skip/llm_success/timeout_fallback)
+
 ## Troubleshooting
 
 ### Better-SQLite3 Issues

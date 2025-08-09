@@ -9,6 +9,9 @@ const GPU_LAYERS = Number(process.env.ONLYJOBS_N_GPU_LAYERS || 0);
 const ENABLE_PREFILTER = process.env.ONLYJOBS_ENABLE_PREFILTER === '1';
 const TIMEOUT_MS = Number(process.env.ONLYJOBS_INFER_TIMEOUT_MS || 8000);
 
+// Set test environment to disable cache
+process.env.ONLYJOBS_DISABLE_CACHE_FOR_TEST = '1';
+
 const testCases = [
   {
     name: 'Job Application',

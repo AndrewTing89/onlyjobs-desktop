@@ -5,15 +5,35 @@
 
 import * as crypto from 'crypto';
 import * as path from 'path';
+import * as fs from 'fs';
 import Database from 'better-sqlite3';
-import { app } from 'electron';
 import { ONLYJOBS_CACHE_TTL_HOURS } from './config';
 
 let cacheDb: Database.Database | null = null;
 
+function resolveLLMCachePath(): string {
+  const explicit = process.env.ONLYJOBS_DB_PATH;
+  if (explicit) return explicit;
+
+  // Try Electron app path if available
+  try {
+    const { app } = require('electron');
+    if (app && typeof app.getPath === 'function') {
+      return path.join(app.getPath('userData'), 'llm-cache.sqlite3');
+    }
+  } catch (_) {
+    // ignore: not in full Electron runtime
+  }
+
+  // Fallback for ELECTRON_RUN_AS_NODE or tests
+  const dir = path.resolve(process.cwd(), '.cache');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_e) {}
+  return path.join(dir, 'llm-cache.sqlite3');
+}
+
 function getCacheDb(): Database.Database {
   if (!cacheDb) {
-    const dbPath = path.join(app.getPath('userData'), 'llm-cache.db');
+    const dbPath = resolveLLMCachePath();
     cacheDb = new Database(dbPath);
     
     // Create cache table if not exists
@@ -44,6 +64,11 @@ function isWithinTTL(parsedAt: number): boolean {
 }
 
 export function getCachedResult(subject: string, plaintext: string): any | null {
+  // Check if caching is disabled for testing
+  if (process.env.ONLYJOBS_DISABLE_CACHE_FOR_TEST === '1') {
+    return null;
+  }
+  
   try {
     const db = getCacheDb();
     const hash = computeContentHash(subject, plaintext);
@@ -72,6 +97,11 @@ export function getCachedResult(subject: string, plaintext: string): any | null 
 }
 
 export function setCachedResult(subject: string, plaintext: string, result: any): void {
+  // Check if caching is disabled for testing
+  if (process.env.ONLYJOBS_DISABLE_CACHE_FOR_TEST === '1') {
+    return;
+  }
+  
   try {
     const db = getCacheDb();
     const hash = computeContentHash(subject, plaintext);

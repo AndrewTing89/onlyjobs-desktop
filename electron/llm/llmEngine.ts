@@ -19,6 +19,8 @@ import {
   ONLYJOBS_PREFILTER_REGEX
 } from './config';
 import { getCachedResult, setCachedResult, cleanupExpiredCache } from './cache';
+import { SYSTEM_PROMPT, USER_PROMPT_TEMPLATE } from './prompts';
+import { normalizeStatus, cleanText } from './normalize';
 
 export type ParseInput = {
   subject: string;
@@ -43,14 +45,6 @@ let loadedModelPath: string | null = null;
 let concurrentRequests = 0;
 const MAX_CONCURRENT_REQUESTS = 2;
 
-const SYSTEM_PROMPT = `You are an email classifier for job applications. Output ONLY strict JSON matching the schema. No markdown, no extra text.
-
-Schema:
-{"is_job_related": boolean, "company": string|null, "position": string|null, "status": "Applied"|"Interview"|"Declined"|"Offer"|null, "confidence": number}
-
-Examples:
-Job: {"is_job_related": true, "company": "Acme Corp", "position": "Data Analyst", "status": "Applied", "confidence": 0.95}
-Non-job: {"is_job_related": false, "company": null, "position": null, "status": null, "confidence": 0.9}`;
 
 async function initializeLLM(): Promise<void> {
   const currentModelPath = path.resolve(ONLYJOBS_MODEL_PATH);
@@ -279,7 +273,7 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
       
       // Truncate content if needed
       const truncatedContent = truncateContent(input.plaintext);
-      const emailContent = `Subject: ${input.subject}\n\nContent: ${truncatedContent}`;
+      const userPrompt = USER_PROMPT_TEMPLATE(input.subject, truncatedContent);
       
       console.log('🧠 Querying LLM for email classification...');
       
@@ -287,7 +281,7 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
       const response = await withTimeout(
         loadedSession.prompt([
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: emailContent }
+          { role: 'user', content: userPrompt }
         ], {
           temperature: ONLYJOBS_TEMPERATURE,
           maxTokens: ONLYJOBS_MAX_TOKENS,
@@ -298,6 +292,15 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
       console.log('📝 LLM response:', response);
       
       const parsedResult = parseJsonResponse(response);
+      
+      // Apply normalization
+      parsedResult.status = normalizeStatus(parsedResult.status);
+      parsedResult.company = cleanText(parsedResult.company);
+      parsedResult.position = cleanText(parsedResult.position);
+      parsedResult.is_job_related = Boolean(parsedResult.is_job_related);
+      parsedResult.confidence = typeof parsedResult.confidence === 'number' ? 
+        Math.max(0, Math.min(1, parsedResult.confidence)) : 0.5;
+      
       decisionPath = 'llm_success';
       
       // Cache the result

@@ -32,6 +32,8 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const config_1 = require("./config");
 const cache_1 = require("./cache");
+const prompts_1 = require("./prompts");
+const normalize_1 = require("./normalize");
 // Module-level singletons (lazy loaded)
 let llamaModule = null;
 let llamaInstance = null;
@@ -41,14 +43,6 @@ let loadedSession = null;
 let loadedModelPath = null;
 let concurrentRequests = 0;
 const MAX_CONCURRENT_REQUESTS = 2;
-const SYSTEM_PROMPT = `You are an email classifier for job applications. Output ONLY strict JSON matching the schema. No markdown, no extra text.
-
-Schema:
-{"is_job_related": boolean, "company": string|null, "position": string|null, "status": "Applied"|"Interview"|"Declined"|"Offer"|null, "confidence": number}
-
-Examples:
-Job: {"is_job_related": true, "company": "Acme Corp", "position": "Data Analyst", "status": "Applied", "confidence": 0.95}
-Non-job: {"is_job_related": false, "company": null, "position": null, "status": null, "confidence": 0.9}`;
 async function initializeLLM() {
     const currentModelPath = path.resolve(config_1.ONLYJOBS_MODEL_PATH);
     // Check if already initialized with current model
@@ -63,10 +57,10 @@ async function initializeLLM() {
         loadedSession = null;
     }
     try {
-        // Lazy import node-llama-cpp (ONLY here)
+        // Lazy import node-llama-cpp (ONLY here) - use dynamic import for ESM
         if (!llamaModule) {
             console.log('🧠 Loading node-llama-cpp...');
-            llamaModule = await Promise.resolve().then(() => __importStar(require('node-llama-cpp')));
+            llamaModule = await import('node-llama-cpp');
         }
         // Check if model file exists
         if (!fs.existsSync(currentModelPath)) {
@@ -240,14 +234,56 @@ async function parseEmailWithLLM(input) {
                 return keywordProvider.parse(input);
             }
             
-            // For testing: simulate LLM processing with keyword fallback
-            console.log('🧠 LLM provider selected, processing email...');
-            const keywordProvider = await Promise.resolve().then(() => __importStar(require('../classifier/providers/keywordProvider')));
-            const result = await keywordProvider.parse(input);
+            // Initialize LLM
+            await initializeLLM();
             
-            decisionPath = 'llm_mock_success';
-            console.log(`✅ ${decisionPath} (${Date.now() - startTime}ms)`, result);
-            return result;
+            if (!loadedSession) {
+              throw new Error('Chat session not available');
+            }
+            
+            // Truncate content if needed
+            const truncatedContent = truncateContent(input.plaintext);
+            const userPrompt = prompts_1.USER_PROMPT_TEMPLATE(input.subject, truncatedContent);
+            
+            console.log('🧠 Querying LLM for email classification...');
+            
+            // Run inference with timeout
+            const response = await withTimeout(
+              loadedSession.prompt([
+                { role: 'system', content: prompts_1.SYSTEM_PROMPT },
+                { role: 'user', content: userPrompt }
+              ], {
+                temperature: config_1.ONLYJOBS_TEMPERATURE,
+                maxTokens: config_1.ONLYJOBS_MAX_TOKENS,
+              }),
+              config_1.ONLYJOBS_INFER_TIMEOUT_MS
+            );
+            
+            console.log('📝 LLM response:', response);
+            
+            const parsedResult = parseJsonResponse(response);
+            
+            // Apply normalization
+            parsedResult.status = normalize_1.normalizeStatus(parsedResult.status);
+            parsedResult.company = normalize_1.cleanText(parsedResult.company);
+            parsedResult.position = normalize_1.cleanText(parsedResult.position);
+            parsedResult.is_job_related = Boolean(parsedResult.is_job_related);
+            parsedResult.confidence = typeof parsedResult.confidence === 'number' ? 
+                Math.max(0, Math.min(1, parsedResult.confidence)) : 0.5;
+            
+            decisionPath = 'llm_success';
+            
+            // Cache the result
+            (0, cache_1.setCachedResult)(input.subject, input.plaintext, parsedResult);
+            
+            console.log(`✅ ${decisionPath} (${Date.now() - startTime}ms)`, parsedResult);
+            
+            // Periodic cache cleanup
+            if (Math.random() < 0.1) { // 10% chance
+              (0, cache_1.cleanupExpiredCache)();
+            }
+            
+            return parsedResult;
         }
         finally {
             concurrentRequests--;
