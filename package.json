@@ -15,7 +15,12 @@
     "eject": "react-scripts eject",
     "llm:deps": "npm i node-llama-cpp --legacy-peer-deps",
     "llm:download": "tsx electron/llm/downloadModel.ts",
-    "llm:test": "tsx electron/llm/manualTest.ts"
+    "llm:test": "cross-env CLASSIFIER_PROVIDER=llm ELECTRON_RUN_AS_NODE=1 electron ./electron/llm/manualTest.electron.js",
+    "rebuild:llm": "electron-rebuild -f -w node-llama-cpp",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3 -w node-llama-cpp",
+    "dev:web": "react-scripts start",
+    "dev:electron": "wait-on http://localhost:3000 && cross-env NODE_ENV=development electron ./electron/main.js",
+    "dev:all": "concurrently -k -n WEB,ELECTRON -c auto \"npm run dev:web\" \"npm run dev:electron\""
   },
   "repository": {
     "type": "git",
@@ -33,13 +38,16 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/react-router-dom": "^5.3.3",
+    "concurrently": "^9.2.0",
+    "cross-env": "^10.0.0",
     "electron": "^37.2.5",
     "electron-builder": "^26.0.12",
     "electron-rebuild": "^3.2.9",
     "electron-reload": "^2.0.0-alpha.1",
     "firebase-tools": "^14.11.2",
     "http-proxy-middleware": "^3.0.5",
-    "tsx": "^4.20.3"
+    "tsx": "^4.20.3",
+    "wait-on": "^8.0.4"
   },
   "dependencies": {
     "@chakra-ui/react": "^3.22.0",
