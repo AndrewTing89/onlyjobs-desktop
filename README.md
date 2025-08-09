@@ -24,6 +24,14 @@ An AI-powered job application tracking desktop app that automatically syncs with
 - Gmail account
 - Google Cloud Platform project with Gmail API enabled
 
+## Local LLM Mode (Preview)
+
+The app supports a local LLM provider for enhanced email classification in Electron mode only. The default provider is "keyword" so web builds work unchanged. 
+
+- Model path: `./models/model.gguf` (downloaded automatically in later setup)
+- Provider toggle: Set `CLASSIFIER_PROVIDER=llm` in `.env`
+- **Important**: `node-llama-cpp` must never be imported in renderer/web code - it's Electron main process only
+
 ## Installation
 
 1. Clone the repository (including the ML classifier submodule):

@@ -130,3 +130,7 @@ ml-classifier/config/gmail_credentials.json
 backend/
 frontend/
 functions/
+
+# Local LLM models
+models/
+*.gguf
