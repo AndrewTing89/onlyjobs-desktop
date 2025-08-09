@@ -36,8 +36,13 @@ The app supports a local LLM provider for enhanced email classification in Elect
   - `npm run llm:download` - Download the model file
   - `npm run llm:test` - Test LLM classification with sample emails (runs under Electron)
 - **Troubleshooting**:
+  - `npm run diagnose:native` - Diagnose native module loading issues
   - `npm run rebuild:llm` - Rebuild native modules for Electron
-  - Apple Silicon: Set `export LLAMA_METAL=1` and tune `ONLYJOBS_N_GPU_LAYERS`
+  - `npm run rebuild:llm:clean` - Clean rebuild from source if standard rebuild fails
+  - Apple Silicon: Set `export LLAMA_METAL=1` and tune `ONLYJOBS_N_GPU_LAYERS` (e.g., 10)
+  - If module keys are empty or `_llama` undefined:
+    1. Try `npm run rebuild:llm`
+    2. If still failing: `npm run rebuild:llm:clean`
 - **Important**: 
   - Native modules are rebuilt for Electron, so manual tests MUST run under Electron with `ELECTRON_RUN_AS_NODE=1`
   - `node-llama-cpp` must never be imported in renderer/web code - Electron main process only

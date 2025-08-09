@@ -16,10 +16,17 @@ async function main() {
   }
   try {
     const llama = await import('node-llama-cpp');
-    const { LlamaModel, LlamaContext, LlamaChatSession } = llama;
+    const { LlamaModel, LlamaContext, LlamaChatSession, getLlama } = llama;
 
+    console.log('🔧 Initializing llama.cpp...');
+    const llamaInstance = await getLlama();
+    
     console.log('🔧 Loading model...');
-    const model = new LlamaModel({ modelPath: MODEL_PATH, gpuLayers: GPU_LAYERS });
+    const model = new LlamaModel({ 
+      modelPath: MODEL_PATH, 
+      gpuLayers: GPU_LAYERS,
+      llama: llamaInstance 
+    });
     console.log('🧮 Creating context...');
     const context = new LlamaContext({ model, contextSize: CTX });
     console.log('💬 Creating session...');

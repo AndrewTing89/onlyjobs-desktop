@@ -63,12 +63,19 @@ async function initializeLLM(): Promise<void> {
       llamaModule = await import('node-llama-cpp');
     }
     
-    const { LlamaModel, LlamaContext, LlamaChatSession } = llamaModule;
+    const { LlamaModel, LlamaContext, LlamaChatSession, getLlama } = llamaModule;
     const modelPath = path.resolve(ONLYJOBS_MODEL_PATH);
     
     // Check if model file exists
     if (!fs.existsSync(modelPath)) {
       throw new Error(`Model file not found: ${modelPath}`);
+    }
+    
+    // Initialize llama.cpp if not done already
+    let llamaInstance = null;
+    if (!loadedModel) {
+      console.log('🔧 Initializing llama.cpp...');
+      llamaInstance = await getLlama();
     }
     
     // Load model if not already loaded
@@ -77,7 +84,8 @@ async function initializeLLM(): Promise<void> {
       
       loadedModel = new LlamaModel({
         modelPath,
-        gpuLayers: ONLYJOBS_N_GPU_LAYERS
+        gpuLayers: ONLYJOBS_N_GPU_LAYERS,
+        llama: llamaInstance
       });
       loadedModelPath = modelPath;
     }
