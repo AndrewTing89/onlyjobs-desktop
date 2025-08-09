@@ -6,6 +6,7 @@ const Store = require('electron-store').default || require('electron-store');
 const { app } = require('electron');
 const { spawn } = require('child_process');
 const { convert } = require('html-to-text');
+const { getClassifierProvider } = require('./classifier');
 const mlHandler = {
   classifyEmail: async (content) => {
     return new Promise((resolve) => {
@@ -403,14 +404,22 @@ ipcMain.handle('db:delete-job', async (event, id) => {
 ipcMain.handle('classify-email', async (event, content) => {
   try {
     console.log('📧 Classifying email content...');
-    const result = await mlHandler.classifyEmail(content);
     
-    // Enhance result with additional job extraction logic
+    // Use the provider-based classifier
+    const classifier = getClassifierProvider();
+    const input = {
+      subject: '', // Extract from content if needed, or pass separately
+      plaintext: content
+    };
+    
+    const result = await classifier.parse(input);
+    
+    // Enhance result with additional job extraction logic (preserve existing behavior)
     const enhancedResult = {
       ...result,
       job_type: _extractJobType(content, result.is_job_related),
-      company: _extractCompany(content),
-      position: _extractPosition(content)
+      company: result.company || _extractCompany(content),
+      position: result.position || _extractPosition(content)
     };
     
     console.log('✅ Email classification result:', {
