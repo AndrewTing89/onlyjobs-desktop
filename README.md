@@ -35,6 +35,8 @@ The app supports a local LLM provider for enhanced email classification in Elect
   - `npm run llm:deps` - Install node-llama-cpp dependencies
   - `npm run llm:download` - Download the model file
   - `npm run llm:test` - Test LLM classification with sample emails (runs under Electron)
+  - `npm run llm:normalize -- --dry-run` - Preview normalization changes to existing job records
+  - `npm run llm:normalize` - Apply normalization improvements to existing database records
 - **Performance Features**:
   - **Streaming Early Stop**: Terminates LLM generation as soon as complete JSON is detected (30-60% latency reduction)
   - **Single-shot Prompts**: Uses plain-string prompts instead of chat arrays for faster inference
@@ -49,6 +51,11 @@ The app supports a local LLM provider for enhanced email classification in Elect
   - `ONLYJOBS_EARLY_STOP_JSON=1` - Enable streaming early-stop for faster JSON completion
   - `ONLYJOBS_CACHE_TTL_HOURS=168` - Cache expiration (7 days default)
   - `ONLYJOBS_INFER_MAX_CHARS=5000` - Max email length before truncation
+- **Database Normalization**:
+  - Auto-detects database location in platform-specific userData directories
+  - Custom path: `npm run llm:normalize -- --db="/path/to/jobs.db"`
+  - Environment: `ONLYJOBS_DB_PATH="/path/to/jobs.db" npm run llm:normalize`
+  - Re-applies subject-first extraction, vendor heuristics, and sanitizers to existing records
 - **Troubleshooting**:
   - `npm run diagnose:native` - Diagnose native module loading issues
   - `npm run rebuild:llm` - Rebuild native modules for Electron
