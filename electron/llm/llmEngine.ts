@@ -16,7 +16,8 @@ import {
   ONLYJOBS_INFER_MAX_CHARS,
   ONLYJOBS_CACHE_TTL_HOURS,
   ONLYJOBS_ENABLE_PREFILTER,
-  ONLYJOBS_PREFILTER_REGEX
+  ONLYJOBS_PREFILTER_REGEX,
+  ONLYJOBS_EARLY_STOP_JSON
 } from './config';
 import { getCachedResult, setCachedResult, cleanupExpiredCache } from './cache';
 import { SYSTEM_PROMPT, userPrompt } from './prompts';
@@ -25,6 +26,7 @@ import { normalizeStatus, cleanText } from './normalize';
 export type ParseInput = {
   subject: string;
   plaintext: string;
+  fromAddress?: string;
 };
 
 export type ParseResult = {
@@ -134,15 +136,15 @@ function parseJsonResponse(response: string): ParseResult {
     const parsed = JSON.parse(jsonText);
     return validateAndFixParseResult(parsed);
   } catch (firstError) {
-    // Try to extract JSON from markdown or other wrapper
-    const jsonMatch = jsonText.match(/\{[^}]*\}/s);
-    if (jsonMatch) {
+    // Try balanced-brace extraction
+    const extracted = extractJsonWithBalancedBraces(jsonText);
+    if (extracted) {
       try {
-        const parsed = JSON.parse(jsonMatch[0]);
+        const parsed = JSON.parse(extracted);
         return validateAndFixParseResult(parsed);
       } catch (secondError) {
-        // Try simple repair: fix trailing commas, quotes
-        const repaired = repairJson(jsonMatch[0]);
+        // Try simple repair on extracted JSON
+        const repaired = repairJson(extracted);
         if (repaired) {
           try {
             const parsed = JSON.parse(repaired);
@@ -152,6 +154,17 @@ function parseJsonResponse(response: string): ParseResult {
             console.warn('JSON repair failed:', thirdError.message);
           }
         }
+      }
+    }
+    
+    // Fallback: regex extraction
+    const jsonMatch = jsonText.match(/\{[^}]*\}/s);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return validateAndFixParseResult(parsed);
+      } catch (regexError) {
+        console.warn('Regex extraction also failed');
       }
     }
     
@@ -176,6 +189,25 @@ function repairJson(jsonText: string): string | null {
   }
 }
 
+function extractJsonWithBalancedBraces(text: string): string | null {
+  let depth = 0;
+  let startIdx = -1;
+  
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') {
+      if (depth === 0) startIdx = i;
+      depth++;
+    } else if (text[i] === '}') {
+      depth--;
+      if (depth === 0 && startIdx >= 0) {
+        return text.slice(startIdx, i + 1);
+      }
+    }
+  }
+  
+  return null;
+}
+
 function validateAndFixParseResult(obj: any): ParseResult {
   // Ensure required fields exist with correct types
   const result: ParseResult = {
@@ -195,14 +227,36 @@ function validateAndFixParseResult(obj: any): ParseResult {
   return result;
 }
 
-function applyPrefilter(subject: string, plaintext: string): boolean {
+function applyPrefilter(subject: string, plaintext: string, fromAddress?: string): boolean {
   if (!ONLYJOBS_ENABLE_PREFILTER) {
     return true; // Pass through if prefilter disabled
+  }
+  
+  // Enhanced billing domain detection
+  const domain = fromAddress ? (fromAddress.split('@')[1] || '') : '';
+  const subjectLower = subject.toLowerCase();
+  
+  // Deny billing domains unless subject has strong job cues
+  if (/(billpay|billing|invoice|statement|payment)/i.test(domain)) {
+    const hasJobCues = /\b(job|application|applied|interview|offer|candidate|position|role|hiring)\b/i.test(subjectLower);
+    if (!hasJobCues) {
+      console.log(`🔍 Prefilter: SKIP (billing domain: ${domain}, no job cues in subject)`);
+      return false;
+    }
   }
   
   const combined = `${subject} ${plaintext}`.toLowerCase();
   const regex = new RegExp(ONLYJOBS_PREFILTER_REGEX, 'i');
   const matches = regex.test(combined);
+  
+  // Require both job tokens AND subject has strong indicators
+  if (matches) {
+    const subjectHasJobTokens = /\b(application|applied|interview|offer|candidate|position|role|hiring)\b/i.test(subjectLower);
+    if (!subjectHasJobTokens) {
+      console.log(`🔍 Prefilter: SKIP (content has job tokens but subject lacks indicators)`);
+      return false;
+    }
+  }
   
   console.log(`🔍 Prefilter: ${matches ? 'PASS' : 'SKIP'} (regex: ${ONLYJOBS_PREFILTER_REGEX})`);
   return matches;
@@ -233,6 +287,83 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   ]);
 }
 
+function isParsableStrictJSON(text: string): boolean {
+  try {
+    const parsed = JSON.parse(text);
+    return typeof parsed === 'object' && parsed !== null;
+  } catch {
+    return false;
+  }
+}
+
+async function performInferenceWithEarlyStop(session: any, fullPrompt: string): Promise<{ response: string; decisionPath: string }> {
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    let depth = 0;
+    let started = false;
+    let completed = false;
+
+    try {
+      const completion = session.prompt(fullPrompt, {
+        temperature: ONLYJOBS_TEMPERATURE,
+        maxTokens: ONLYJOBS_MAX_TOKENS,
+        onToken: (chunk: any) => {
+          if (completed) return;
+          
+          const token = typeof chunk === 'string' ? chunk : chunk.token || chunk.text || String(chunk);
+          buffer += token;
+          
+          // Track JSON brace depth
+          for (const char of token) {
+            if (char === '{') {
+              depth++;
+              started = true;
+            } else if (char === '}') {
+              depth--;
+            }
+          }
+          
+          // Check for complete JSON object
+          if (started && depth === 0) {
+            const startIdx = buffer.indexOf('{');
+            const endIdx = buffer.lastIndexOf('}');
+            if (startIdx >= 0 && endIdx > startIdx) {
+              const candidateJson = buffer.slice(startIdx, endIdx + 1);
+              if (isParsableStrictJSON(candidateJson)) {
+                completed = true;
+                resolve({ response: candidateJson, decisionPath: 'llm_success_early_stop' });
+                return;
+              }
+            }
+          }
+        }
+      });
+
+      // Handle completion without early stop
+      completion.then((fullResponse: string) => {
+        if (!completed) {
+          resolve({ response: fullResponse, decisionPath: 'llm_success' });
+        }
+      }).catch((error: any) => {
+        if (!completed) {
+          reject(error);
+        }
+      });
+
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+async function performStandardInference(session: any, fullPrompt: string): Promise<{ response: string; decisionPath: string }> {
+  const response = await session.prompt(fullPrompt, {
+    temperature: ONLYJOBS_TEMPERATURE,
+    maxTokens: ONLYJOBS_MAX_TOKENS,
+  });
+  return { response, decisionPath: 'llm_success' };
+}
+
 export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult> {
   const startTime = Date.now();
   let decisionPath = '';
@@ -257,7 +388,7 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
       }
       
       // Apply prefilter
-      if (!applyPrefilter(input.subject, input.plaintext)) {
+      if (!applyPrefilter(input.subject, input.plaintext, input.fromAddress)) {
         decisionPath = 'prefilter_skip';
         console.log(`⚡ ${decisionPath} (${Date.now() - startTime}ms)`);
         const keywordProvider = await import('../classifier/providers/keywordProvider');
@@ -275,23 +406,23 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
       const truncatedContent = truncateContent(input.plaintext);
       const userMessage = userPrompt(input.subject, truncatedContent);
       
-      console.log('🧠 Querying LLM for email classification...');
+      // Build single plain-string prompt 
+      const fullPrompt = `${SYSTEM_PROMPT}\n\n${userMessage}`;
       
-      // Run inference with timeout
-      const response = await withTimeout(
-        loadedSession.prompt([
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMessage }
-        ], {
-          temperature: ONLYJOBS_TEMPERATURE,
-          maxTokens: ONLYJOBS_MAX_TOKENS,
-        }),
+      console.log(`🧠 Querying LLM (promptChars=${fullPrompt.length})...`);
+      
+      // Run inference with streaming early-stop if enabled
+      const inferenceResult = await withTimeout(
+        ONLYJOBS_EARLY_STOP_JSON ? 
+          performInferenceWithEarlyStop(loadedSession, fullPrompt) :
+          performStandardInference(loadedSession, fullPrompt),
         ONLYJOBS_INFER_TIMEOUT_MS
       );
       
-      console.log('📝 LLM response:', response);
+      console.log('📝 LLM response:', inferenceResult.response);
       
-      const parsedResult = parseJsonResponse(response);
+      const parsedResult = parseJsonResponse(inferenceResult.response);
+      decisionPath = inferenceResult.decisionPath;
       
       // Apply normalization
       parsedResult.status = normalizeStatus(parsedResult.status);
@@ -300,8 +431,6 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
       parsedResult.is_job_related = Boolean(parsedResult.is_job_related);
       parsedResult.confidence = typeof parsedResult.confidence === 'number' ? 
         Math.max(0, Math.min(1, parsedResult.confidence)) : 0.5;
-      
-      decisionPath = 'llm_success';
       
       // Cache the result
       setCachedResult(input.subject, input.plaintext, parsedResult);
@@ -325,7 +454,7 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
     if (error.message.includes('timed out')) {
       decisionPath = 'timeout_fallback';
       console.warn(`⏱️ ${decisionPath} (${errorTime}ms):`, error.message);
-    } else if (error.message.includes('parse')) {
+    } else if (error.message.includes('parse') || error.message.includes('JSON')) {
       decisionPath = 'parse_fail_fallback';
       console.warn(`🔧 ${decisionPath} (${errorTime}ms):`, error.message);
     } else {
@@ -336,7 +465,7 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
     // Fallback to keyword provider
     const keywordProvider = await import('../classifier/providers/keywordProvider');
     const result = await keywordProvider.parse(input);
-    console.log(`🔄 Fallback result (${Date.now() - startTime}ms):`, result);
+    console.log(`🔄 Fallback result (${Date.now() - startTime}ms, ${decisionPath}):`, result);
     return result;
   }
 }

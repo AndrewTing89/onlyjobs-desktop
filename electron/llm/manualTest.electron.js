@@ -1,13 +1,26 @@
 const fs = require('fs');
 const path = require('path');
 
-const MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH || path.resolve(process.cwd(), 'models', 'model.gguf');
-const TEMP = Number(process.env.ONLYJOBS_TEMPERATURE || 0.1);
-const MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS || 128);
-const CTX = Number(process.env.ONLYJOBS_CTX || 1024);
-const GPU_LAYERS = Number(process.env.ONLYJOBS_N_GPU_LAYERS || 0);
-const ENABLE_PREFILTER = process.env.ONLYJOBS_ENABLE_PREFILTER === '1';
-const TIMEOUT_MS = Number(process.env.ONLYJOBS_INFER_TIMEOUT_MS || 8000);
+// Import actual config values instead of hardcoded defaults
+const { 
+  ONLYJOBS_MODEL_PATH, 
+  ONLYJOBS_TEMPERATURE,
+  ONLYJOBS_MAX_TOKENS,
+  ONLYJOBS_CTX,
+  ONLYJOBS_N_GPU_LAYERS,
+  ONLYJOBS_ENABLE_PREFILTER,
+  ONLYJOBS_INFER_TIMEOUT_MS,
+  ONLYJOBS_EARLY_STOP_JSON
+} = require('./config.js');
+
+const MODEL_PATH = ONLYJOBS_MODEL_PATH;
+const TEMP = ONLYJOBS_TEMPERATURE;
+const MAX_TOKENS = ONLYJOBS_MAX_TOKENS;
+const CTX = ONLYJOBS_CTX;
+const GPU_LAYERS = ONLYJOBS_N_GPU_LAYERS;
+const ENABLE_PREFILTER = ONLYJOBS_ENABLE_PREFILTER;
+const TIMEOUT_MS = ONLYJOBS_INFER_TIMEOUT_MS;
+const EARLY_STOP = ONLYJOBS_EARLY_STOP_JSON;
 
 // Set test environment to disable cache
 process.env.ONLYJOBS_DISABLE_CACHE_FOR_TEST = '1';
@@ -32,7 +45,7 @@ const testCases = [
 
 async function testLLMEngine() {
   console.log('🧪 Testing LLM engine with performance features...');
-  console.log(`⚙️ Config: prefilter=${ENABLE_PREFILTER}, timeout=${TIMEOUT_MS}ms, ctx=${CTX}, tokens=${MAX_TOKENS}`);
+  console.log(`⚙️ Config: prefilter=${ENABLE_PREFILTER}, timeout=${TIMEOUT_MS}ms, ctx=${CTX}, tokens=${MAX_TOKENS}, earlyStop=${EARLY_STOP}`);
   
   // Import the LLM engine (use CommonJS for testing)
   const { parseEmailWithLLM } = require('./llmEngine.js');

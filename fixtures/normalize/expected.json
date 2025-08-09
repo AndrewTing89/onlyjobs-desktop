@@ -1,0 +1,112 @@
+[
+  {
+    "id": "billpay_pge",
+    "expected": {
+      "is_job_related": false,
+      "company": null,
+      "position": null,
+      "status": null,
+      "confidence": 0.2,
+      "notes": ["demoted_billing_domain"]
+    }
+  },
+  {
+    "id": "focuskpi_sales_analyst",
+    "expected": {
+      "is_job_related": true,
+      "company": "FocusKPI",
+      "position": "Sales Analyst",
+      "status": "Applied",
+      "confidence": 0.8,
+      "notes": ["company_from_display_fallback", "position_from_subject"]
+    }
+  },
+  {
+    "id": "lucid_motors_data_engineer",
+    "expected": {
+      "is_job_related": true,
+      "company": "Lucid Motors",
+      "position": "Data Engineer",
+      "status": "Applied",
+      "confidence": 0.8,
+      "notes": ["company_from_display_fallback", "position_from_subject"]
+    }
+  },
+  {
+    "id": "greenhouse_extend",
+    "expected": {
+      "is_job_related": true,
+      "company": "Extend",
+      "position": "Software Engineer",
+      "status": "Applied",
+      "confidence": 0.9,
+      "notes": ["company_from_subject", "position_from_subject"]
+    }
+  },
+  {
+    "id": "workday_gap_inc",
+    "expected": {
+      "is_job_related": true,
+      "company": "Gap Inc",
+      "position": "Retail Associate",
+      "status": "Applied",
+      "confidence": 0.8,
+      "notes": ["company_from_workday_email", "position_from_subject"]
+    }
+  },
+  {
+    "id": "workday_centene_analyst",
+    "expected": {
+      "is_job_related": true,
+      "company": "Centene Corporation",
+      "position": "Workday Reporting Data Analyst",
+      "status": "Applied",
+      "confidence": 0.8,
+      "notes": ["position_from_subject"]
+    }
+  },
+  {
+    "id": "ashby_persona",
+    "expected": {
+      "is_job_related": true,
+      "company": "Persona",
+      "position": "Software Engineer",
+      "status": "Applied",
+      "confidence": 0.8,
+      "notes": ["company_from_ashby_display", "position_from_subject"]
+    }
+  },
+  {
+    "id": "interview_invitation",
+    "expected": {
+      "is_job_related": true,
+      "company": "TechCorp",
+      "position": "Backend Developer",
+      "status": "Interview",
+      "confidence": 0.8,
+      "notes": ["status_subject_override", "position_from_subject"]
+    }
+  },
+  {
+    "id": "rejection_email",
+    "expected": {
+      "is_job_related": true,
+      "company": "StartupCo",
+      "position": "Product Manager",
+      "status": "Declined",
+      "confidence": 0.8,
+      "notes": ["status_subject_override"]
+    }
+  },
+  {
+    "id": "offer_email",
+    "expected": {
+      "is_job_related": true,
+      "company": "DataCorp",
+      "position": "Senior Data Scientist",
+      "status": "Offer",
+      "confidence": 0.9,
+      "notes": ["status_subject_override", "position_from_subject"]
+    }
+  }
+]

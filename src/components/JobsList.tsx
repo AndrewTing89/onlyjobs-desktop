@@ -171,8 +171,8 @@ export default function JobsList() {
   };
 
   const filteredJobs = jobs.filter(job => 
-    job.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    job.position.toLowerCase().includes(searchTerm.toLowerCase())
+    (job.company || 'Unknown Company').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (job.position || 'Unknown Position').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading) {
@@ -252,11 +252,11 @@ export default function JobsList() {
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                             <Business sx={{ fontSize: 18, color: accent }} />
                             <Typography variant="h6" sx={{ fontSize: '1.1rem', fontWeight: 500 }}>
-                              {job.company}
+                              {job.company || 'Unknown Company'}
                             </Typography>
                           </Box>
                           <Typography variant="body1" color="text.secondary">
-                            {job.position}
+                            {job.position || 'Unknown Position'}
                           </Typography>
                         </Box>
                         {job.from_address && (

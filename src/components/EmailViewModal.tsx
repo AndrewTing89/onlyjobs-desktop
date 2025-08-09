@@ -122,11 +122,11 @@ export const EmailViewModal: React.FC<EmailViewModalProps> = ({
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 1 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <BusinessIcon fontSize="small" color="action" />
-              <Typography variant="subtitle1">{job.company}</Typography>
+              <Typography variant="subtitle1">{job.company || 'Unknown Company'}</Typography>
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <WorkIcon fontSize="small" color="action" />
-              <Typography variant="subtitle1">{job.position}</Typography>
+              <Typography variant="subtitle1">{job.position || 'Unknown Position'}</Typography>
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <CalendarTodayIcon fontSize="small" color="action" />

@@ -55,7 +55,7 @@ async function runEvaluation() {
       
       // Track latencies
       metrics.latencies.push(latency);
-      if (decisionPath === 'llm_success') {
+      if (decisionPath === 'llm_success' || decisionPath === 'llm_success_early_stop') {
         metrics.llm_success_latencies.push(latency);
       }
       
@@ -116,11 +116,14 @@ async function runEvaluation() {
 }
 
 function extractDecisionPath(predicted, latency) {
-  // Try to infer decision path from common patterns
-  // This is a heuristic since we don't have direct access to the decision path
+  // The parseEmailWithLLM function should be logging decision paths
+  // For now, we'll extract from console or infer heuristically
+  // Updated taxonomy: prefilter_skip | cache_hit | llm_success | llm_success_early_stop | parse_fail_fallback | llm_error_fallback | timeout_fallback
+  
   if (latency < 50) return 'cache_hit';
-  if (latency < 200) return 'prefilter_skip';
+  if (latency < 200) return 'prefilter_skip';  
   if (latency > 7000) return 'timeout_fallback';
+  if (latency < 2000) return 'llm_success_early_stop'; // Likely early stopped
   return 'llm_success';
 }
 

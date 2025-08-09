@@ -120,16 +120,16 @@ function parseJsonResponse(response) {
         return validateAndFixParseResult(parsed);
     }
     catch (firstError) {
-        // Try to extract JSON from markdown or other wrapper
-        const jsonMatch = jsonText.match(/\{[^}]*\}/s);
-        if (jsonMatch) {
+        // Try balanced-brace extraction
+        const extracted = extractJsonWithBalancedBraces(jsonText);
+        if (extracted) {
             try {
-                const parsed = JSON.parse(jsonMatch[0]);
+                const parsed = JSON.parse(extracted);
                 return validateAndFixParseResult(parsed);
             }
             catch (secondError) {
-                // Try simple repair: fix trailing commas, quotes
-                const repaired = repairJson(jsonMatch[0]);
+                // Try simple repair on extracted JSON
+                const repaired = repairJson(extracted);
                 if (repaired) {
                     try {
                         const parsed = JSON.parse(repaired);
@@ -140,6 +140,17 @@ function parseJsonResponse(response) {
                         console.warn('JSON repair failed:', thirdError.message);
                     }
                 }
+            }
+        }
+        // Fallback: regex extraction
+        const jsonMatch = jsonText.match(/\{[^}]*\}/s);
+        if (jsonMatch) {
+            try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return validateAndFixParseResult(parsed);
+            }
+            catch (regexError) {
+                console.warn('Regex extraction also failed');
             }
         }
         // Last resort failed
@@ -161,6 +172,93 @@ function repairJson(jsonText) {
         return null;
     }
 }
+function extractJsonWithBalancedBraces(text) {
+    let depth = 0;
+    let startIdx = -1;
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] === '{') {
+            if (depth === 0) startIdx = i;
+            depth++;
+        }
+        else if (text[i] === '}') {
+            depth--;
+            if (depth === 0 && startIdx >= 0) {
+                return text.slice(startIdx, i + 1);
+            }
+        }
+    }
+    return null;
+}
+function isParsableStrictJSON(text) {
+    try {
+        const parsed = JSON.parse(text);
+        return typeof parsed === 'object' && parsed !== null;
+    }
+    catch {
+        return false;
+    }
+}
+function performInferenceWithEarlyStop(session, fullPrompt) {
+    return new Promise((resolve, reject) => {
+        let buffer = '';
+        let depth = 0;
+        let started = false;
+        let completed = false;
+        try {
+            const completion = session.prompt(fullPrompt, {
+                temperature: config_1.ONLYJOBS_TEMPERATURE,
+                maxTokens: config_1.ONLYJOBS_MAX_TOKENS,
+                onToken: (chunk) => {
+                    if (completed) return;
+                    const token = typeof chunk === 'string' ? chunk : chunk.token || chunk.text || String(chunk);
+                    buffer += token;
+                    // Track JSON brace depth
+                    for (const char of token) {
+                        if (char === '{') {
+                            depth++;
+                            started = true;
+                        }
+                        else if (char === '}') {
+                            depth--;
+                        }
+                    }
+                    // Check for complete JSON object
+                    if (started && depth === 0) {
+                        const startIdx = buffer.indexOf('{');
+                        const endIdx = buffer.lastIndexOf('}');
+                        if (startIdx >= 0 && endIdx > startIdx) {
+                            const candidateJson = buffer.slice(startIdx, endIdx + 1);
+                            if (isParsableStrictJSON(candidateJson)) {
+                                completed = true;
+                                resolve({ response: candidateJson, decisionPath: 'llm_success_early_stop' });
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+            // Handle completion without early stop
+            completion.then((fullResponse) => {
+                if (!completed) {
+                    resolve({ response: fullResponse, decisionPath: 'llm_success' });
+                }
+            }).catch((error) => {
+                if (!completed) {
+                    reject(error);
+                }
+            });
+        }
+        catch (error) {
+            reject(error);
+        }
+    });
+}
+function performStandardInference(session, fullPrompt) {
+    return session.prompt(fullPrompt, {
+        temperature: config_1.ONLYJOBS_TEMPERATURE,
+        maxTokens: config_1.ONLYJOBS_MAX_TOKENS,
+    }).then(response => ({ response, decisionPath: 'llm_success' }));
+}
 function validateAndFixParseResult(obj) {
     // Ensure required fields exist with correct types
     const result = {
@@ -177,13 +275,32 @@ function validateAndFixParseResult(obj) {
     }
     return result;
 }
-function applyPrefilter(subject, plaintext) {
+function applyPrefilter(subject, plaintext, fromAddress) {
     if (!config_1.ONLYJOBS_ENABLE_PREFILTER) {
         return true; // Pass through if prefilter disabled
+    }
+    // Enhanced billing domain detection
+    const domain = fromAddress ? (fromAddress.split('@')[1] || '') : '';
+    const subjectLower = subject.toLowerCase();
+    // Deny billing domains unless subject has strong job cues
+    if (/(billpay|billing|invoice|statement|payment)/i.test(domain)) {
+        const hasJobCues = /\b(job|application|applied|interview|offer|candidate|position|role|hiring)\b/i.test(subjectLower);
+        if (!hasJobCues) {
+            console.log(`🔍 Prefilter: SKIP (billing domain: ${domain}, no job cues in subject)`);
+            return false;
+        }
     }
     const combined = `${subject} ${plaintext}`.toLowerCase();
     const regex = new RegExp(config_1.ONLYJOBS_PREFILTER_REGEX, 'i');
     const matches = regex.test(combined);
+    // Require both job tokens AND subject has strong indicators
+    if (matches) {
+        const subjectHasJobTokens = /\b(application|applied|interview|offer|candidate|position|role|hiring)\b/i.test(subjectLower);
+        if (!subjectHasJobTokens) {
+            console.log(`🔍 Prefilter: SKIP (content has job tokens but subject lacks indicators)`);
+            return false;
+        }
+    }
     console.log(`🔍 Prefilter: ${matches ? 'PASS' : 'SKIP'} (regex: ${config_1.ONLYJOBS_PREFILTER_REGEX})`);
     return matches;
 }
@@ -227,7 +344,7 @@ async function parseEmailWithLLM(input) {
                 return cached;
             }
             // Apply prefilter
-            if (!applyPrefilter(input.subject, input.plaintext)) {
+            if (!applyPrefilter(input.subject, input.plaintext, input.fromAddress)) {
                 decisionPath = 'prefilter_skip';
                 console.log(`⚡ ${decisionPath} (${Date.now() - startTime}ms)`);
                 const keywordProvider = await Promise.resolve().then(() => __importStar(require('../classifier/providers/keywordProvider')));
@@ -238,30 +355,30 @@ async function parseEmailWithLLM(input) {
             await initializeLLM();
             
             if (!loadedSession) {
-              throw new Error('Chat session not available');
+                throw new Error('Chat session not available');
             }
             
             // Truncate content if needed
             const truncatedContent = truncateContent(input.plaintext);
-            const userMessage = prompts_1.userPrompt(input.subject, truncatedContent);
+            const userMessage = (0, prompts_1.userPrompt)(input.subject, truncatedContent);
             
-            console.log('🧠 Querying LLM for email classification...');
+            // Build single plain-string prompt 
+            const fullPrompt = `${prompts_1.SYSTEM_PROMPT}\n\n${userMessage}`;
             
-            // Run inference with timeout
-            const response = await withTimeout(
-              loadedSession.prompt([
-                { role: 'system', content: prompts_1.SYSTEM_PROMPT },
-                { role: 'user', content: userMessage }
-              ], {
-                temperature: config_1.ONLYJOBS_TEMPERATURE,
-                maxTokens: config_1.ONLYJOBS_MAX_TOKENS,
-              }),
-              config_1.ONLYJOBS_INFER_TIMEOUT_MS
+            console.log(`🧠 Querying LLM (promptChars=${fullPrompt.length})...`);
+            
+            // Run inference with streaming early-stop if enabled
+            const inferenceResult = await withTimeout(
+                config_1.ONLYJOBS_EARLY_STOP_JSON ? 
+                    performInferenceWithEarlyStop(loadedSession, fullPrompt) :
+                    performStandardInference(loadedSession, fullPrompt),
+                config_1.ONLYJOBS_INFER_TIMEOUT_MS
             );
             
-            console.log('📝 LLM response:', response);
+            console.log('📝 LLM response:', inferenceResult.response);
             
-            const parsedResult = parseJsonResponse(response);
+            const parsedResult = parseJsonResponse(inferenceResult.response);
+            decisionPath = inferenceResult.decisionPath;
             
             // Apply normalization
             parsedResult.status = normalize_1.normalizeStatus(parsedResult.status);
@@ -271,7 +388,6 @@ async function parseEmailWithLLM(input) {
             parsedResult.confidence = typeof parsedResult.confidence === 'number' ? 
                 Math.max(0, Math.min(1, parsedResult.confidence)) : 0.5;
             
-            decisionPath = 'llm_success';
             
             // Cache the result
             (0, cache_1.setCachedResult)(input.subject, input.plaintext, parsedResult);
@@ -295,7 +411,7 @@ async function parseEmailWithLLM(input) {
             decisionPath = 'timeout_fallback';
             console.warn(`⏱️ ${decisionPath} (${errorTime}ms):`, error.message);
         }
-        else if (error.message.includes('parse')) {
+        else if (error.message.includes('parse') || error.message.includes('JSON')) {
             decisionPath = 'parse_fail_fallback';
             console.warn(`🔧 ${decisionPath} (${errorTime}ms):`, error.message);
         }
