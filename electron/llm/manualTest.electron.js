@@ -15,22 +15,32 @@ async function main() {
     process.exit(1);
   }
   try {
-    const llama = await import('node-llama-cpp');
-    const { LlamaModel, LlamaContext, LlamaChatSession, getLlama } = llama;
+    const llamaModule = await import('node-llama-cpp');
+    
+    // Get getLlama function (handle different export patterns)
+    const getLlama = llamaModule.getLlama || (llamaModule.default && llamaModule.default.getLlama);
+    if (!getLlama) {
+      throw new Error('node-llama-cpp getLlama() not available');
+    }
 
     console.log('🔧 Initializing llama.cpp...');
     const llamaInstance = await getLlama();
     
     console.log('🔧 Loading model...');
-    const model = new LlamaModel({ 
-      modelPath: MODEL_PATH, 
-      gpuLayers: GPU_LAYERS,
-      llama: llamaInstance 
+    const model = await llamaInstance.loadModel({
+      modelPath: MODEL_PATH,
+      gpuLayers: GPU_LAYERS
     });
+    
     console.log('🧮 Creating context...');
-    const context = new LlamaContext({ model, contextSize: CTX });
+    const context = await model.createContext({
+      contextSize: CTX
+    });
+    
     console.log('💬 Creating session...');
-    const session = new LlamaChatSession({ context });
+    const session = new llamaModule.LlamaChatSession({
+      contextSequence: context.getSequence()
+    });
 
     const subject = "Application received – Software Engineer";
     const plaintext = "Thanks for applying to TechCorp. We received your application for Software Engineer.";

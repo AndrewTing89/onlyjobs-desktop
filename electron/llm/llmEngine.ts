@@ -28,6 +28,7 @@ export type ParseResult = {
 
 // Module-level singletons (lazy loaded)
 let llamaModule: any | null = null;
+let llamaInstance: any | null = null;
 let loadedModel: any | null = null;
 let loadedContext: any | null = null;
 let loadedSession: any | null = null;
@@ -44,12 +45,15 @@ Input: "Your subscription renewal is due next month."
 Output: {"is_job_related": false, "company": null, "position": null, "status": null, "confidence": 0.9}`;
 
 async function initializeLLM(): Promise<void> {
-  if (llamaModule && loadedModel && loadedContext && loadedSession) {
-    const currentModelPath = path.resolve(ONLYJOBS_MODEL_PATH);
-    if (loadedModelPath === currentModelPath) {
-      return; // Already initialized with current model
-    }
-    // Model path changed, need to reload
+  const currentModelPath = path.resolve(ONLYJOBS_MODEL_PATH);
+  
+  // Check if already initialized with current model
+  if (llamaInstance && loadedModel && loadedContext && loadedSession && loadedModelPath === currentModelPath) {
+    return;
+  }
+  
+  // Model path changed, need to reload
+  if (loadedModelPath && loadedModelPath !== currentModelPath) {
     console.log(`🔄 Model path changed from ${loadedModelPath} to ${currentModelPath}, reloading...`);
     loadedModel = null;
     loadedContext = null;
@@ -63,38 +67,37 @@ async function initializeLLM(): Promise<void> {
       llamaModule = await import('node-llama-cpp');
     }
     
-    const { LlamaModel, LlamaContext, LlamaChatSession, getLlama } = llamaModule;
-    const modelPath = path.resolve(ONLYJOBS_MODEL_PATH);
-    
     // Check if model file exists
-    if (!fs.existsSync(modelPath)) {
-      throw new Error(`Model file not found: ${modelPath}`);
+    if (!fs.existsSync(currentModelPath)) {
+      throw new Error(`Model file not found: ${currentModelPath}`);
     }
     
-    // Initialize llama.cpp if not done already
-    let llamaInstance = null;
-    if (!loadedModel) {
+    // Get getLlama function (handle different export patterns)
+    const getLlama = llamaModule.getLlama || (llamaModule.default && llamaModule.default.getLlama);
+    if (!getLlama) {
+      throw new Error('node-llama-cpp getLlama() not available');
+    }
+    
+    // Initialize llama instance if not done already
+    if (!llamaInstance) {
       console.log('🔧 Initializing llama.cpp...');
       llamaInstance = await getLlama();
     }
     
-    // Load model if not already loaded
-    if (!loadedModel) {
-      console.log(`🔧 Loading model from: ${modelPath}`);
-      
-      loadedModel = new LlamaModel({
-        modelPath,
-        gpuLayers: ONLYJOBS_N_GPU_LAYERS,
-        llama: llamaInstance
+    // Load model if not already loaded or path changed
+    if (!loadedModel || loadedModelPath !== currentModelPath) {
+      console.log(`🔧 Loading model from: ${currentModelPath}`);
+      loadedModel = await llamaInstance.loadModel({
+        modelPath: currentModelPath,
+        gpuLayers: ONLYJOBS_N_GPU_LAYERS
       });
-      loadedModelPath = modelPath;
+      loadedModelPath = currentModelPath;
     }
     
     // Create context if not already created
     if (!loadedContext) {
       console.log(`🧮 Creating context (ctx=${ONLYJOBS_CTX})...`);
-      loadedContext = new LlamaContext({
-        model: loadedModel,
+      loadedContext = await loadedModel.createContext({
         contextSize: ONLYJOBS_CTX
       });
     }
@@ -102,9 +105,8 @@ async function initializeLLM(): Promise<void> {
     // Create chat session if not already created
     if (!loadedSession) {
       console.log('💬 Creating chat session...');
-      loadedSession = new LlamaChatSession({
-        context: loadedContext,
-        systemPrompt: SYSTEM_PROMPT
+      loadedSession = new llamaModule.LlamaChatSession({
+        contextSequence: loadedContext.getSequence()
       });
     }
     
@@ -113,6 +115,7 @@ async function initializeLLM(): Promise<void> {
   } catch (error) {
     console.error('❌ Failed to initialize LLM:', error);
     // Clean up partial state
+    llamaInstance = null;
     loadedModel = null;
     loadedContext = null;
     loadedSession = null;
@@ -177,7 +180,10 @@ export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult>
     const emailContent = `Subject: ${input.subject}\n\nContent: ${input.plaintext}`;
     
     console.log('🧠 Querying LLM for email classification...');
-    const response = await loadedSession.prompt(emailContent, {
+    const response = await loadedSession.prompt([
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: emailContent }
+    ], {
       temperature: ONLYJOBS_TEMPERATURE,
       maxTokens: ONLYJOBS_MAX_TOKENS,
     });
