@@ -43,7 +43,9 @@ const MLTestPage: React.FC = () => {
   const testEmails = [
     {
       label: 'Job Application Confirmation',
-      content: `Thank you for your interest in the Software Engineer position at TechCorp. We have received your application and will review it carefully. Our hiring team will be in touch within the next 2-3 business days to discuss next steps.
+      content: `Subject: Application Received - Software Engineer at TechCorp
+
+Thank you for your interest in the Software Engineer position at TechCorp. We have received your application and will review it carefully. Our hiring team will be in touch within the next 2-3 business days to discuss next steps.
 
 Best regards,
 HR Team
@@ -51,7 +53,9 @@ TechCorp Inc.`
     },
     {
       label: 'Interview Invitation',
-      content: `Hi John,
+      content: `Subject: Interview Invitation - Frontend Developer Role
+
+Hi John,
 
 We were impressed with your application for the Frontend Developer role. We would like to schedule a phone interview with you next week. 
 
@@ -65,7 +69,9 @@ InnovateTech`
     },
     {
       label: 'Non-Job Email (Shopping)',
-      content: `Your Amazon order has been shipped!
+      content: `Subject: Your Amazon order has been shipped!
+
+Your Amazon order has been shipped!
 
 Order #123-456789
 
@@ -81,7 +87,9 @@ Thanks for choosing Amazon!`
     },
     {
       label: 'Job Rejection',
-      content: `Dear Candidate,
+      content: `Subject: Update on Your Application - Marketing Manager
+
+Dear Candidate,
 
 Thank you for your time and interest in the Marketing Manager position at CreativeAgency. After careful consideration, we have decided to move forward with another candidate whose experience more closely matches our current needs.
 
@@ -98,7 +106,17 @@ Hiring Team`
       setError(null);
       setResult(null);
 
-      const classification = await window.electronAPI.classifyEmail(content);
+      // Extract subject from content if possible
+      const subjectMatch = content.match(/Subject:\s*([^\n]+)/i);
+      const subject = subjectMatch ? subjectMatch[1].trim() : '';
+      
+      // Remove subject line from content if it exists
+      const plaintext = content.replace(/^Subject:\s*[^\n]+\n?/im, '').trim();
+
+      const classification = await window.electronAPI.classifyEmail({
+        subject,
+        plaintext: plaintext || content
+      });
       setResult(classification);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Classification failed');

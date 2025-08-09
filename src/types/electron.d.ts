@@ -10,7 +10,7 @@ declare global {
       deleteJob: (id: string) => Promise<any>;
       
       // Email classification
-      classifyEmail: (content: string) => Promise<any>;
+      classifyEmail: (input: string | { subject: string; plaintext: string }) => Promise<any>;
       
       // Gmail operations
       authenticateGmail: () => Promise<any>;

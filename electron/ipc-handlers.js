@@ -401,17 +401,19 @@ ipcMain.handle('db:delete-job', async (event, id) => {
 });
 
 // Email classification using ML model
-ipcMain.handle('classify-email', async (event, content) => {
+ipcMain.handle('classify-email', async (event, arg) => {
   try {
-    console.log('📧 Classifying email content...');
+    console.log('📧 Classifying email...');
+    
+    // Accept either string (legacy) or object { subject, plaintext }
+    const input = typeof arg === 'string'
+      ? { subject: '', plaintext: arg }
+      : { subject: arg?.subject || '', plaintext: arg?.plaintext || '' };
+    
+    console.log(`📧 Input: subject="${input.subject}", plaintext length=${input.plaintext.length}`);
     
     // Use the provider-based classifier
     const classifier = getClassifierProvider();
-    const input = {
-      subject: '', // Extract from content if needed, or pass separately
-      plaintext: content
-    };
-    
     const result = await classifier.parse(input);
     
     // Enhance result with additional job extraction logic (preserve existing behavior)

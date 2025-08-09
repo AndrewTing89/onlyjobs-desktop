@@ -7,7 +7,7 @@ interface ElectronAPI {
   deleteJob: (id: string) => Promise<any>;
   
   // Email classification
-  classifyEmail: (content: string) => Promise<any>;
+  classifyEmail: (input: string | { subject: string; plaintext: string }) => Promise<any>;
   
   // ML Model operations
   getMlStatus: () => Promise<any>;
