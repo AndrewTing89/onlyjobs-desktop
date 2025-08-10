@@ -11,10 +11,13 @@ An AI-powered job application tracking desktop app that automatically syncs with
 
 - 🔐 **Gmail Integration**: Secure OAuth 2.0 authentication with Gmail
 - 🤖 **LLM Classification**: Uses local language model to identify and classify job-related emails
-- 📊 **Real-time Dashboard**: Track your job applications with live updates
-- 🔄 **Multi-Account Support**: Connect multiple Gmail accounts
-- 💾 **Local Storage**: All data stored locally using SQLite
-- 🎯 **Smart Extraction**: Extracts company names, positions, and application dates
+- ⚡ **Real-time Updates**: See job applications appear instantly as they're found during sync
+- 🔄 **Multi-Account Support**: Connect and sync multiple Gmail accounts simultaneously  
+- ⚙️ **Customizable Sync**: Configure email fetch limits (1-1000 per account) via settings UI
+- 📊 **Smart Dashboard**: Track applications with live updates and chronological ordering (newest first)
+- 💾 **Local Storage**: All data stored locally using SQLite with no external dependencies
+- 🎯 **Smart Extraction**: Extracts company names, positions, application dates, and sender information
+- 🎨 **Modern UI**: Clean Material Design interface with job status management and search
 
 ## Prerequisites
 
@@ -24,11 +27,12 @@ An AI-powered job application tracking desktop app that automatically syncs with
 
 ## LLM Classification
 
-The app uses a local LLM for accurate email classification with JSON schema validation. 
+The app uses a local LLM for accurate email classification with JSON schema validation. All processing happens locally for privacy and speed.
 
 - **Default Model**: Llama-3.2-3B-Instruct Q4_K_M (lightweight, CPU-optimized)
 - **Model Path**: `./models/model.gguf`
-- **Always On**: LLM-only classification (no legacy ML or keyword fallbacks)
+- **Always On**: Pure LLM-only classification (no ML confidence scores or legacy fallbacks)
+- **Real-time Processing**: Jobs appear instantly in UI as emails are classified during sync
 - **Setup Commands**:
   - `npm run llm:deps` - Install node-llama-cpp dependencies
   - `npm run llm:download` - Download the model file
@@ -68,38 +72,90 @@ The app uses a local LLM for accurate email classification with JSON schema vali
 
 ## Installation
 
-1. Clone the repository:
+### Quick Start
+
+1. **Clone the repository:**
 ```bash
-git clone https://github.com/yourusername/onlyjobs-desktop.git
+git clone https://github.com/AndrewTing89/onlyjobs-desktop.git
 cd onlyjobs-desktop
 ```
 
-2. Install dependencies:
+2. **Install Node.js dependencies:**
 ```bash
 npm install
 ```
 
-3. Download the LLM model:
+3. **Set up LLM dependencies and model:**
 ```bash
+# Install LLM native dependencies (required for classification)
+npm run llm:deps
+
+# Download the Llama model (this may take a few minutes)
 npm run llm:download
 ```
 
-4. Add configuration files:
-   - Place `gmail_credentials.json` in the project root (downloaded from Google Cloud Console).
-   - Create a `.env` file in the project root with values for:
-     - `GOOGLE_CLIENT_ID`
-     - `GOOGLE_CLIENT_SECRET`
-     - `GOOGLE_REDIRECT_URI`
-     - any `REACT_APP_*` Firebase variables required by the React app
-   - Create `electron/.env` with:
-     - `GOOGLE_OAUTH_CLIENT_ID`
-     - `GOOGLE_OAUTH_CLIENT_SECRET`
-     - `GOOGLE_OAUTH_REDIRECT_URI`
+4. **Configure Gmail API access:**
+   
+   **Option A: Manual Setup**
+   - Download `gmail_credentials.json` from your Google Cloud Console
+   - Place it in the project root directory
+   - Create `.env` file in project root:
+   ```bash
+   GOOGLE_CLIENT_ID=your_client_id
+   GOOGLE_CLIENT_SECRET=your_client_secret  
+   GOOGLE_REDIRECT_URI=http://127.0.0.1:3001/auth/callback
+   ```
+   - Create `electron/.env` file:
+   ```bash
+   GOOGLE_OAUTH_CLIENT_ID=your_client_id
+   GOOGLE_OAUTH_CLIENT_SECRET=your_client_secret
+   GOOGLE_OAUTH_REDIRECT_URI=http://127.0.0.1:3001/auth/callback
+   ```
 
-5. (Optional) Run the setup script to install all dependencies automatically:
+   **Option B: Automated Setup**
+   ```bash
+   # Run the setup script to configure everything automatically
+   bash setup.sh
+   ```
+
+5. **Verify installation:**
 ```bash
-bash setup.sh
+# Test LLM classification (optional but recommended)
+npm run llm:test
+
+# Start the application
+npm start    # Terminal 1: React dev server
+npm run electron-dev    # Terminal 2: Electron app
 ```
+
+### Common Installation Issues
+
+**LLM Model Download Fails:**
+```bash
+# Try rebuilding native dependencies first
+npm run rebuild:llm
+npm run llm:download
+```
+
+**Gmail Authentication Issues:**
+- Ensure redirect URI uses `127.0.0.1` (not `localhost`)
+- Verify Gmail API is enabled in Google Cloud Console
+- Check that both `.env` files have identical OAuth credentials
+
+**Native Module Errors:**
+```bash
+# For Apple Silicon Macs
+export LLAMA_METAL=1
+npm run rebuild:llm
+
+# For other platforms
+npm run rebuild:llm:clean
+```
+
+**First Time Setup:**
+- After installation, the app will guide you through Gmail account connection
+- Use the Settings panel to configure email fetch limits (default: 50 per account)
+- LLM classification happens automatically during sync
 
 ## Running the App
 
@@ -139,20 +195,25 @@ npm test
 onlyjobs-desktop/
 ├── electron/              # Electron main process files
 │   ├── main.js           # Main entry point
-│   ├── ipc-handlers.js   # IPC communication handlers
-│   ├── gmail-auth.js     # Gmail authentication
+│   ├── ipc-handlers.js   # IPC communication handlers with real-time events
+│   ├── gmail-multi-auth.js # Multi-account Gmail authentication
 │   ├── llm/              # Local LLM engine
-│   │   ├── llmEngine.ts  # LLM inference engine
+│   │   ├── llmEngine.ts  # LLM inference engine with streaming
 │   │   ├── config.ts     # Model configuration
 │   │   └── rules.ts      # Status hint patterns
 │   └── classifier/       # Classification providers
-│       └── providerFactory.js # LLM provider factory
+│       └── providerFactory.js # Pure LLM provider factory
 ├── src/                  # React app source
 │   ├── components/       # React components
+│   │   ├── JobsList.tsx  # Real-time job dashboard
+│   │   ├── GmailMultiAccount.tsx # Multi-account management with settings
+│   │   └── EmailViewModal.tsx # Job email viewer
 │   ├── pages/           # Page components
 │   └── ElectronApp.tsx  # Main Electron app component
 ├── models/              # Local LLM models
 │   └── model.gguf      # GGUF model file
+├── scripts/            # Utility scripts
+│   └── normalizeExisting.electron.js # Database normalization
 └── public/             # Static assets
 ```
 
@@ -168,28 +229,31 @@ onlyjobs-desktop/
 
 ### Gmail Sync Process
 
-1. **OAuth Authentication**: Connect Gmail account through secure OAuth flow
-2. **Email Fetching**: Download recent emails from Gmail via API
-3. **LLM Classification**: Process emails through local language model
-4. **Data Extraction**: Extract company, position, status information
-5. **Local Storage**: Save job-related emails to local SQLite database
+1. **OAuth Authentication**: Connect multiple Gmail accounts through secure OAuth flow
+2. **Customizable Fetching**: Download configurable number of recent emails (1-1000 per account)
+3. **Real-time LLM Classification**: Process emails through local language model with live UI updates
+4. **Smart Data Extraction**: Extract company, position, status, dates, and sender information
+5. **Instant Updates**: Jobs appear in UI immediately as they're found during sync
+6. **Local Storage**: Save job-related emails to local SQLite database with proper deduplication
 
 ### Database Schema
 
 The app uses SQLite with the following main tables:
-- `emails`: Stores all fetched emails
-- `jobs`: Stores classified job applications
-- `gmail_accounts`: Manages multiple Gmail accounts
-- `sync_status`: Tracks sync progress
+- `jobs`: Stores classified job applications with extracted data (company, position, status, dates)
+- `email_sync`: Tracks processed emails to prevent duplicates across multiple accounts
+- `gmail_accounts`: Manages multiple Gmail account connections and sync status
+- `sync_status`: Tracks overall sync progress and statistics
 
 ### LLM Classification
 
 The local LLM engine identifies job-related emails and extracts structured data:
 - **Context Understanding**: Analyzes full email content and context
-- **Structured Output**: Returns JSON with company, position, status
-- **High Accuracy**: Better than traditional keyword-based approaches
+- **Structured Output**: Returns JSON with company, position, status, and confidence-free results
+- **Real-time Processing**: Classifications happen during sync with immediate UI updates
+- **High Accuracy**: Better than traditional keyword-based approaches  
 - **Privacy First**: All processing happens locally, no data sent to external APIs
-- **Fast Inference**: Optimized GGUF models for quick classification
+- **Fast Inference**: Optimized GGUF models for quick classification with streaming early-stop
+- **Pure LLM**: No ML confidence scores - just clean, accurate classification results
 
 ## LLM Prompt & Evaluation
 
@@ -214,6 +278,30 @@ The system automatically normalizes LLM outputs:
 - **Status Mapping**: "screening"→"Interview", "application received"→"Applied", "rejected"→"Declined", "verbal offer"→"Offer"
 - **Text Cleaning**: Trims whitespace, removes quotes, collapses spaces
 - **JSON Contract**: Strict schema validation with automatic field coercion
+
+## User Interface Features
+
+### Real-time Job Updates
+- **Live Sync**: Jobs appear in the dashboard instantly as they're found during email processing
+- **Progress Tracking**: Real-time sync progress with email counts and status updates
+- **No Waiting**: See results immediately instead of waiting for full sync completion
+
+### Gmail Account Management  
+- **Multi-Account Support**: Connect and manage multiple Gmail accounts from a single interface
+- **Account Status**: View connection status, last sync times, and per-account statistics
+- **Easy Setup**: Simple OAuth flow for secure Gmail account connection
+
+### Customizable Sync Settings
+- **Email Fetch Limits**: Configure how many emails to fetch per sync (1-1000 per account)
+- **Settings UI**: Collapsible settings panel with user-friendly controls
+- **Performance Control**: Balance between sync speed and thoroughness
+
+### Job Dashboard
+- **Chronological Ordering**: Latest job applications appear first (newest dates at top)
+- **Status Management**: Update job statuses with color-coded chips (Applied, Interviewed, Offer, Declined)
+- **Search & Filter**: Find jobs quickly with real-time search functionality  
+- **Job Details**: View sender information, application dates, and email source account
+- **Clean Design**: Modern Material Design interface with intuitive navigation
 
 ### Evaluation Metrics
 
