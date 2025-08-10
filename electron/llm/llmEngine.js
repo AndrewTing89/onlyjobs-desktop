@@ -85,11 +85,17 @@ async function parseEmailWithLLM(input) {
         return cached;
     const session = await ensureSession(modelPath);
     const hint = (0, rules_1.getStatusHint)(subject, plaintext);
+    // Truncate email content to prevent context overflow
+    const maxBodyLength = 1500; // Reasonable limit for email classification
+    const truncatedBody = plaintext.length > maxBodyLength 
+        ? plaintext.substring(0, maxBodyLength) + "... [truncated]"
+        : plaintext;
+    
     const userPrompt = [
         hint ? `${hint}` : null,
         `Input`,
         `Subject: ${subject}`,
-        `Body: ${plaintext}`,
+        `Body: ${truncatedBody}`,
         `Output`,
     ]
         .filter(Boolean)

@@ -46,25 +46,22 @@ const SYSTEM_PROMPT = [
   "Decide if the email is job-related (job application, recruiting, ATS, interview, offer, rejection, etc.).",
   "If not job-related → is_job_related=false, and company=null, position=null, status=null.",
   "If job-related, extract:",
-  "- company: prefer official name from signature/body; map sender domain if helpful.",
-  "- position: the role title if present.",
-  "- status: one of Applied | Interview | Declined | Offer; if uncertain use null.",
-  "Use low temperature (0.1-0.2). No 'unknown' anywhere. Use null per the schema.",
+  "- company: prefer official name from body; map ATS domains (pnc@myworkday.com → PNC).",
+  "- position: strip job codes (R196209 Data Analyst → Data Analyst).",
+  "- status: Applied | Interview | Declined | Offer; if uncertain use null.",
+  "Never use 'unknown' - use null per schema.",
   "",
   "Examples:",
-  "Input\nSubject: Application received – Data Analyst\nBody: Thanks for applying to Acme. We received your application for Data Analyst.\nOutput",
+  "Input: Subject: Application received – Data Analyst\\nBody: Thanks for applying to Acme for Data Analyst.",
   '{"is_job_related":true,"company":"Acme","position":"Data Analyst","status":"Applied"}',
   "",
-  "Input\nSubject: Interview availability – Globex\nBody: We'd like to schedule a 30-min interview this week regarding your application at Globex.\nOutput",
+  "Input: Subject: Interview – Globex\\nBody: Schedule interview for your Globex application.",
   '{"is_job_related":true,"company":"Globex","position":null,"status":"Interview"}',
   "",
-  "Input\nSubject: Your application at Initech\nBody: We regret to inform you we will not move forward with your candidacy at Initech.\nOutput",
+  "Input: Subject: Your application\\nBody: We regret to inform you we will not move forward at Initech.",
   '{"is_job_related":true,"company":"Initech","position":null,"status":"Declined"}',
   "",
-  "Input\nSubject: Offer – Backend Engineer\nBody: Congratulations! We're excited to extend you an offer for Backend Engineer at Umbrella Corp.\nOutput",
-  '{"is_job_related":true,"company":"Umbrella Corp","position":"Backend Engineer","status":"Offer"}',
-  "",
-  "Input\nSubject: Career tips and market insights for August\nBody: Newsletter: industry news and general career advice.\nOutput",
+  "Input: Subject: Career newsletter\\nBody: Industry news and career advice.",
   '{"is_job_related":false,"company":null,"position":null,"status":null}',
 ].join("\n");
 
@@ -109,11 +106,17 @@ export async function parseEmailWithLLM(input: {
   const session = await ensureSession(modelPath);
 
   const hint = getStatusHint(subject, plaintext);
+  // Truncate email content to prevent context overflow
+  const maxBodyLength = 1500; // Reasonable limit for email classification
+  const truncatedBody = plaintext.length > maxBodyLength 
+    ? plaintext.substring(0, maxBodyLength) + "... [truncated]"
+    : plaintext;
+
   const userPrompt = [
     hint ? `${hint}` : null,
     `Input`,
     `Subject: ${subject}`,
-    `Body: ${plaintext}`,
+    `Body: ${truncatedBody}`,
     `Output`,
   ]
     .filter(Boolean)
