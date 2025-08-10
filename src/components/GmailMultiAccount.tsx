@@ -10,13 +10,17 @@ import {
   ListItemSecondaryAction,
   IconButton,
   Alert,
-  CircularProgress,
   Chip,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
   LinearProgress,
+  TextField,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Divider,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -24,6 +28,8 @@ import {
   Sync as SyncIcon,
   Email as EmailIcon,
   CheckCircle as CheckCircleIcon,
+  ExpandMore as ExpandMoreIcon,
+  Settings as SettingsIcon,
 } from '@mui/icons-material';
 
 interface GmailAccount {
@@ -50,6 +56,7 @@ export const GmailMultiAccount: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [emailFetchLimit, setEmailFetchLimit] = useState<number>(50);
 
   useEffect(() => {
     loadAccounts();
@@ -129,7 +136,7 @@ export const GmailMultiAccount: React.FC = () => {
     try {
       await window.electronAPI.gmail.syncAll({
         daysToSync: 90,
-        maxEmails: 500
+        maxEmails: emailFetchLimit
       });
     } catch (err: any) {
       setSyncing(false);
@@ -209,6 +216,37 @@ export const GmailMultiAccount: React.FC = () => {
         </List>
       </Paper>
 
+      {/* Settings Accordion */}
+      <Accordion sx={{ mb: 3 }}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <SettingsIcon />
+            <Typography variant="h6">Sync Settings</Typography>
+          </Box>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <TextField
+              label="Emails to fetch per sync"
+              type="number"
+              value={emailFetchLimit}
+              onChange={(e) => setEmailFetchLimit(Math.max(1, parseInt(e.target.value) || 1))}
+              inputProps={{
+                min: 1,
+                max: 1000,
+                step: 1
+              }}
+              helperText="Number of recent emails to fetch from each account (1-1000)"
+              sx={{ maxWidth: 300 }}
+            />
+            <Typography variant="body2" color="text.secondary">
+              Higher numbers will take longer to sync but may find more job applications.
+              Default is 50 emails per account.
+            </Typography>
+          </Box>
+        </AccordionDetails>
+      </Accordion>
+
       <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
         <Button
           variant="contained"
@@ -225,7 +263,7 @@ export const GmailMultiAccount: React.FC = () => {
           onClick={handleSyncAll}
           disabled={syncing || accounts.length === 0}
         >
-          Sync All Accounts
+          Sync All Accounts ({emailFetchLimit} emails each)
         </Button>
       </Box>
 

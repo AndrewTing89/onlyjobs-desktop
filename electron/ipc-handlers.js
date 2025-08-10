@@ -83,17 +83,109 @@ function getStore() {
 
 // Initialize database - defer until needed
 let db = null;
+let initialized = false;
 function getDb() {
   if (!db) {
     const dbPath = path.join(app.getPath('userData'), 'jobs.db');
     db = new Database(dbPath);
-    initializeDatabase();
+    if (!initialized) {
+      initializeDatabase();
+      initialized = true;
+    }
   }
   return db;
 }
 
 // Initialize database schema
 function initializeDatabase() {
+  // Disable foreign keys during migration
+  getDb().pragma('foreign_keys = OFF');
+  
+  try {
+    // First, check if jobs table exists and needs migration
+    const jobsTableExists = getDb().prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'").get();
+    
+    if (jobsTableExists) {
+      // Check if jobs table needs migration to new schema
+      const jobsTableInfo = getDb().prepare("PRAGMA table_info(jobs)").all();
+      const hasGmailMessageId = jobsTableInfo.some(col => col.name === 'gmail_message_id');
+      const hasAccountEmail = jobsTableInfo.some(col => col.name === 'account_email');
+      const hasFromAddress = jobsTableInfo.some(col => col.name === 'from_address');
+      
+      if (!hasGmailMessageId || !hasAccountEmail || !hasFromAddress) {
+        console.log('Migrating jobs table to new schema...');
+        
+        // Create new jobs table with correct schema
+        getDb().exec(`
+          CREATE TABLE IF NOT EXISTS jobs_new (
+            id TEXT PRIMARY KEY,
+            gmail_message_id TEXT,
+            company TEXT NOT NULL,
+            position TEXT NOT NULL,
+            status TEXT DEFAULT 'Applied' CHECK(status IN ('Applied', 'Interviewed', 'Declined', 'Offer')),
+            applied_date DATE,
+            location TEXT,
+            salary_range TEXT,
+            notes TEXT,
+            ml_confidence REAL,
+            account_email TEXT,
+            from_address TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
+        
+        // Copy only essential data from old table
+        getDb().exec(`
+          INSERT INTO jobs_new (id, company, position, status, applied_date, location, salary_range, notes, ml_confidence, created_at, updated_at, gmail_message_id, account_email, from_address)
+          SELECT 
+            id,
+            company,
+            position,
+            CASE 
+              WHEN status = 'active' THEN 'Applied'
+              WHEN status = 'applied' THEN 'Applied'
+              WHEN status = 'interviewing' THEN 'Interviewed'
+              WHEN status = 'offered' THEN 'Offer'
+              WHEN status = 'rejected' THEN 'Declined'
+              WHEN status = 'withdrawn' THEN 'Declined'
+              ELSE 'Applied'
+            END as status,
+            COALESCE(applied_date, date('now')) as applied_date,
+            location,
+            salary_range,
+            notes,
+            ml_confidence,
+            COALESCE(created_at, datetime('now')) as created_at,
+            COALESCE(updated_at, datetime('now')) as updated_at,
+            'migrated_' || id as gmail_message_id,
+            'unknown' as account_email,
+            'migrated' as from_address
+          FROM jobs;
+        `);
+        
+        // Drop old table and rename new one
+        getDb().exec('DROP TABLE jobs');
+        getDb().exec('ALTER TABLE jobs_new RENAME TO jobs');
+        
+        console.log('Migration completed: Updated jobs table schema');
+      }
+    }
+    
+    // Drop old emails table if it exists
+    const stmt = getDb().prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='emails'");
+    const oldEmailsTable = stmt.get();
+    
+    if (oldEmailsTable) {
+      console.log('Removing old emails table...');
+      getDb().exec('DROP TABLE IF EXISTS emails');
+      console.log('Migration completed: Removed old emails table');
+    }
+    
+  } catch (error) {
+    console.error('Migration error:', error);
+  }
+  
   getDb().exec(`
     -- Gmail accounts table for multi-account support
     CREATE TABLE IF NOT EXISTS gmail_accounts (
@@ -110,55 +202,33 @@ function initializeDatabase() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- Raw emails table (enhanced)
-    CREATE TABLE IF NOT EXISTS emails (
-      id TEXT PRIMARY KEY,
-      gmail_message_id TEXT UNIQUE NOT NULL,
-      subject TEXT,
-      from_address TEXT,
-      to_address TEXT,
-      date DATE,
-      snippet TEXT,
-      raw_content TEXT,
-      account_email TEXT,  -- Added for multi-account support
-      internal_date TEXT,  -- Added for Gmail internal date
-      fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      
-      -- Classification fields
-      is_classified BOOLEAN DEFAULT 0,
-      is_job_related BOOLEAN,
-      job_type TEXT,
-      ml_confidence REAL,
-      classification_method TEXT,
-      classified_at TIMESTAMP,
-      
-      -- Extracted data
-      company_extracted TEXT,
-      position_extracted TEXT
-    );
 
     -- Jobs table (refined)
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
-      email_id TEXT REFERENCES emails(id),
+      gmail_message_id TEXT NOT NULL,
       company TEXT NOT NULL,
       position TEXT NOT NULL,
-      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'applied', 'interviewing', 'offered', 'rejected', 'withdrawn')),
-      job_type TEXT CHECK(job_type IN ('application_sent', 'interview', 'offer', 'rejection', 'follow_up')),
+      status TEXT DEFAULT 'Applied' CHECK(status IN ('Applied', 'Interviewed', 'Declined', 'Offer')),
       applied_date DATE,
       location TEXT,
       salary_range TEXT,
       notes TEXT,
       ml_confidence REAL,
+      account_email TEXT,
+      from_address TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(gmail_message_id, account_email)
     );
 
     -- Email sync tracking table
     CREATE TABLE IF NOT EXISTS email_sync (
-      gmail_message_id TEXT PRIMARY KEY,
+      gmail_message_id TEXT,
+      account_email TEXT NOT NULL,
       processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      is_job_related BOOLEAN DEFAULT 0
+      is_job_related BOOLEAN DEFAULT 0,
+      PRIMARY KEY (gmail_message_id, account_email)
     );
 
     -- Sync status
@@ -173,27 +243,26 @@ function initializeDatabase() {
     );
 
     -- Indexes for performance
-    CREATE INDEX IF NOT EXISTS idx_emails_classified ON emails(is_classified);
-    CREATE INDEX IF NOT EXISTS idx_emails_job_related ON emails(is_job_related);
-    CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date);
-    CREATE INDEX IF NOT EXISTS idx_emails_gmail_id ON emails(gmail_message_id);
-    CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_email);
     CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-    CREATE INDEX IF NOT EXISTS idx_jobs_email_id ON jobs(email_id);
+    CREATE INDEX IF NOT EXISTS idx_jobs_gmail_id ON jobs(gmail_message_id);
+    CREATE INDEX IF NOT EXISTS idx_jobs_account ON jobs(account_email);
+    CREATE INDEX IF NOT EXISTS idx_email_sync_account ON email_sync(account_email);
 
     -- Initialize sync status if not exists
     INSERT OR IGNORE INTO sync_status (id) VALUES (1);
   `);
+  
+  // Re-enable foreign keys
+  getDb().pragma('foreign_keys = ON');
 }
 
 // Database operations
 ipcMain.handle('db:get-jobs', async (event, filters = {}) => {
   try {
     let query = `
-      SELECT j.*, e.account_email, e.from_address, e.raw_content 
-      FROM jobs j
-      LEFT JOIN emails e ON j.email_id = e.id
+      SELECT * 
+      FROM jobs
       WHERE 1=1
     `;
     const params = [];
@@ -218,7 +287,7 @@ ipcMain.handle('db:get-jobs', async (event, filters = {}) => {
       params.push(filters.endDate);
     }
 
-    query += ' ORDER BY j.created_at DESC';
+    query += ' ORDER BY applied_date DESC, created_at DESC';
 
     if (filters.limit) {
       query += ' LIMIT ?';
@@ -228,12 +297,8 @@ ipcMain.handle('db:get-jobs', async (event, filters = {}) => {
     const stmt = getDb().prepare(query);
     const results = stmt.all(...params);
     
-    // Debug log
-    if (results.length > 0) {
-      console.log(`Found ${results.length} jobs`);
-      console.log(`First job raw_content length: ${results[0].raw_content ? results[0].raw_content.length : 'NULL'}`);
-      console.log(`First job from_address: ${results[0].from_address}`);
-    }
+    console.log(`Found ${results.length} jobs`);
+    console.log('Sample job from database:', results[0]); // Debug first job
     
     return results;
   } catch (error) {
@@ -245,31 +310,13 @@ ipcMain.handle('db:get-jobs', async (event, filters = {}) => {
 ipcMain.handle('db:get-job', async (event, id) => {
   try {
     const stmt = getDb().prepare(`
-      SELECT j.*, e.account_email, e.from_address, e.raw_content 
-      FROM jobs j
-      LEFT JOIN emails e ON j.email_id = e.id
-      WHERE j.id = ?
+      SELECT * 
+      FROM jobs
+      WHERE id = ?
     `);
     const result = stmt.get(id);
     
-    // Debug log
-    console.log(`Fetched job ${id}:`);
-    console.log(`  raw_content length: ${result?.raw_content ? result.raw_content.length : 'NULL'}`);
-    console.log(`  from_address: ${result?.from_address}`);
-    console.log(`  Full result keys: ${Object.keys(result || {}).join(', ')}`);
-    
-    // Ensure all fields are properly serialized
-    if (result) {
-      // Create a clean object to ensure proper serialization
-      const cleanResult = {
-        ...result,
-        raw_content: result.raw_content || '',
-        from_address: result.from_address || '',
-        account_email: result.account_email || ''
-      };
-      console.log(`  Returning clean result with raw_content length: ${cleanResult.raw_content.length}`);
-      return cleanResult;
-    }
+    console.log(`Fetched job ${id}:`, result);
     
     return result;
   } catch (error) {
@@ -280,24 +327,25 @@ ipcMain.handle('db:get-job', async (event, id) => {
 
 ipcMain.handle('db:create-job', async (event, job) => {
   try {
-    const id = job.id || `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const id = job.id || `job_${Date.now()}_${performance.now().toString().replace('.', '_')}_${Math.random().toString(36).substr(2, 9)}`;
     const stmt = getDb().prepare(`
-      INSERT INTO jobs (id, email_id, company, position, status, job_type, applied_date, location, salary_range, notes, ml_confidence)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO jobs (id, gmail_message_id, company, position, status, applied_date, location, salary_range, notes, ml_confidence, account_email, from_address)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     const result = stmt.run(
       id,
-      job.email_id || null,
+      job.gmail_message_id,
       job.company,
       job.position,
-      job.status || 'active',
-      job.job_type,
+      job.status || 'Applied',
       job.applied_date || new Date().toISOString().split('T')[0],
       job.location,
       job.salary_range,
       job.notes,
-      job.ml_confidence
+      job.ml_confidence,
+      job.account_email,
+      job.from_address
     );
 
     return { id, ...job, changes: result.changes };
@@ -355,9 +403,9 @@ ipcMain.handle('classify-email', async (event, arg) => {
     // Enhance result with additional job extraction logic (preserve existing behavior)
     const enhancedResult = {
       ...result,
-      job_type: _extractJobType(content, result.is_job_related),
-      company: result.company || _extractCompany(content),
-      position: result.position || _extractPosition(content)
+      job_type: _extractJobType(input.plaintext, result.is_job_related),
+      company: result.company || _extractCompany(input.plaintext),
+      position: result.position || _extractPosition(input.plaintext)
     };
     
     console.log('✅ Email classification result:', {
@@ -708,464 +756,7 @@ ipcMain.handle('gmail:disconnect', async () => {
   }
 });
 
-// New: Fetch emails without classification
-ipcMain.handle('gmail:fetch', async (event, options = {}) => {
-  try {
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    const { daysToSync = 90, maxEmails = 500 } = options;
-    
-    // Update sync status
-    const updateStatus = getDb().prepare(`
-      UPDATE sync_status SET 
-        last_fetch_time = CURRENT_TIMESTAMP,
-        last_sync_status = 'fetching'
-      WHERE id = 1
-    `);
-    updateStatus.run();
-
-    const query = `in:inbox newer_than:${daysToSync}d`;
-    let totalFetched = 0;
-    let totalStored = 0;
-    let pageToken = null;
-    
-    mainWindow.webContents.send('fetch-progress', { 
-      phase: 'fetching',
-      current: 0, 
-      total: maxEmails, 
-      status: `Fetching emails from the last ${daysToSync} days...` 
-    });
-
-    do {
-      // Fetch batch of emails
-      const result = await gmailAuth.fetchEmails({
-        maxResults: Math.min(50, maxEmails - totalFetched),
-        query,
-        pageToken
-      });
-
-      if (!result.messages || result.messages.length === 0) {
-        break;
-      }
-
-      // Store each email raw
-      for (const email of result.messages) {
-        try {
-          // Check if already exists
-          const checkStmt = getDb().prepare('SELECT id FROM emails WHERE gmail_message_id = ?');
-          const exists = checkStmt.get(email.id);
-          
-          if (!exists) {
-            // Extract basic info
-            const headers = email.payload?.headers || [];
-            const subject = headers.find(h => h.name === 'Subject')?.value || '';
-            const from = headers.find(h => h.name === 'From')?.value || '';
-            const to = headers.find(h => h.name === 'To')?.value || '';
-            const dateStr = headers.find(h => h.name === 'Date')?.value || '';
-            
-            // Store raw email
-            const emailId = `email_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            const insertStmt = getDb().prepare(`
-              INSERT INTO emails (id, gmail_message_id, subject, from_address, to_address, date, snippet, raw_content, internal_date)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `);
-            
-            insertStmt.run(
-              emailId,
-              email.id,
-              subject,
-              from,
-              to,
-              _extractDate(email),
-              email.snippet || '',
-              _extractEmailContent(email),
-              email.internalDate || null
-            );
-            
-            totalStored++;
-          }
-          
-          totalFetched++;
-          
-          // Update progress
-          mainWindow.webContents.send('fetch-progress', { 
-            phase: 'fetching',
-            current: totalFetched, 
-            total: maxEmails, 
-            status: `Fetched ${totalFetched} emails, ${totalStored} new...` 
-          });
-          
-        } catch (error) {
-          console.error(`Error storing email ${email.id}:`, error);
-        }
-      }
-      
-      pageToken = result.nextPageToken;
-      
-    } while (pageToken && totalFetched < maxEmails);
-
-    // Update sync status
-    const finalStatus = getDb().prepare(`
-      UPDATE sync_status SET 
-        last_sync_status = 'fetch_completed',
-        total_emails_fetched = total_emails_fetched + ?
-      WHERE id = 1
-    `);
-    finalStatus.run(totalStored);
-
-    mainWindow.webContents.send('fetch-complete', { 
-      fetched: totalFetched,
-      stored: totalStored 
-    });
-
-    return { 
-      success: true, 
-      fetched: totalFetched,
-      stored: totalStored 
-    };
-  } catch (error) {
-    console.error('Error fetching emails:', error);
-    
-    const errorStatus = getDb().prepare(`
-      UPDATE sync_status SET 
-        last_sync_status = 'fetch_failed'
-      WHERE id = 1
-    `);
-    errorStatus.run();
-    
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    mainWindow.webContents.send('fetch-error', error.message);
-    throw error;
-  }
-});
-
-// New: Classify emails in batches
-ipcMain.handle('emails:classify', async (event, options = {}) => {
-  try {
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    const { batchSize = 50, maxToProcess = null } = options;
-    
-    // Get unclassified emails
-    let query = 'SELECT * FROM emails WHERE is_classified = 0 ORDER BY date DESC LIMIT ?';
-    const params = [maxToProcess || batchSize];
-    
-    const unclassifiedStmt = getDb().prepare(query);
-    const emails = unclassifiedStmt.all(...params);
-    
-    if (emails.length === 0) {
-      return { processed: 0, jobsFound: 0, remaining: 0 };
-    }
-    
-    let processed = 0;
-    let jobsFound = 0;
-    
-    mainWindow.webContents.send('classify-progress', {
-      phase: 'classifying',
-      current: 0,
-      total: emails.length,
-      status: 'Analyzing emails for job opportunities...'
-    });
-    
-    for (const email of emails) {
-      try {
-        // Classify email
-        const classification = await llmHandler.classifyEmail(email.raw_content);
-        
-        // Update email with classification
-        const updateStmt = getDb().prepare(`
-          UPDATE emails SET 
-            is_classified = 1,
-            is_job_related = ?,
-            job_type = ?,
-            ml_confidence = ?,
-            classification_method = ?,
-            classified_at = CURRENT_TIMESTAMP,
-            company_extracted = ?,
-            position_extracted = ?
-          WHERE id = ?
-        `);
-        
-        updateStmt.run(
-          classification.is_job_related ? 1 : 0,
-          classification.job_type,
-          classification.confidence,
-          'keyword', // or 'ml' when using full model
-          classification.company || _extractCompany(email.raw_content),
-          classification.position || _extractPosition(email.raw_content),
-          email.id
-        );
-        
-        // If job-related, create job entry
-        if (classification.is_job_related) {
-          const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          const jobStmt = getDb().prepare(`
-            INSERT INTO jobs (id, email_id, company, position, status, job_type, applied_date, ml_confidence, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `);
-          
-          jobStmt.run(
-            jobId,
-            email.id,
-            extractedCompany,
-            extractedPosition,
-            'active',
-            classification.job_type,
-            email.date,
-            classification.confidence,
-            email.snippet
-          );
-          
-          jobsFound++;
-          
-          // Send job found notification
-          mainWindow.webContents.send('job-found', {
-            id: jobId,
-            company: classification.company || email.company_extracted,
-            position: classification.position || email.position_extracted,
-            date: email.date,
-            type: classification.job_type
-          });
-        }
-        
-        processed++;
-        
-        // Update progress
-        mainWindow.webContents.send('classify-progress', {
-          phase: 'classifying',
-          current: processed,
-          total: emails.length,
-          status: `Analyzed ${processed}/${emails.length} emails, found ${jobsFound} jobs...`
-        });
-        
-      } catch (error) {
-        console.error(`Error classifying email ${email.id}:`, error);
-      }
-    }
-    
-    // Update sync status
-    const updateStatus = getDb().prepare(`
-      UPDATE sync_status SET 
-        last_classify_time = CURRENT_TIMESTAMP,
-        total_emails_classified = total_emails_classified + ?,
-        total_jobs_found = total_jobs_found + ?
-      WHERE id = 1
-    `);
-    updateStatus.run(processed, jobsFound);
-    
-    // Get remaining count
-    const remainingStmt = getDb().prepare('SELECT COUNT(*) as count FROM emails WHERE is_classified = 0');
-    const remaining = remainingStmt.get().count;
-    
-    mainWindow.webContents.send('classify-complete', {
-      processed,
-      jobsFound,
-      remaining
-    });
-    
-    return { processed, jobsFound, remaining };
-    
-  } catch (error) {
-    console.error('Error classifying emails:', error);
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    mainWindow.webContents.send('classify-error', error.message);
-    throw error;
-  }
-});
-
-// Sync handler that uses the new two-stage process
-ipcMain.handle('gmail:sync', async (event, options = {}) => {
-  try {
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    
-    // Stage 1: Fetch emails
-    console.log('Starting email fetch...');
-    const { daysToSync = 90, maxEmails = 500 } = options;
-    
-    // Fetch emails
-    const fetchOptions = { daysToSync, maxEmails };
-    const fetchResult = await gmailAuth.fetchEmails({
-      maxResults: 50,
-      query: `in:inbox newer_than:${daysToSync}d`
-    });
-    
-    if (!fetchResult.messages || fetchResult.messages.length === 0) {
-      mainWindow.webContents.send('sync-complete', {
-        emailsProcessed: 0,
-        jobsFound: 0
-      });
-      return {
-        success: true,
-        emailsProcessed: 0,
-        jobsFound: 0,
-        message: 'No emails found'
-      };
-    }
-    
-    // Store fetched emails
-    let totalStored = 0;
-    let totalFetched = fetchResult.messages.length;
-    
-    mainWindow.webContents.send('sync-progress', {
-      current: 0,
-      total: totalFetched,
-      status: 'Storing emails...'
-    });
-    
-    for (const email of fetchResult.messages) {
-      try {
-        // Check if already exists
-        const checkStmt = getDb().prepare('SELECT id FROM emails WHERE gmail_message_id = ?');
-        const exists = checkStmt.get(email.id);
-        
-        if (!exists) {
-          const headers = email.payload?.headers || [];
-          const emailId = `email_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          
-          const insertStmt = getDb().prepare(`
-            INSERT INTO emails (id, gmail_message_id, subject, from_address, to_address, date, snippet, raw_content, internal_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `);
-          
-          insertStmt.run(
-            emailId,
-            email.id,
-            headers.find(h => h.name === 'Subject')?.value || '',
-            headers.find(h => h.name === 'From')?.value || '',
-            headers.find(h => h.name === 'To')?.value || '',
-            _extractDate(email),
-            email.snippet || '',
-            _extractEmailContent(email),
-            email.internalDate || null
-          );
-          
-          totalStored++;
-        }
-      } catch (error) {
-        console.error(`Error storing email ${email.id}:`, error);
-      }
-    }
-    
-    // Stage 2: Classify stored emails
-    console.log(`Stored ${totalStored} new emails, starting classification...`);
-    
-    const unclassifiedStmt = getDb().prepare('SELECT * FROM emails WHERE is_classified = 0 ORDER BY date DESC LIMIT 100');
-    const unclassifiedEmails = unclassifiedStmt.all();
-    
-    let totalClassified = 0;
-    let totalJobsFound = 0;
-    
-    mainWindow.webContents.send('sync-progress', {
-      current: 0,
-      total: unclassifiedEmails.length,
-      status: 'Analyzing emails for job opportunities...'
-    });
-    
-    for (const email of unclassifiedEmails) {
-      try {
-        const classification = await llmHandler.classifyEmail(email.raw_content);
-        
-        // Update email with classification
-        const updateStmt = getDb().prepare(`
-          UPDATE emails SET 
-            is_classified = 1,
-            is_job_related = ?,
-            job_type = ?,
-            ml_confidence = ?,
-            classification_method = 'ml',
-            classified_at = CURRENT_TIMESTAMP,
-            company_extracted = ?,
-            position_extracted = ?
-          WHERE id = ?
-        `);
-        
-        // Extract company and position
-        const extractedCompany = _extractCompany(email.raw_content);
-        const extractedPosition = _extractPosition(email.raw_content);
-        
-        updateStmt.run(
-          classification.is_job_related ? 1 : 0,
-          classification.job_type,
-          classification.confidence,
-          extractedCompany,
-          extractedPosition,
-          email.id
-        );
-        
-        if (classification.is_job_related) {
-          // Create job entry
-          const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          const jobStmt = getDb().prepare(`
-            INSERT INTO jobs (id, email_id, company, position, status, job_type, applied_date, ml_confidence, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `);
-          
-          jobStmt.run(
-            jobId,
-            email.id,
-            _extractCompany(email.raw_content),
-            _extractPosition(email.raw_content),
-            'active',
-            classification.job_type,
-            email.date,
-            classification.confidence,
-            email.snippet
-          );
-          
-          totalJobsFound++;
-          
-          mainWindow.webContents.send('job-found', {
-            id: jobId,
-            company: _extractCompany(email.raw_content),
-            position: _extractPosition(email.raw_content),
-            date: email.date
-          });
-        }
-        
-        totalClassified++;
-        
-        mainWindow.webContents.send('sync-progress', {
-          current: totalClassified,
-          total: unclassifiedEmails.length,
-          status: `Analyzed ${totalClassified}/${unclassifiedEmails.length} emails, found ${totalJobsFound} jobs...`
-        });
-        
-      } catch (error) {
-        console.error(`Error classifying email ${email.id}:`, error);
-      }
-    }
-    
-    // Update sync status
-    const updateStatus = getDb().prepare(`
-      UPDATE sync_status SET 
-        last_fetch_time = CURRENT_TIMESTAMP,
-        last_classify_time = CURRENT_TIMESTAMP,
-        last_sync_status = 'completed',
-        total_emails_fetched = total_emails_fetched + ?,
-        total_emails_classified = total_emails_classified + ?,
-        total_jobs_found = total_jobs_found + ?
-      WHERE id = 1
-    `);
-    updateStatus.run(totalStored, totalClassified, totalJobsFound);
-    
-    mainWindow.webContents.send('sync-complete', {
-      emailsProcessed: totalFetched,
-      jobsFound: totalJobsFound
-    });
-    
-    return {
-      success: true,
-      emailsProcessed: totalFetched,
-      emailsStored: totalStored,
-      emailsClassified: totalClassified,
-      jobsFound: totalJobsFound
-    };
-    
-  } catch (error) {
-    console.error('Sync error:', error);
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    mainWindow.webContents.send('sync-error', error.message);
-    throw error;
-  }
-});
+// Gmail sync functionality is now handled by gmail:sync-all handler below
 
 // Helper function to extract email content
 function _extractEmailContent(email) {
@@ -1221,6 +812,14 @@ function _extractEmailContent(email) {
 
 // Helper function to extract date from email
 function _extractDate(email) {
+  console.log('Extracting date from email:', {
+    hasPayload: !!email.payload,
+    hasHeaders: !!(email.payload?.headers),
+    headerCount: email.payload?.headers?.length || 0,
+    hasInternalDate: !!email.internalDate,
+    internalDate: email.internalDate
+  });
+  
   const headers = email.payload?.headers || [];
   const dateStr = headers.find(h => h.name === 'Date')?.value;
   
@@ -1240,10 +839,11 @@ function _extractDate(email) {
   // If no valid date found, use internal date
   if (email.internalDate) {
     try {
+      // Gmail internalDate is in milliseconds as a string
       const timestamp = parseInt(email.internalDate);
       const date = new Date(timestamp);
       if (!isNaN(date.getTime())) {
-        console.log(`Using internal date: ${timestamp} -> ${date.toISOString()}`);
+        console.log(`Using internal date: ${email.internalDate} (${timestamp}) -> ${date.toISOString()}`);
         return date.toISOString().split('T')[0];
       }
     } catch (error) {
@@ -1595,6 +1195,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     
     console.log(`Starting sync for ${accounts.length} accounts...`);
     const { daysToSync = 90, maxEmails = 500 } = options;
+    console.log(`Sync options - daysToSync: ${daysToSync}, maxEmails: ${maxEmails}`);
     
     let totalEmailsFetched = 0;
     let totalEmailsClassified = 0;
@@ -1623,7 +1224,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       try {
         // Fetch emails from this account
         const fetchResult = await gmailMultiAuth.fetchEmailsFromAccount(account.email, {
-          maxResults: 50,
+          maxResults: maxEmails,
           query: `in:inbox newer_than:${daysToSync}d`
         });
         
@@ -1631,39 +1232,103 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
           continue;
         }
         
-        // Store fetched emails
+        // Process each email directly
         for (const email of fetchResult.messages) {
           try {
-            // Check if already exists
-            const checkStmt = getDb().prepare('SELECT id FROM emails WHERE gmail_message_id = ? AND account_email = ?');
+            // Check if already processed for this account
+            const checkStmt = getDb().prepare('SELECT gmail_message_id FROM email_sync WHERE gmail_message_id = ? AND account_email = ?');
             const exists = checkStmt.get(email.id, account.email);
             
             if (!exists) {
+              // Extract email info for classification
               const headers = email.payload?.headers || [];
-              const emailId = `email_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              const subject = headers.find(h => h.name === 'Subject')?.value || '';
+              const from = headers.find(h => h.name === 'From')?.value || '';
+              const emailContent = _extractEmailContent(email);
               
-              const insertStmt = getDb().prepare(`
-                INSERT INTO emails (id, gmail_message_id, subject, from_address, to_address, date, snippet, raw_content, account_email, internal_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              // Classify with LLM
+              const classification = await llmHandler.classifyEmail(emailContent);
+              
+              // Mark as processed
+              const insertSyncStmt = getDb().prepare(`
+                INSERT INTO email_sync (gmail_message_id, account_email, is_job_related)
+                VALUES (?, ?, ?)
               `);
-              
-              insertStmt.run(
-                emailId,
-                email.id,
-                headers.find(h => h.name === 'Subject')?.value || '',
-                headers.find(h => h.name === 'From')?.value || '',
-                headers.find(h => h.name === 'To')?.value || '',
-                _extractDate(email),
-                email.snippet || '',
-                _extractEmailContent(email),
-                account.email,
-                email.internalDate || null
-              );
+              insertSyncStmt.run(email.id, account.email, classification.is_job_related ? 1 : 0);
               
               totalEmailsFetched++;
+              
+              // If job-related, create job entry
+              if (classification.is_job_related) {
+                const jobId = `job_${Date.now()}_${performance.now().toString().replace('.', '_')}_${Math.random().toString(36).substr(2, 9)}`;
+                const jobStmt = getDb().prepare(`
+                  INSERT OR IGNORE INTO jobs (id, gmail_message_id, company, position, status, applied_date, account_email, from_address, notes)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `);
+                
+                // Map LLM status to our 4-state system
+                let status = 'Applied';
+                if (classification.status) {
+                  const statusLower = classification.status.toLowerCase();
+                  if (statusLower.includes('interview')) status = 'Interviewed';
+                  else if (statusLower.includes('offer')) status = 'Offer';
+                  else if (statusLower.includes('declined') || statusLower.includes('reject')) status = 'Declined';
+                }
+                
+                const extractedDate = _extractDate(email);
+                console.log(`Storing job with extracted date: ${extractedDate}`);
+                console.log('Job data being inserted:', {
+                  jobId,
+                  gmail_message_id: email.id,
+                  company: classification.company || _extractCompany(emailContent),
+                  position: classification.position || _extractPosition(emailContent),
+                  status,
+                  applied_date: extractedDate,
+                  account_email: account.email
+                });
+                
+                const jobResult = jobStmt.run(
+                  jobId,
+                  email.id,
+                  classification.company || _extractCompany(emailContent),
+                  classification.position || _extractPosition(emailContent),
+                  status,
+                  extractedDate,
+                  account.email,
+                  from,
+                  email.snippet || ''
+                );
+                
+                console.log('Job insert result:', { changes: jobResult.changes, lastInsertRowid: jobResult.lastInsertRowid });
+                
+                // Only count if job was actually inserted (not ignored due to duplicate)
+                if (jobResult.changes > 0) {
+                  totalJobsFound++;
+                  console.log(`✅ Job inserted successfully: ${classification.company} - ${classification.position}`);
+                  
+                  // Send real-time job update to frontend
+                  const mainWindow = BrowserWindow.getAllWindows()[0];
+                  if (mainWindow) {
+                    const newJob = {
+                      id: jobId,
+                      gmail_message_id: email.id,
+                      company: classification.company || _extractCompany(emailContent),
+                      position: classification.position || _extractPosition(emailContent),
+                      status,
+                      applied_date: extractedDate,
+                      account_email: account.email,
+                      from_address: from,
+                      notes: email.snippet || '',
+                      created_at: new Date().toISOString(),
+                      updated_at: new Date().toISOString()
+                    };
+                    mainWindow.webContents.send('job-found', newJob);
+                  }
+                }
+              }
             }
           } catch (error) {
-            console.error(`Error storing email ${email.id}:`, error);
+            console.error(`Error processing email ${email.id}:`, error);
           }
         }
       } catch (error) {
@@ -1671,83 +1336,8 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       }
     }
     
-    // Stage 2: Classify unclassified emails
-    console.log(`Fetched ${totalEmailsFetched} new emails, starting classification...`);
-    
-    const unclassifiedStmt = getDb().prepare('SELECT * FROM emails WHERE is_classified = 0 ORDER BY date DESC LIMIT 100');
-    const unclassifiedEmails = unclassifiedStmt.all();
-    
-    mainWindow.webContents.send('sync-progress', {
-      current: 0,
-      total: unclassifiedEmails.length,
-      status: 'Analyzing emails for job opportunities...'
-    });
-    
-    for (const email of unclassifiedEmails) {
-      try {
-        const classification = await llmHandler.classifyEmail(email.raw_content);
-        
-        // Update email with classification
-        const updateStmt = getDb().prepare(`
-          UPDATE emails SET 
-            is_classified = 1,
-            is_job_related = ?,
-            job_type = ?,
-            ml_confidence = ?,
-            classification_method = 'ml',
-            classified_at = CURRENT_TIMESTAMP,
-            company_extracted = ?,
-            position_extracted = ?
-          WHERE id = ?
-        `);
-        
-        // Extract company and position
-        const extractedCompany = _extractCompany(email.raw_content);
-        const extractedPosition = _extractPosition(email.raw_content);
-        
-        updateStmt.run(
-          classification.is_job_related ? 1 : 0,
-          classification.job_type,
-          classification.confidence,
-          extractedCompany,
-          extractedPosition,
-          email.id
-        );
-        
-        totalEmailsClassified++;
-        
-        // If job-related, create job entry
-        if (classification.is_job_related) {
-          const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          const jobStmt = getDb().prepare(`
-            INSERT INTO jobs (id, email_id, company, position, status, job_type, applied_date, ml_confidence, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `);
-          
-          jobStmt.run(
-            jobId,
-            email.id,
-            extractedCompany,
-            extractedPosition,
-            'active',
-            classification.job_type,
-            email.date,
-            classification.confidence,
-            email.snippet
-          );
-          
-          totalJobsFound++;
-        }
-        
-        mainWindow.webContents.send('sync-progress', {
-          current: totalEmailsClassified,
-          total: unclassifiedEmails.length,
-          status: `Classified ${totalEmailsClassified} emails, found ${totalJobsFound} jobs...`
-        });
-      } catch (error) {
-        console.error(`Error classifying email:`, error);
-      }
-    }
+    console.log(`Processed ${totalEmailsFetched} emails, found ${totalJobsFound} jobs from ${accounts.length} accounts`);
+    totalEmailsClassified = totalEmailsFetched; // All processed emails are classified
     
     // Update final sync status
     const finalUpdate = getDb().prepare(`
