@@ -7,6 +7,7 @@ const PHRASES = {
         /thanks for applying/i,
         /submitted your application/i,
         /application received/i,
+        /application submitted/i,
     ],
     interview: [
         /schedule/i,
@@ -14,12 +15,20 @@ const PHRASES = {
         /interview/i,
         /meet/i,
         /call/i,
+        /passed.*assessment/i,
+        /congratulations.*passed/i,
+        /next steps/i,
     ],
     rejected: [
         /regret to inform/i,
         /not move forward/i,
+        /moving forward with other candidates/i,
         /unfortunately.*(not|no longer)\s+moving/i,
         /decline(d)?/i,
+        /other candidates/i,
+        /not an exact match/i,
+        /pursue other candidates/i,
+        /decided to move forward with/i,
     ],
     offer: [
         /offer/i,
