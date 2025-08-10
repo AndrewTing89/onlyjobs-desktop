@@ -23,10 +23,8 @@ import {
   CalendarToday,
   Email,
   Search,
-  Refresh,
-  Visibility
+  Refresh
 } from '@mui/icons-material';
-import { EmailViewModal } from './EmailViewModal';
 
 const accent = "#FF7043";
 
@@ -41,7 +39,6 @@ interface Job {
   salary_range?: string;
   notes?: string;
   email_id?: string;
-  ml_confidence?: number;
   created_at: string;
   updated_at: string;
   account_email?: string;
@@ -50,21 +47,13 @@ interface Job {
 }
 
 const statusColors: Record<string, string> = {
-  active: '#4CAF50',
-  applied: '#2196F3',
-  interviewing: '#FF9800',
-  offered: '#9C27B0',
-  rejected: '#F44336',
-  withdrawn: '#9E9E9E'
+  Applied: '#2196F3',
+  Interviewed: '#FF9800', 
+  Offer: '#9C27B0',
+  Declined: '#F44336'
 };
 
-const jobTypeLabels: Record<string, string> = {
-  application_sent: 'Applied',
-  interview: 'Interview',
-  offer: 'Offer',
-  rejection: 'Rejected',
-  follow_up: 'Follow-up'
-};
+// Job type labels are no longer needed since we use status directly
 
 export default function JobsList() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -74,22 +63,52 @@ export default function JobsList() {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [syncStatus, setSyncStatus] = useState<any>(null);
-  const [emailModalOpen, setEmailModalOpen] = useState(false);
-  const [viewingJob, setViewingJob] = useState<Job | null>(null);
 
   useEffect(() => {
     loadJobs();
     loadSyncStatus();
     
-    // Listen for new jobs
-    const handleJobFound = (job: Job) => {
-      setJobs(prev => [job, ...prev]);
+    // Listen for individual job additions during sync
+    const handleJobFound = (newJob: Job) => {
+      console.log('New job found during sync:', newJob);
+      setJobs(prevJobs => {
+        // Check if job already exists to avoid duplicates
+        const existingJob = prevJobs.find(job => job.id === newJob.id);
+        if (existingJob) {
+          return prevJobs;
+        }
+        
+        // Insert the new job and maintain proper date ordering (newest first)
+        const updatedJobs = [...prevJobs, newJob];
+        return updatedJobs.sort((a, b) => {
+          // First sort by applied_date (newest first)
+          const dateA = new Date(a.applied_date);
+          const dateB = new Date(b.applied_date);
+          if (dateB.getTime() !== dateA.getTime()) {
+            return dateB.getTime() - dateA.getTime();
+          }
+          // If dates are equal, sort by created_at (newest first)
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+      });
+    };
+    
+    // Listen for sync completion and reload jobs (as backup)
+    const handleSyncComplete = () => {
+      console.log('Sync completed, reloading jobs from database');
+      loadJobs();
+      loadSyncStatus();
     };
     
     window.electronAPI.on('job-found', handleJobFound);
+    window.electronAPI.onSyncComplete(handleSyncComplete);
     
     return () => {
-      window.electronAPI.removeListener('job-found', handleJobFound);
+      // Clean up listeners if they exist
+      if (window.electronAPI.removeListener) {
+        window.electronAPI.removeListener('job-found', handleJobFound);
+        window.electronAPI.removeListener('sync-complete', handleSyncComplete);
+      }
     };
   }, []);
 
@@ -154,21 +173,7 @@ export default function JobsList() {
     handleMenuClose();
   };
 
-  const handleViewEmail = async (job: Job) => {
-    // Always fetch the full job details to ensure we have the email content
-    try {
-      const fullJob = await window.electronAPI.getJob(job.id);
-      console.log('Fetched job details:', fullJob); // Debug log
-      console.log('Raw content exists:', !!fullJob?.raw_content);
-      console.log('Raw content length:', fullJob?.raw_content?.length);
-      console.log('Raw content preview:', fullJob?.raw_content?.substring(0, 100));
-      setViewingJob(fullJob);
-    } catch (error) {
-      console.error('Error fetching job details:', error);
-      setViewingJob(job);
-    }
-    setEmailModalOpen(true);
-  };
+  // Email viewing removed since we no longer store raw content
 
   const filteredJobs = jobs.filter(job => 
     (job.company || 'Unknown Company').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -283,29 +288,19 @@ export default function JobsList() {
                               fontWeight: 500
                             }}
                           />
-                          {job.job_type && (
-                            <Chip
-                              label={jobTypeLabels[job.job_type] || job.job_type}
-                              size="small"
-                              variant="outlined"
-                              color="primary"
-                            />
-                          )}
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                             <CalendarToday sx={{ fontSize: 16, color: 'text.secondary' }} />
                             <Typography variant="body2" color="text.secondary">
-                              {new Date(job.applied_date).toLocaleDateString('en-US', {
-                                month: 'short',
-                                day: 'numeric',
-                                year: 'numeric'
-                              })}
+                              {job.applied_date && !isNaN(new Date(job.applied_date).getTime()) 
+                                ? new Date(job.applied_date).toLocaleDateString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    year: 'numeric'
+                                  })
+                                : 'No date'
+                              }
                             </Typography>
                           </Box>
-                          {job.ml_confidence && (
-                            <Typography variant="body2" color="text.secondary">
-                              {Math.round(job.ml_confidence * 100)}% match
-                            </Typography>
-                          )}
                         </Box>
                         {job.account_email && (
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
@@ -318,22 +313,12 @@ export default function JobsList() {
                     }
                   />
                   <ListItemSecondaryAction>
-                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      <IconButton
-                        edge="end"
-                        onClick={() => handleViewEmail(job)}
-                        title="View Email"
-                        sx={{ mr: 1 }}
-                      >
-                        <Visibility />
-                      </IconButton>
-                      <IconButton
-                        edge="end"
-                        onClick={(e) => handleMenuOpen(e, job)}
-                      >
-                        <MoreVert />
-                      </IconButton>
-                    </Box>
+                    <IconButton
+                      edge="end"
+                      onClick={(e) => handleMenuOpen(e, job)}
+                    >
+                      <MoreVert />
+                    </IconButton>
                   </ListItemSecondaryAction>
                 </ListItem>
               ))}
@@ -373,17 +358,6 @@ export default function JobsList() {
         </MenuItem>
       </Menu>
 
-      {emailModalOpen && viewingJob && (
-        <EmailViewModal
-          open={emailModalOpen}
-          onClose={() => {
-            setEmailModalOpen(false);
-            setViewingJob(null);
-          }}
-          emailContent={viewingJob.raw_content || ''}
-          job={viewingJob}
-        />
-      )}
     </Box>
   );
 }
