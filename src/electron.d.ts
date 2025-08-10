@@ -6,6 +6,10 @@ interface ElectronAPI {
   updateJob: (id: string, updates: any) => Promise<any>;
   deleteJob: (id: string) => Promise<any>;
   
+  // Database management operations
+  clearAllRecords: () => Promise<{ success: boolean; message: string; details: any }>;
+  clearEmailSync: () => Promise<{ success: boolean; message: string; recordsDeleted: number }>;
+  
   // Email operations for compatibility
   getJobInbox?: (jobId: string) => Promise<any>;
   getEmailDetail?: (emailId: string) => Promise<any>;

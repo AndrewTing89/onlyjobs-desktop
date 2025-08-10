@@ -9,6 +9,10 @@ declare global {
       updateJob: (id: string, updates: any) => Promise<any>;
       deleteJob: (id: string) => Promise<any>;
       
+      // Database management operations
+      clearAllRecords: () => Promise<{ success: boolean; message: string; details: any }>;
+      clearEmailSync: () => Promise<{ success: boolean; message: string; recordsDeleted: number }>;
+      
       // Email classification
       classifyEmail: (input: string | { subject: string; plaintext: string }) => Promise<any>;
       
