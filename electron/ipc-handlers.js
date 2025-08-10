@@ -963,13 +963,14 @@ ipcMain.handle('data:import', async (event, jsonData) => {
 
       // Import email sync data
       const emailStmt = getDb().prepare(`
-        INSERT INTO email_sync (gmail_message_id, processed_at, is_job_related)
-        VALUES (?, ?, ?)
+        INSERT OR IGNORE INTO email_sync (gmail_message_id, account_email, processed_at, is_job_related)
+        VALUES (?, ?, ?, ?)
       `);
 
       for (const email of data.emailSync) {
         emailStmt.run(
           email.gmail_message_id,
+          email.account_email || 'unknown@gmail.com', // Provide default for legacy data
           email.processed_at,
           email.is_job_related
         );
@@ -1235,95 +1236,104 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
         // Process each email directly
         for (const email of fetchResult.messages) {
           try {
-            // Check if already processed for this account
-            const checkStmt = getDb().prepare('SELECT gmail_message_id FROM email_sync WHERE gmail_message_id = ? AND account_email = ?');
-            const exists = checkStmt.get(email.id, account.email);
+            // Use atomic INSERT OR IGNORE to check and mark as processing in one operation
+            // This eliminates the race condition between check and insert
+            const insertSyncStmt = getDb().prepare(`
+              INSERT OR IGNORE INTO email_sync (gmail_message_id, account_email, is_job_related)
+              VALUES (?, ?, 0)
+            `);
+            const syncResult = insertSyncStmt.run(email.id, account.email);
             
-            if (!exists) {
-              // Extract email info for classification
-              const headers = email.payload?.headers || [];
-              const subject = headers.find(h => h.name === 'Subject')?.value || '';
-              const from = headers.find(h => h.name === 'From')?.value || '';
-              const emailContent = _extractEmailContent(email);
-              
-              // Classify with LLM
-              const classification = await llmHandler.classifyEmail(emailContent);
-              
-              // Mark as processed
-              const insertSyncStmt = getDb().prepare(`
-                INSERT INTO email_sync (gmail_message_id, account_email, is_job_related)
-                VALUES (?, ?, ?)
+            // Only proceed if the record was actually inserted (not a duplicate)
+            if (syncResult.changes === 0) {
+              console.log(`Email ${email.id} already processed for ${account.email}, skipping...`);
+              continue;
+            }
+            
+            // Extract email info for classification
+            const headers = email.payload?.headers || [];
+            const subject = headers.find(h => h.name === 'Subject')?.value || '';
+            const from = headers.find(h => h.name === 'From')?.value || '';
+            const emailContent = _extractEmailContent(email);
+            
+            // Classify with LLM
+            const classification = await llmHandler.classifyEmail(emailContent);
+            
+            // Update the record with classification result
+            const updateSyncStmt = getDb().prepare(`
+              UPDATE email_sync 
+              SET is_job_related = ?
+              WHERE gmail_message_id = ? AND account_email = ?
+            `);
+            updateSyncStmt.run(classification.is_job_related ? 1 : 0, email.id, account.email);
+            
+            totalEmailsFetched++;
+            
+            // If job-related, create job entry
+            if (classification.is_job_related) {
+              const jobId = `job_${Date.now()}_${performance.now().toString().replace('.', '_')}_${Math.random().toString(36).substr(2, 9)}`;
+              const jobStmt = getDb().prepare(`
+                INSERT OR IGNORE INTO jobs (id, gmail_message_id, company, position, status, applied_date, account_email, from_address, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
               `);
-              insertSyncStmt.run(email.id, account.email, classification.is_job_related ? 1 : 0);
               
-              totalEmailsFetched++;
+              // Map LLM status to our 4-state system
+              let status = 'Applied';
+              if (classification.status) {
+                const statusLower = classification.status.toLowerCase();
+                if (statusLower.includes('interview')) status = 'Interviewed';
+                else if (statusLower.includes('offer')) status = 'Offer';
+                else if (statusLower.includes('declined') || statusLower.includes('reject')) status = 'Declined';
+              }
               
-              // If job-related, create job entry
-              if (classification.is_job_related) {
-                const jobId = `job_${Date.now()}_${performance.now().toString().replace('.', '_')}_${Math.random().toString(36).substr(2, 9)}`;
-                const jobStmt = getDb().prepare(`
-                  INSERT OR IGNORE INTO jobs (id, gmail_message_id, company, position, status, applied_date, account_email, from_address, notes)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `);
+              const extractedDate = _extractDate(email);
+              console.log(`Storing job with extracted date: ${extractedDate}`);
+              console.log('Job data being inserted:', {
+                jobId,
+                gmail_message_id: email.id,
+                company: classification.company || _extractCompany(emailContent),
+                position: classification.position || _extractPosition(emailContent),
+                status,
+                applied_date: extractedDate,
+                account_email: account.email
+              });
+              
+              const jobResult = jobStmt.run(
+                jobId,
+                email.id,
+                classification.company || _extractCompany(emailContent),
+                classification.position || _extractPosition(emailContent),
+                status,
+                extractedDate,
+                account.email,
+                from,
+                email.snippet || ''
+              );
+              
+              console.log('Job insert result:', { changes: jobResult.changes, lastInsertRowid: jobResult.lastInsertRowid });
+              
+              // Only count if job was actually inserted (not ignored due to duplicate)
+              if (jobResult.changes > 0) {
+                totalJobsFound++;
+                console.log(`✅ Job inserted successfully: ${classification.company} - ${classification.position}`);
                 
-                // Map LLM status to our 4-state system
-                let status = 'Applied';
-                if (classification.status) {
-                  const statusLower = classification.status.toLowerCase();
-                  if (statusLower.includes('interview')) status = 'Interviewed';
-                  else if (statusLower.includes('offer')) status = 'Offer';
-                  else if (statusLower.includes('declined') || statusLower.includes('reject')) status = 'Declined';
-                }
-                
-                const extractedDate = _extractDate(email);
-                console.log(`Storing job with extracted date: ${extractedDate}`);
-                console.log('Job data being inserted:', {
-                  jobId,
-                  gmail_message_id: email.id,
-                  company: classification.company || _extractCompany(emailContent),
-                  position: classification.position || _extractPosition(emailContent),
-                  status,
-                  applied_date: extractedDate,
-                  account_email: account.email
-                });
-                
-                const jobResult = jobStmt.run(
-                  jobId,
-                  email.id,
-                  classification.company || _extractCompany(emailContent),
-                  classification.position || _extractPosition(emailContent),
-                  status,
-                  extractedDate,
-                  account.email,
-                  from,
-                  email.snippet || ''
-                );
-                
-                console.log('Job insert result:', { changes: jobResult.changes, lastInsertRowid: jobResult.lastInsertRowid });
-                
-                // Only count if job was actually inserted (not ignored due to duplicate)
-                if (jobResult.changes > 0) {
-                  totalJobsFound++;
-                  console.log(`✅ Job inserted successfully: ${classification.company} - ${classification.position}`);
-                  
-                  // Send real-time job update to frontend
-                  const mainWindow = BrowserWindow.getAllWindows()[0];
-                  if (mainWindow) {
-                    const newJob = {
-                      id: jobId,
-                      gmail_message_id: email.id,
-                      company: classification.company || _extractCompany(emailContent),
-                      position: classification.position || _extractPosition(emailContent),
-                      status,
-                      applied_date: extractedDate,
-                      account_email: account.email,
-                      from_address: from,
-                      notes: email.snippet || '',
-                      created_at: new Date().toISOString(),
-                      updated_at: new Date().toISOString()
-                    };
-                    mainWindow.webContents.send('job-found', newJob);
-                  }
+                // Send real-time job update to frontend
+                const mainWindow = BrowserWindow.getAllWindows()[0];
+                if (mainWindow) {
+                  const newJob = {
+                    id: jobId,
+                    gmail_message_id: email.id,
+                    company: classification.company || _extractCompany(emailContent),
+                    position: classification.position || _extractPosition(emailContent),
+                    status,
+                    applied_date: extractedDate,
+                    account_email: account.email,
+                    from_address: from,
+                    notes: email.snippet || '',
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                  };
+                  mainWindow.webContents.send('job-found', newJob);
                 }
               }
             }

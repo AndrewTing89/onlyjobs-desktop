@@ -4,6 +4,7 @@ import {
   CssBaseline,
   Alert,
   Snackbar,
+  Grid,
   Card,
   CardContent,
   Typography,
@@ -31,7 +32,7 @@ import { useAuth as useElectronAuth } from "../contexts/ElectronAuthContext";
 
 const useAuth = window.electronAPI ? useElectronAuth : useFirebaseAuth;
 
-export default function Dashboard() {
+export default function ImprovedDashboard() {
   const isElectron = !!window.electronAPI;
   const authData = useAuth() as any;
   const navigate = useNavigate();
@@ -116,7 +117,6 @@ export default function Dashboard() {
       }
     }
   }, [currentUser, isElectron]);
-
 
   const handleSnackbarClose = () => {
     setSnackbar({ ...snackbar, open: false });
@@ -232,4 +232,4 @@ export default function Dashboard() {
       </Box>
     </ThemeProvider>
   );
-} 
+}

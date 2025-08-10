@@ -4,14 +4,10 @@ import {
   CssBaseline,
   Typography,
   Button,
-  Container,
   Card,
   CardContent,
-  TextField,
   Alert,
   CircularProgress,
-  Switch,
-  FormControlLabel,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -19,31 +15,43 @@ import {
   DialogActions
 } from "@mui/material";
 import { 
-  Person, 
-  Notifications, 
   DeleteForever,
-  ArrowBack,
   Code,
   Storage,
   Clear,
   History
 } from "@mui/icons-material";
-import { useNavigate } from "react-router-dom";
-import { useAuth, getAuthErrorMessage } from "../contexts/AuthContext";
-import { AuthError } from "firebase/auth";
+import { useNavigate, useLocation } from "react-router-dom";
+import { ThemeProvider } from '@mui/material/styles';
+import { onlyJobsTheme } from '../theme';
+
+// Import layout components
+import Sidebar from '../components/layout/Sidebar';
+import TopBar from '../components/layout/TopBar';
+
+// Import auth contexts
+import { useAuth } from "../contexts/AuthContext";
+import { useAuth as useElectronAuth } from "../contexts/ElectronAuthContext";
 import { GmailConnection } from "../components/GmailConnection";
 import { SyncStatus } from "../components/SyncStatus";
 
-const accent = "#FF7043";
-const white = "#fff";
-const textColor = "#202020";
+const useAuthContext = window.electronAPI ? useElectronAuth : useAuth;
 
 export default function Settings() {
   const navigate = useNavigate();
-  const { currentUser, updateUserProfile, logout, getIdToken, isGmailConnected, checkGmailConnection } = useAuth();
+  const location = useLocation();
+  const isElectron = !!window.electronAPI;
   
-  const [displayName, setDisplayName] = useState(currentUser?.displayName || "");
-  const [loading, setLoading] = useState(false);
+  // Use appropriate auth context
+  const authData = useAuthContext() as any;
+  const currentUser = authData.currentUser;
+  const logout = isElectron ? authData.signOut : authData.logout;
+  
+  // Web-specific auth functions
+  const getIdToken = !isElectron ? authData.getIdToken : null;
+  const isGmailConnected = !isElectron ? authData.isGmailConnected : false;
+  const checkGmailConnection = !isElectron ? authData.checkGmailConnection : null;
+  
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -52,36 +60,21 @@ export default function Settings() {
   const [clearEmailSyncDialogOpen, setClearEmailSyncDialogOpen] = useState(false);
   const [clearingAllRecords, setClearingAllRecords] = useState(false);
   const [clearingEmailSync, setClearingEmailSync] = useState(false);
-  
-  // Notification preferences
-  const [notifications, setNotifications] = useState({
-    emailUpdates: true,
-    applicationReminders: true,
-    weeklyDigest: false
-  });
 
-  const handleUpdateProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!displayName.trim()) {
-      setError("Display name cannot be empty");
-      return;
-    }
-
+  // Handle logout
+  const handleLogout = async () => {
     try {
-      setError("");
-      setMessage("");
-      setLoading(true);
-      await updateUserProfile(displayName.trim());
-      setMessage("Profile updated successfully!");
-    } catch (err) {
-      setError(getAuthErrorMessage(err as AuthError));
-    } finally {
-      setLoading(false);
+      await logout();
+      navigate('/');
+    } catch (error) {
+      console.error('Logout failed:', error);
     }
   };
 
+
   const handleGmailConnectionChange = async (connected: boolean) => {
+    if (!checkGmailConnection) return;
+    
     // Refresh Gmail connection status from backend
     await checkGmailConnection();
     
@@ -108,7 +101,12 @@ export default function Settings() {
   };
 
   const handleGetFirebaseToken = async () => {
-    if (!currentUser) {
+    if (isElectron) {
+      setError("Firebase token generation is not available in the desktop version");
+      return;
+    }
+
+    if (!currentUser || !getIdToken) {
       setError("No user logged in");
       return;
     }
@@ -200,398 +198,221 @@ export default function Settings() {
   };
 
   return (
-    <Box sx={{ minHeight: "100vh", background: "#f8f9fa" }}>
-      <CssBaseline />
-      
-      <Container maxWidth="md" sx={{ py: 4 }}>
-        {/* Header */}
-        <Box sx={{ mb: 4 }}>
-          <Button
-            startIcon={<ArrowBack />}
-            onClick={() => navigate('/dashboard')}
-            sx={{
-              mb: 2,
-              color: '#666',
-              textTransform: 'none',
-              fontSize: '14px',
-              '&:hover': {
-                backgroundColor: 'rgba(0,0,0,0.04)',
-                color: textColor,
-              },
-            }}
-          >
-            Back to Dashboard
-          </Button>
-          <Typography variant="h4" sx={{ color: textColor, fontWeight: 700, mb: 1 }}>
-            Account Settings
-          </Typography>
-          <Typography variant="body1" sx={{ color: "#666" }}>
-            Manage your account preferences and integrations
-          </Typography>
-        </Box>
+    <ThemeProvider theme={onlyJobsTheme}>
+      <Box sx={{ display: "flex", height: "100vh" }}>
+        <CssBaseline />
 
-        {message && (
-          <Alert severity="success" sx={{ mb: 3, borderRadius: 2 }}>
-            {message}
-          </Alert>
-        )}
+        {/* Sidebar Navigation */}
+        <Sidebar currentPath={location.pathname} />
 
-        {error && (
-          <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }}>
-            {error}
-          </Alert>
-        )}
-
-        {/* Profile Section */}
-        <Card sx={{ bgcolor: white, borderRadius: 3, boxShadow: 1, mb: 3 }}>
-          <CardContent sx={{ p: 4 }}>
-            <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
-              <Person sx={{ color: accent, mr: 2 }} />
-              <Typography variant="h6" sx={{ color: textColor, fontWeight: 600 }}>
-                Profile Information
-              </Typography>
-            </Box>
-
-            <Box component="form" onSubmit={handleUpdateProfile}>
-              <TextField
-                fullWidth
-                label="Display Name"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                disabled={loading}
-                sx={{
-                  mb: 3,
-                  "& .MuiOutlinedInput-root": {
-                    borderRadius: 2,
-                    "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
-                      borderColor: accent,
-                    },
-                  },
-                  "& .MuiInputLabel-root.Mui-focused": {
-                    color: accent,
-                  },
-                }}
-              />
-
-              <TextField
-                fullWidth
-                label="Email Address"
-                value={currentUser?.email || ""}
-                disabled
-                helperText="Email cannot be changed"
-                sx={{
-                  mb: 3,
-                  "& .MuiOutlinedInput-root": {
-                    borderRadius: 2,
-                  },
-                }}
-              />
-
-              <Button
-                type="submit"
-                variant="contained"
-                disabled={loading}
-                startIcon={loading ? <CircularProgress size={20} /> : null}
-                sx={{
-                  background: accent,
-                  borderRadius: 2,
-                  px: 3,
-                  py: 1,
-                  textTransform: "none",
-                  boxShadow: "none",
-                  "&:hover": {
-                    background: accent,
-                    boxShadow: "none",
-                  },
-                }}
-              >
-                {loading ? "Updating..." : "Update Profile"}
-              </Button>
-            </Box>
-          </CardContent>
-        </Card>
-
-        {/* Gmail Integration Section */}
-        <Box sx={{ mb: 3 }}>
-          <GmailConnection
-            isConnected={isGmailConnected}
-            onConnectionChange={handleGmailConnectionChange}
-            onGlobalRefresh={checkGmailConnection}
-          />
-        </Box>
-
-        {/* Sync Status Section */}
-        {isGmailConnected && (
-          <Box sx={{ mb: 3 }}>
-            <SyncStatus isConnected={isGmailConnected} />
+        {/* Main Content Area */}
+        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+          {/* Top Bar */}
+          <Box sx={{ p: 3, pb: 0 }}>
+            <TopBar 
+              currentUser={{
+                displayName: currentUser?.name || currentUser?.displayName || 'User',
+                email: currentUser?.email || 'user@example.com'
+              }} 
+              onLogout={handleLogout}
+              title="Settings"
+            />
           </Box>
-        )}
 
-        {/* Notification Preferences */}
-        <Card sx={{ bgcolor: white, borderRadius: 3, boxShadow: 1, mb: 3 }}>
-          <CardContent sx={{ p: 4 }}>
-            <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
-              <Notifications sx={{ color: accent, mr: 2 }} />
-              <Typography variant="h6" sx={{ color: textColor, fontWeight: 600 }}>
-                Notification Preferences
-              </Typography>
-            </Box>
+          {/* Main Content */}
+          <Box sx={{ flexGrow: 1, p: 3, pt: 1, overflow: 'auto' }}>
+            {/* Status Messages */}
+            {message && (
+              <Alert severity="success" sx={{ mb: 3, borderRadius: 2 }}>
+                {message}
+              </Alert>
+            )}
 
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={notifications.emailUpdates}
-                    onChange={(e) => setNotifications({...notifications, emailUpdates: e.target.checked})}
-                    sx={{
-                      "& .MuiSwitch-switchBase.Mui-checked": {
-                        color: accent,
-                      },
-                      "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
-                        backgroundColor: accent,
-                      },
-                    }}
+            {error && (
+              <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }}>
+                {error}
+              </Alert>
+            )}
+
+
+            {/* Gmail Integration Section - Web Only */}
+            {!isElectron && (
+              <>
+                <Box sx={{ mb: 3 }}>
+                  <GmailConnection
+                    isConnected={isGmailConnected}
+                    onConnectionChange={handleGmailConnectionChange}
+                    onGlobalRefresh={checkGmailConnection!}
                   />
-                }
-                label="Email notifications for application updates"
-              />
-              
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={notifications.applicationReminders}
-                    onChange={(e) => setNotifications({...notifications, applicationReminders: e.target.checked})}
-                    sx={{
-                      "& .MuiSwitch-switchBase.Mui-checked": {
-                        color: accent,
-                      },
-                      "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
-                        backgroundColor: accent,
-                      },
-                    }}
-                  />
-                }
-                label="Reminders for follow-up actions"
-              />
-              
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={notifications.weeklyDigest}
-                    onChange={(e) => setNotifications({...notifications, weeklyDigest: e.target.checked})}
-                    sx={{
-                      "& .MuiSwitch-switchBase.Mui-checked": {
-                        color: accent,
-                      },
-                      "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
-                        backgroundColor: accent,
-                      },
-                    }}
-                  />
-                }
-                label="Weekly summary digest"
-              />
-            </Box>
-          </CardContent>
-        </Card>
+                </Box>
 
-        {/* Developer Tools Section */}
-        <Card sx={{ bgcolor: white, borderRadius: 3, boxShadow: 1, mb: 3, border: "1px solid #e3f2fd" }}>
-          <CardContent sx={{ p: 4 }}>
-            <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
-              <Code sx={{ color: accent, mr: 2 }} />
-              <Typography variant="h6" sx={{ color: textColor, fontWeight: 600 }}>
-                Developer Tools
-              </Typography>
-            </Box>
+                {/* Sync Status Section */}
+                {isGmailConnected && (
+                  <Box sx={{ mb: 3 }}>
+                    <SyncStatus isConnected={isGmailConnected} />
+                  </Box>
+                )}
+              </>
+            )}
 
-            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <Box>
-                <Typography variant="body1" sx={{ color: textColor, mb: 1 }}>
-                  Get Firebase ID Token
-                </Typography>
-                <Typography variant="body2" sx={{ color: "#666" }}>
-                  Logs your current Firebase ID token to the console for backend testing and debugging.
-                </Typography>
-              </Box>
-              <Button
-                variant="outlined"
-                onClick={handleGetFirebaseToken}
-                disabled={fetchingToken || !currentUser}
-                startIcon={fetchingToken ? <CircularProgress size={20} /> : <Code />}
-                sx={{
-                  borderColor: accent,
-                  color: accent,
-                  borderRadius: 2,
-                  px: 3,
-                  py: 1,
-                  textTransform: "none",
-                  "&:hover": {
-                    borderColor: accent,
-                    background: `${accent}10`,
-                  },
-                  "&:disabled": {
-                    borderColor: "#ccc",
-                    color: "#ccc",
-                  },
-                }}
-              >
-                {fetchingToken ? "Getting Token..." : "Get Token"}
-              </Button>
-            </Box>
-          </CardContent>
-        </Card>
 
-        {/* Database Management Section - Only show in Electron */}
-        {window.electronAPI && (
-          <Card sx={{ bgcolor: white, borderRadius: 3, boxShadow: 1, mb: 3, border: "1px solid #fff3e0" }}>
-            <CardContent sx={{ p: 4 }}>
-              <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
-                <Storage sx={{ color: accent, mr: 2 }} />
-                <Typography variant="h6" sx={{ color: textColor, fontWeight: 600 }}>
-                  Database Management
-                </Typography>
-              </Box>
+            {/* Developer Tools Section - Web Only */}
+            {!isElectron && (
+              <Card sx={{ borderRadius: 3, boxShadow: 2, mb: 3, border: "1px solid", borderColor: "info.light" }}>
+                <CardContent sx={{ p: 4 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
+                    <Code sx={{ color: onlyJobsTheme.palette.primary.main, mr: 2 }} />
+                    <Typography variant="h3" sx={{ fontWeight: 600 }}>
+                      Developer Tools
+                    </Typography>
+                  </Box>
 
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                {/* Clear Email Sync History */}
+                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <Box>
+                      <Typography variant="body1" sx={{ mb: 1, fontWeight: 500 }}>
+                        Get Firebase ID Token
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Logs your current Firebase ID token to the console for backend testing and debugging.
+                      </Typography>
+                    </Box>
+                    <Button
+                      variant="outlined"
+                      onClick={handleGetFirebaseToken}
+                      disabled={fetchingToken || !currentUser}
+                      startIcon={fetchingToken ? <CircularProgress size={20} /> : <Code />}
+                      sx={{
+                        borderRadius: 2,
+                        px: 3,
+                        py: 1,
+                        textTransform: "none",
+                      }}
+                    >
+                      {fetchingToken ? "Getting Token..." : "Get Token"}
+                    </Button>
+                  </Box>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Database Management Section - Electron Only */}
+            {isElectron && (
+              <Card sx={{ borderRadius: 3, boxShadow: 2, mb: 3, border: "1px solid", borderColor: "warning.light" }}>
+                <CardContent sx={{ p: 4 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
+                    <Storage sx={{ color: onlyJobsTheme.palette.primary.main, mr: 2 }} />
+                    <Typography variant="h3" sx={{ fontWeight: 600 }}>
+                      Database Management
+                    </Typography>
+                  </Box>
+
+                  <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    {/* Clear Email Sync History */}
+                    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <Box>
+                        <Typography variant="body1" sx={{ mb: 1, fontWeight: 500 }}>
+                          Clear Email Sync History
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Remove email sync tracking data. This allows emails to be re-processed but keeps your job records intact.
+                        </Typography>
+                      </Box>
+                      <Button
+                        variant="outlined"
+                        onClick={handleClearEmailSync}
+                        disabled={clearingEmailSync}
+                        startIcon={clearingEmailSync ? <CircularProgress size={20} /> : <History />}
+                        color="warning"
+                        sx={{
+                          borderRadius: 2,
+                          px: 3,
+                          py: 1,
+                          textTransform: "none",
+                          minWidth: "160px",
+                        }}
+                      >
+                        {clearingEmailSync ? "Clearing..." : "Clear Sync History"}
+                      </Button>
+                    </Box>
+
+                    {/* Clear All Records */}
+                    <Box sx={{ 
+                      display: "flex", 
+                      alignItems: "center", 
+                      justifyContent: "space-between", 
+                      pt: 2, 
+                      borderTop: "1px solid", 
+                      borderColor: "divider" 
+                    }}>
+                      <Box>
+                        <Typography variant="body1" sx={{ mb: 1, fontWeight: 500 }}>
+                          Clear All Database Records
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Reset the entire database to a clean state. This removes all jobs, email sync history, and Gmail account connections.
+                        </Typography>
+                      </Box>
+                      <Button
+                        variant="outlined"
+                        onClick={handleClearAllRecords}
+                        disabled={clearingAllRecords}
+                        startIcon={clearingAllRecords ? <CircularProgress size={20} /> : <Clear />}
+                        color="error"
+                        sx={{
+                          borderRadius: 2,
+                          px: 3,
+                          py: 1,
+                          textTransform: "none",
+                          minWidth: "160px",
+                        }}
+                      >
+                        {clearingAllRecords ? "Clearing..." : "Clear All Records"}
+                      </Button>
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Danger Zone */}
+            <Card sx={{ borderRadius: 3, boxShadow: 2, border: "1px solid", borderColor: "error.light" }}>
+              <CardContent sx={{ p: 4 }}>
+                <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
+                  <DeleteForever sx={{ color: "error.main", mr: 2 }} />
+                  <Typography variant="h3" sx={{ color: "error.main", fontWeight: 600 }}>
+                    Danger Zone
+                  </Typography>
+                </Box>
+
                 <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <Box>
-                    <Typography variant="body1" sx={{ color: textColor, mb: 1 }}>
-                      Clear Email Sync History
+                    <Typography variant="body1" sx={{ mb: 1, fontWeight: 500 }}>
+                      Delete Account
                     </Typography>
-                    <Typography variant="body2" sx={{ color: "#666" }}>
-                      Remove email sync tracking data. This allows emails to be re-processed but keeps your job records intact.
-                    </Typography>
-                  </Box>
-                  <Button
-                    variant="outlined"
-                    onClick={handleClearEmailSync}
-                    disabled={clearingEmailSync}
-                    startIcon={clearingEmailSync ? <CircularProgress size={20} /> : <History />}
-                    sx={{
-                      borderColor: "#ff9800",
-                      color: "#ff9800",
-                      borderRadius: 2,
-                      px: 3,
-                      py: 1,
-                      textTransform: "none",
-                      minWidth: "160px",
-                      "&:hover": {
-                        borderColor: "#ff9800",
-                        background: "#fff3e0",
-                      },
-                      "&:disabled": {
-                        borderColor: "#ccc",
-                        color: "#ccc",
-                      },
-                    }}
-                  >
-                    {clearingEmailSync ? "Clearing..." : "Clear Sync History"}
-                  </Button>
-                </Box>
-
-                {/* Clear All Records */}
-                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", pt: 2, borderTop: "1px solid #f0f0f0" }}>
-                  <Box>
-                    <Typography variant="body1" sx={{ color: textColor, mb: 1 }}>
-                      Clear All Database Records
-                    </Typography>
-                    <Typography variant="body2" sx={{ color: "#666" }}>
-                      Reset the entire database to a clean state. This removes all jobs, email sync history, and Gmail account connections.
+                    <Typography variant="body2" color="text.secondary">
+                      Permanently delete your account and all associated data. This action cannot be undone.
                     </Typography>
                   </Box>
                   <Button
                     variant="outlined"
-                    onClick={handleClearAllRecords}
-                    disabled={clearingAllRecords}
-                    startIcon={clearingAllRecords ? <CircularProgress size={20} /> : <Clear />}
+                    onClick={handleDeleteAccount}
+                    startIcon={<DeleteForever />}
+                    color="error"
                     sx={{
-                      borderColor: "#f44336",
-                      color: "#f44336",
                       borderRadius: 2,
                       px: 3,
                       py: 1,
                       textTransform: "none",
-                      minWidth: "160px",
-                      "&:hover": {
-                        borderColor: "#f44336",
-                        background: "#ffebee",
-                      },
-                      "&:disabled": {
-                        borderColor: "#ccc",
-                        color: "#ccc",
-                      },
                     }}
                   >
-                    {clearingAllRecords ? "Clearing..." : "Clear All Records"}
+                    Delete Account
                   </Button>
                 </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Danger Zone */}
-        <Card sx={{ bgcolor: white, borderRadius: 3, boxShadow: 1, border: "1px solid #ffebee" }}>
-          <CardContent sx={{ p: 4 }}>
-            <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
-              <DeleteForever sx={{ color: "#d32f2f", mr: 2 }} />
-              <Typography variant="h6" sx={{ color: "#d32f2f", fontWeight: 600 }}>
-                Danger Zone
-              </Typography>
-            </Box>
-
-            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <Box>
-                <Typography variant="body1" sx={{ color: textColor, mb: 1 }}>
-                  Delete Account
-                </Typography>
-                <Typography variant="body2" sx={{ color: "#666" }}>
-                  Permanently delete your account and all associated data. This action cannot be undone.
-                </Typography>
-              </Box>
-              <Button
-                variant="outlined"
-                onClick={handleDeleteAccount}
-                startIcon={<DeleteForever />}
-                sx={{
-                  borderColor: "#d32f2f",
-                  color: "#d32f2f",
-                  borderRadius: 2,
-                  px: 3,
-                  py: 1,
-                  textTransform: "none",
-                  "&:hover": {
-                    borderColor: "#d32f2f",
-                    background: "#ffebee",
-                  },
-                }}
-              >
-                Delete Account
-              </Button>
-            </Box>
-          </CardContent>
-        </Card>
-
-        {/* Navigation */}
-        <Box sx={{ textAlign: "center", mt: 4 }}>
-          <Button
-            variant="text"
-            onClick={() => navigate("/dashboard")}
-            sx={{
-              color: accent,
-              textTransform: "none",
-              "&:hover": {
-                background: "transparent",
-                textDecoration: "underline",
-              },
-            }}
-          >
-            ← Back to Dashboard
-          </Button>
+              </CardContent>
+            </Card>
+          </Box>
         </Box>
-      </Container>
+      </Box>
 
       {/* Delete Confirmation Dialog */}
       <Dialog
@@ -600,7 +421,7 @@ export default function Settings() {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ color: "#d32f2f" }}>
+        <DialogTitle sx={{ color: "error.main" }}>
           Delete Account
         </DialogTitle>
         <DialogContent>
@@ -617,17 +438,14 @@ export default function Settings() {
         <DialogActions sx={{ p: 3 }}>
           <Button 
             onClick={() => setDeleteDialogOpen(false)}
-            sx={{ color: "#666" }}
+            color="inherit"
           >
             Cancel
           </Button>
           <Button 
             onClick={confirmDeleteAccount}
             variant="contained"
-            sx={{ 
-              background: "#d32f2f",
-              "&:hover": { background: "#d32f2f" }
-            }}
+            color="error"
           >
             Delete Account
           </Button>
@@ -641,7 +459,7 @@ export default function Settings() {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ color: "#f44336" }}>
+        <DialogTitle sx={{ color: "error.main" }}>
           Clear All Database Records
         </DialogTitle>
         <DialogContent>
@@ -660,17 +478,14 @@ export default function Settings() {
         <DialogActions sx={{ p: 3 }}>
           <Button 
             onClick={() => setClearAllDialogOpen(false)}
-            sx={{ color: "#666" }}
+            color="inherit"
           >
             Cancel
           </Button>
           <Button 
             onClick={confirmClearAllRecords}
             variant="contained"
-            sx={{ 
-              background: "#f44336",
-              "&:hover": { background: "#d32f2f" }
-            }}
+            color="error"
           >
             Clear All Records
           </Button>
@@ -684,7 +499,7 @@ export default function Settings() {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ color: "#ff9800" }}>
+        <DialogTitle sx={{ color: "warning.main" }}>
           Clear Email Sync History
         </DialogTitle>
         <DialogContent>
@@ -702,22 +517,19 @@ export default function Settings() {
         <DialogActions sx={{ p: 3 }}>
           <Button 
             onClick={() => setClearEmailSyncDialogOpen(false)}
-            sx={{ color: "#666" }}
+            color="inherit"
           >
             Cancel
           </Button>
           <Button 
             onClick={confirmClearEmailSync}
             variant="contained"
-            sx={{ 
-              background: "#ff9800",
-              "&:hover": { background: "#f57c00" }
-            }}
+            color="warning"
           >
             Clear Sync History
           </Button>
         </DialogActions>
       </Dialog>
-    </Box>
+    </ThemeProvider>
   );
-} 
+}

@@ -234,7 +234,15 @@ export const GmailMultiAccount: React.FC = () => {
               inputProps={{
                 min: 1,
                 max: 1000,
-                step: 1
+                step: 1,
+                onKeyDown: (e: React.KeyboardEvent) => {
+                  // Enable Cmd+A (Mac) and Ctrl+A (Windows/Linux) to select all
+                  if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+                    e.preventDefault();
+                    const target = e.target as HTMLInputElement;
+                    target.select();
+                  }
+                }
               }}
               helperText="Number of recent emails to fetch from each account (1-1000)"
               sx={{ maxWidth: 300 }}
