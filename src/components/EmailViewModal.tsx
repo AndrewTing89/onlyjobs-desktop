@@ -30,7 +30,6 @@ interface EmailViewModalProps {
     from_address?: string;
     applied_date: string;
     job_type?: string;
-    ml_confidence?: number;
     raw_content?: string; // Add this field
   };
 }
@@ -144,13 +143,6 @@ export const EmailViewModal: React.FC<EmailViewModalProps> = ({
               label={job.job_type.replace('_', ' ')}
               size="small"
               sx={{ mr: 1 }}
-            />
-          )}
-          {job.ml_confidence && (
-            <Chip
-              label={`${Math.round(job.ml_confidence * 100)}% confidence`}
-              size="small"
-              variant="outlined"
             />
           )}
         </Paper>
