@@ -44,6 +44,10 @@ class GmailMultiAuth extends EventEmitter {
       
       console.log('GmailMultiAuth: Initializing database at:', dbPath);
       this.db = new Database(dbPath);
+      
+      // Initialize gmail_accounts table schema
+      this.initializeDatabaseSchema();
+      
       console.log('GmailMultiAuth: Database initialized successfully');
     } catch (error) {
       console.error('GmailMultiAuth: Failed to initialize database:', error);
@@ -65,6 +69,32 @@ class GmailMultiAuth extends EventEmitter {
     
     // OAuth clients per account
     this.oauthClients = new Map();
+  }
+  
+  // Initialize database schema for gmail_accounts table
+  initializeDatabaseSchema() {
+    try {
+      this.db.exec(`
+        -- Gmail accounts table for multi-account support
+        CREATE TABLE IF NOT EXISTS gmail_accounts (
+          id TEXT,
+          email TEXT PRIMARY KEY,
+          display_name TEXT,
+          access_token TEXT,
+          refresh_token TEXT,
+          token_expiry TIMESTAMP,
+          sync_enabled BOOLEAN DEFAULT 1,
+          is_active BOOLEAN DEFAULT 1,
+          last_sync TIMESTAMP,
+          connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log('GmailMultiAuth: Database schema initialized');
+    } catch (error) {
+      console.error('GmailMultiAuth: Error initializing database schema:', error);
+      throw error;
+    }
   }
   
   // Get or create OAuth client for an account
