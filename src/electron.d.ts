@@ -6,6 +6,10 @@ interface ElectronAPI {
   updateJob: (id: string, updates: any) => Promise<any>;
   deleteJob: (id: string) => Promise<any>;
   
+  // Email operations for compatibility
+  getJobInbox?: (jobId: string) => Promise<any>;
+  getEmailDetail?: (emailId: string) => Promise<any>;
+  
   // Email classification
   classifyEmail: (input: string | { subject: string; plaintext: string }) => Promise<any>;
   

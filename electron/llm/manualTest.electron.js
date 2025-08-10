@@ -3,24 +3,20 @@ const path = require('path');
 
 // Import actual config values instead of hardcoded defaults
 const { 
-  ONLYJOBS_MODEL_PATH, 
-  ONLYJOBS_TEMPERATURE,
-  ONLYJOBS_MAX_TOKENS,
-  ONLYJOBS_CTX,
-  ONLYJOBS_N_GPU_LAYERS,
-  ONLYJOBS_ENABLE_PREFILTER,
-  ONLYJOBS_INFER_TIMEOUT_MS,
-  ONLYJOBS_EARLY_STOP_JSON
+  DEFAULT_MODEL_PATH, 
+  LLM_TEMPERATURE,
+  LLM_MAX_TOKENS,
+  LLM_CONTEXT,
+  GPU_LAYERS
 } = require('./config.js');
 
-const MODEL_PATH = ONLYJOBS_MODEL_PATH;
-const TEMP = ONLYJOBS_TEMPERATURE;
-const MAX_TOKENS = ONLYJOBS_MAX_TOKENS;
-const CTX = ONLYJOBS_CTX;
-const GPU_LAYERS = ONLYJOBS_N_GPU_LAYERS;
-const ENABLE_PREFILTER = ONLYJOBS_ENABLE_PREFILTER;
-const TIMEOUT_MS = ONLYJOBS_INFER_TIMEOUT_MS;
-const EARLY_STOP = ONLYJOBS_EARLY_STOP_JSON;
+const MODEL_PATH = DEFAULT_MODEL_PATH;
+const TEMP = LLM_TEMPERATURE;
+const MAX_TOKENS = LLM_MAX_TOKENS;
+const CTX = LLM_CONTEXT;
+const ENABLE_PREFILTER = false; // Not used in new implementation
+const TIMEOUT_MS = 15000; // Fixed timeout
+const EARLY_STOP = false; // Not used in new implementation
 
 // Set test environment to disable cache
 process.env.ONLYJOBS_DISABLE_CACHE_FOR_TEST = '1';

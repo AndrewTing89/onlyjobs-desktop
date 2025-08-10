@@ -7,126 +7,62 @@ const { app } = require('electron');
 const { spawn } = require('child_process');
 const { convert } = require('html-to-text');
 const { getClassifierProvider } = require('./classifier');
-const mlHandler = {
+const classifier = getClassifierProvider();
+
+// LLM-only classification handler (no ML, no keyword fallback)
+const llmHandler = {
   classifyEmail: async (content) => {
-    return new Promise((resolve) => {
-      console.log('Using Python ML classifier');
+    console.log('🧠 Using LLM classifier only');
+    try {
+      // Parse content to extract subject and body
+      const lines = content.split('\n');
+      const subjectLine = lines.find(line => line.toLowerCase().startsWith('subject:'));
+      const subject = subjectLine ? subjectLine.substring(8).trim() : '';
       
-      const scriptPath = path.join(__dirname, '..', 'ml-classifier', 'scripts', 'classify_email_simple.py');
+      const result = await classifier.parse({ subject, plaintext: content });
+      console.log('LLM classification result:', result);
       
-      // Spawn Python process from the main directory
-      const python = spawn('python3', [
-        scriptPath,
-        '--text', content,
-        '--format', 'json'
-      ]);
+      // Map status to job_type for backward compatibility
+      let jobType = null;
+      if (result.is_job_related && result.status) {
+        const status = result.status.toLowerCase();
+        if (status.includes('interview')) jobType = 'interview';
+        else if (status.includes('offer')) jobType = 'offer';
+        else if (status.includes('declined') || status.includes('reject')) jobType = 'rejection';
+        else if (status.includes('applied')) jobType = 'application_sent';
+        else jobType = 'application_sent';
+      }
       
-      let output = '';
-      let error = '';
-      
-      python.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-      
-      python.stderr.on('data', (data) => {
-        error += data.toString();
-      });
-      
-      python.on('close', (code) => {
-        if (code !== 0) {
-          console.error('ML classifier error:', error);
-          // Fallback to keyword classifier
-          resolve(fallbackClassifier(content));
-        } else {
-          try {
-            const result = JSON.parse(output);
-            console.log('ML classification result:', result);
-            
-            // Extract job type if job-related
-            let jobType = null;
-            if (result.is_job_related) {
-              const lowerContent = content.toLowerCase();
-              if (lowerContent.includes('interview')) jobType = 'interview';
-              else if (lowerContent.includes('offer')) jobType = 'offer';
-              else if (lowerContent.includes('reject') || lowerContent.includes('unfortunately')) jobType = 'rejection';
-              else if (lowerContent.includes('follow up')) jobType = 'follow_up';
-              else jobType = 'application_sent';
-            }
-            
-            resolve({
-              ...result,
-              job_type: jobType
-            });
-          } catch (e) {
-            console.error('Failed to parse ML output:', e);
-            resolve(fallbackClassifier(content));
-          }
-        }
-      });
-      
-      python.on('error', (err) => {
-        console.error('Failed to start Python:', err);
-        resolve(fallbackClassifier(content));
-      });
-    });
+      return {
+        ...result,
+        job_type: jobType
+      };
+    } catch (error) {
+      console.error('LLM classification error:', error);
+      // Return non-job-related as safe fallback
+      return {
+        is_job_related: false,
+        company: null,
+        position: null,
+        status: null,
+        job_type: null
+      };
+    }
   },
   initialize: async () => {
-    console.log('ML handler initialized');
+    console.log('🧠 LLM handler initialized');
     return true;
   },
   isModelReady: async () => true,
   getModelStatus: async () => ({ 
-    status: 'Using Python ML model',
+    status: 'Using local LLM model',
     model_ready: true 
   }),
   trainModel: async () => {
-    throw new Error('Training not implemented');
+    throw new Error('Training not available for LLM');
   }
 };
 
-// Fallback keyword-based classifier
-function fallbackClassifier(content) {
-  console.log('Using fallback keyword classifier');
-  const lowerContent = content.toLowerCase();
-  
-  const jobKeywords = [
-    'interview', 'position', 'application', 'job', 'offer', 'salary',
-    'career', 'opportunity', 'hiring', 'recruitment', 'candidate',
-    'resume', 'cv', 'applied', 'recruiter', 'hr', 'role', 'opening'
-  ];
-  
-  const nonJobKeywords = [
-    'unsubscribe', 'newsletter', 'promotion', 'sale', 'discount',
-    'invoice', 'receipt', 'order', 'shipping', 'password', 'verify'
-  ];
-  
-  let jobScore = 0;
-  let nonJobScore = 0;
-  
-  jobKeywords.forEach(keyword => {
-    if (lowerContent.includes(keyword)) jobScore++;
-  });
-  
-  nonJobKeywords.forEach(keyword => {
-    if (lowerContent.includes(keyword)) nonJobScore++;
-  });
-  
-  const isJobRelated = jobScore > 0 && jobScore >= nonJobScore;
-  const confidence = jobScore > 0 ? Math.min(0.9, 0.5 + (jobScore * 0.1)) : 0.3;
-  
-  let jobType = 'application_sent';
-  if (lowerContent.includes('interview')) jobType = 'interview';
-  else if (lowerContent.includes('offer')) jobType = 'offer';
-  else if (lowerContent.includes('reject') || lowerContent.includes('unfortunately')) jobType = 'rejection';
-  else if (lowerContent.includes('follow up')) jobType = 'follow_up';
-  
-  return {
-    is_job_related: isJobRelated,
-    confidence: confidence,
-    job_type: isJobRelated ? jobType : null,
-    fallback: true
-  };
-}
 const ElectronAuthFlow = require('./auth-flow');
 const GmailAuth = require('./gmail-auth');
 const GmailMultiAuth = require('./gmail-multi-auth');
@@ -569,7 +505,7 @@ function _extractPosition(content) {
 // ML Model management
 ipcMain.handle('ml:get-status', async () => {
   try {
-    const status = await mlHandler.getModelStatus();
+    const status = await llmHandler.getModelStatus();
     return status;
   } catch (error) {
     console.error('Error getting ML model status:', error);
@@ -579,7 +515,7 @@ ipcMain.handle('ml:get-status', async () => {
 
 ipcMain.handle('ml:is-ready', async () => {
   try {
-    const isReady = await mlHandler.isModelReady();
+    const isReady = await llmHandler.isModelReady();
     return { ready: isReady };
   } catch (error) {
     console.error('Error checking ML model readiness:', error);
@@ -590,7 +526,7 @@ ipcMain.handle('ml:is-ready', async () => {
 ipcMain.handle('ml:train-model', async (event, options = {}) => {
   try {
     console.log('🏋️  Starting ML model training...');
-    const result = await mlHandler.trainModel(options);
+    const result = await llmHandler.trainModel(options);
     
     // Notify frontend of training completion
     const mainWindow = BrowserWindow.getAllWindows()[0];
@@ -614,7 +550,7 @@ ipcMain.handle('ml:train-model', async (event, options = {}) => {
 
 ipcMain.handle('ml:initialize', async () => {
   try {
-    const result = await mlHandler.initialize();
+    const result = await llmHandler.initialize();
     return { success: result };
   } catch (error) {
     console.error('Error initializing ML handler:', error);
@@ -932,7 +868,7 @@ ipcMain.handle('emails:classify', async (event, options = {}) => {
     for (const email of emails) {
       try {
         // Classify email
-        const classification = await mlHandler.classifyEmail(email.raw_content);
+        const classification = await llmHandler.classifyEmail(email.raw_content);
         
         // Update email with classification
         const updateStmt = getDb().prepare(`
@@ -1125,7 +1061,7 @@ ipcMain.handle('gmail:sync', async (event, options = {}) => {
     
     for (const email of unclassifiedEmails) {
       try {
-        const classification = await mlHandler.classifyEmail(email.raw_content);
+        const classification = await llmHandler.classifyEmail(email.raw_content);
         
         // Update email with classification
         const updateStmt = getDb().prepare(`
@@ -1749,7 +1685,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     
     for (const email of unclassifiedEmails) {
       try {
-        const classification = await mlHandler.classifyEmail(email.raw_content);
+        const classification = await llmHandler.classifyEmail(email.raw_content);
         
         // Update email with classification
         const updateStmt = getDb().prepare(`

@@ -1,23 +1,28 @@
-/**
- * Local LLM configuration constants
- * Reads environment variables with safe defaults
- */
+import path from "path";
 
-export const ONLYJOBS_MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH || './models/model.gguf';
-export const ONLYJOBS_TEMPERATURE = parseFloat(process.env.ONLYJOBS_TEMPERATURE || '0.1');
-export const ONLYJOBS_MAX_TOKENS = parseInt(process.env.ONLYJOBS_MAX_TOKENS || '96', 10);
-export const ONLYJOBS_CTX = parseInt(process.env.ONLYJOBS_CTX || '768', 10);
-export const ONLYJOBS_N_GPU_LAYERS = parseInt(process.env.ONLYJOBS_N_GPU_LAYERS || '22', 10);
-export const ONLYJOBS_MODEL_NAME = process.env.ONLYJOBS_MODEL_NAME || 'Llama-3.2-3B Q4_K_M';
+// Model configuration
+export const DEFAULT_MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH ?? path.resolve(process.cwd(), "models", "model.gguf");
+export const LLM_TEMPERATURE = Number(process.env.ONLYJOBS_TEMPERATURE ?? 0.1);
+export const LLM_MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS ?? 256);
+export const LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 2048);
+export const GPU_LAYERS = Number(process.env.ONLYJOBS_N_GPU_LAYERS ?? 0);
 
-// Performance and reliability settings
-export const ONLYJOBS_INFER_TIMEOUT_MS = parseInt(process.env.ONLYJOBS_INFER_TIMEOUT_MS || '15000', 10);
-export const ONLYJOBS_EARLY_STOP_JSON = process.env.ONLYJOBS_EARLY_STOP_JSON !== '0';
-export const ONLYJOBS_INFER_MAX_CHARS = parseInt(process.env.ONLYJOBS_INFER_MAX_CHARS || '5000', 10);
-export const ONLYJOBS_CACHE_TTL_HOURS = parseInt(process.env.ONLYJOBS_CACHE_TTL_HOURS || '168', 10); // 7 days
-export const ONLYJOBS_ENABLE_PREFILTER = process.env.ONLYJOBS_ENABLE_PREFILTER === '1';
-export const ONLYJOBS_PREFILTER_REGEX = process.env.ONLYJOBS_PREFILTER_REGEX || 
-  '(application|applied|interview|assessment|recruit|recruiting|talent|offer|candidate|position|role|job|opening|hiring)';
+// Versioning for tracking model decisions and prompts
+export const DECISION_VERSION = process.env.ONLYJOBS_DECISION_VERSION ?? "v1.0-prompt-2025-08-08";
+export const PROMPT_VERSION = process.env.ONLYJOBS_PROMPT_VERSION ?? "v1.0";
+export const MODEL_NAME = process.env.ONLYJOBS_MODEL_NAME ?? "Llama-3.2-3B Q4_K_M";
 
-export const DEFAULT_DOWNLOAD_URL = process.env.ONLYJOBS_MODEL_URL || 
-  'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf?download=true';
+// Database configuration
+export function getElectronUserDataDir(): string {
+  const productName = "OnlyJobs Desktop";
+  const home = process.env.HOME || process.env.USERPROFILE || ".";
+  if (process.platform === "darwin") return path.join(home, "Library", "Application Support", productName);
+  if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), productName);
+  return path.join(home, ".config", productName);
+}
+
+export function getDbPath(): string {
+  const override = process.env.ONLYJOBS_DB_PATH;
+  if (override && override.trim().length > 0) return path.resolve(override);
+  return path.join(getElectronUserDataDir(), "jobs.db");
+}

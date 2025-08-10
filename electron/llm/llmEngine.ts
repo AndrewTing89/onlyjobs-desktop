@@ -1,471 +1,155 @@
-/**
- * Local LLM engine for email classification
- * Uses lazy-loaded node-llama-cpp with singleton pattern
- */
+import crypto from "crypto";
+import { DEFAULT_MODEL_PATH, LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_CONTEXT, GPU_LAYERS } from "./config";
+import { getStatusHint } from "./rules";
 
-import * as fs from 'fs';
-import * as path from 'path';
-import * as crypto from 'crypto';
-import {
-  ONLYJOBS_MODEL_PATH,
-  ONLYJOBS_TEMPERATURE,
-  ONLYJOBS_MAX_TOKENS,
-  ONLYJOBS_CTX,
-  ONLYJOBS_N_GPU_LAYERS,
-  ONLYJOBS_INFER_TIMEOUT_MS,
-  ONLYJOBS_INFER_MAX_CHARS,
-  ONLYJOBS_CACHE_TTL_HOURS,
-  ONLYJOBS_ENABLE_PREFILTER,
-  ONLYJOBS_PREFILTER_REGEX,
-  ONLYJOBS_EARLY_STOP_JSON
-} from './config';
-import { getCachedResult, setCachedResult, cleanupExpiredCache } from './cache';
-import { SYSTEM_PROMPT, userPrompt } from './prompts';
-import { normalizeStatus, cleanText } from './normalize';
+// We import lazily since node-llama-cpp is heavy
+let llamaModule: any | null = null;
+let loadedSession: any | null = null; // LlamaChatSession
+let loadedContext: any | null = null; // LlamaContext
+let loadedModel: any | null = null;   // LlamaModel
+let loadedModelPath: string | null = null;
 
-export type ParseInput = {
-  subject: string;
-  plaintext: string;
-  fromAddress?: string;
-};
+async function loadLlamaModule() {
+  if (llamaModule) return llamaModule;
+  
+  try {
+    llamaModule = await import('node-llama-cpp');
+    return llamaModule;
+  } catch (error) {
+    throw new Error(
+      "node-llama-cpp is not installed or failed to build. Run: npm i node-llama-cpp --legacy-peer-deps (or with --build-from-source)"
+    );
+  }
+}
 
 export type ParseResult = {
   is_job_related: boolean;
   company: string | null;
   position: string | null;
   status: "Applied" | "Interview" | "Declined" | "Offer" | null;
-  confidence?: number;
 };
 
-// Module-level singletons (lazy loaded)
-let llamaModule: any | null = null;
-let llamaInstance: any | null = null;
-let loadedModel: any | null = null;
-let loadedContext: any | null = null;
-let loadedSession: any | null = null;
-let loadedModelPath: string | null = null;
-let concurrentRequests = 0;
-const MAX_CONCURRENT_REQUESTS = 2;
+const schema = {
+  type: "object",
+  properties: {
+    is_job_related: { type: "boolean" },
+    company: { type: ["string", "null"] },
+    position: { type: ["string", "null"] },
+    status: { type: ["string", "null"], enum: ["Applied", "Interview", "Declined", "Offer", null] },
+  },
+  required: ["is_job_related", "company", "position", "status"],
+  additionalProperties: false,
+};
 
+const SYSTEM_PROMPT = [
+  "You are an email parser. Output ONLY JSON matching the schema, with no extra text.",
+  "Decide if the email is job-related (job application, recruiting, ATS, interview, offer, rejection, etc.).",
+  "If not job-related → is_job_related=false, and company=null, position=null, status=null.",
+  "If job-related, extract:",
+  "- company: prefer official name from signature/body; map sender domain if helpful.",
+  "- position: the role title if present.",
+  "- status: one of Applied | Interview | Declined | Offer; if uncertain use null.",
+  "Use low temperature (0.1-0.2). No 'unknown' anywhere. Use null per the schema.",
+  "",
+  "Examples:",
+  "Input\nSubject: Application received – Data Analyst\nBody: Thanks for applying to Acme. We received your application for Data Analyst.\nOutput",
+  '{"is_job_related":true,"company":"Acme","position":"Data Analyst","status":"Applied"}',
+  "",
+  "Input\nSubject: Interview availability – Globex\nBody: We'd like to schedule a 30-min interview this week regarding your application at Globex.\nOutput",
+  '{"is_job_related":true,"company":"Globex","position":null,"status":"Interview"}',
+  "",
+  "Input\nSubject: Your application at Initech\nBody: We regret to inform you we will not move forward with your candidacy at Initech.\nOutput",
+  '{"is_job_related":true,"company":"Initech","position":null,"status":"Declined"}',
+  "",
+  "Input\nSubject: Offer – Backend Engineer\nBody: Congratulations! We're excited to extend you an offer for Backend Engineer at Umbrella Corp.\nOutput",
+  '{"is_job_related":true,"company":"Umbrella Corp","position":"Backend Engineer","status":"Offer"}',
+  "",
+  "Input\nSubject: Career tips and market insights for August\nBody: Newsletter: industry news and general career advice.\nOutput",
+  '{"is_job_related":false,"company":null,"position":null,"status":null}',
+].join("\n");
 
-async function initializeLLM(): Promise<void> {
-  const currentModelPath = path.resolve(ONLYJOBS_MODEL_PATH);
-  
-  // Check if already initialized with current model
-  if (llamaInstance && loadedModel && loadedContext && loadedSession && loadedModelPath === currentModelPath) {
-    return;
-  }
-  
-  // Model path changed, need to reload
-  if (loadedModelPath && loadedModelPath !== currentModelPath) {
-    console.log(`🔄 Model path changed from ${loadedModelPath} to ${currentModelPath}, reloading...`);
-    loadedModel = null;
-    loadedContext = null;
-    loadedSession = null;
-  }
-  
-  try {
-    // Lazy import node-llama-cpp (ONLY here)
-    if (!llamaModule) {
-      console.log('🧠 Loading node-llama-cpp...');
-      llamaModule = await import('node-llama-cpp');
-    }
-    
-    // Check if model file exists
-    if (!fs.existsSync(currentModelPath)) {
-      throw new Error(`Model file not found: ${currentModelPath}`);
-    }
-    
-    // Get getLlama function (handle different export patterns)
-    const getLlama = llamaModule.getLlama || (llamaModule.default && llamaModule.default.getLlama);
-    if (!getLlama) {
-      throw new Error('node-llama-cpp getLlama() not available');
-    }
-    
-    // Initialize llama instance if not done already
-    if (!llamaInstance) {
-      console.log('🔧 Initializing llama.cpp...');
-      llamaInstance = await getLlama();
-    }
-    
-    // Load model if not already loaded or path changed
-    if (!loadedModel || loadedModelPath !== currentModelPath) {
-      console.log(`🔧 Loading model from: ${currentModelPath}`);
-      loadedModel = await llamaInstance.loadModel({
-        modelPath: currentModelPath,
-        gpuLayers: ONLYJOBS_N_GPU_LAYERS
-      });
-      loadedModelPath = currentModelPath;
-    }
-    
-    // Create context if not already created
-    if (!loadedContext) {
-      console.log(`🧮 Creating context (ctx=${ONLYJOBS_CTX})...`);
-      loadedContext = await loadedModel.createContext({
-        contextSize: ONLYJOBS_CTX
-      });
-    }
-    
-    // Create chat session if not already created
-    if (!loadedSession) {
-      console.log('💬 Creating chat session...');
-      loadedSession = new llamaModule.LlamaChatSession({
-        contextSequence: loadedContext.getSequence()
-      });
-    }
-    
-    console.log('✅ LLM initialized successfully');
-    
-  } catch (error) {
-    console.error('❌ Failed to initialize LLM:', error);
-    // Clean up partial state
-    llamaInstance = null;
-    loadedModel = null;
-    loadedContext = null;
-    loadedSession = null;
-    loadedModelPath = null;
-    throw error;
-  }
+const cache = new Map<string, ParseResult>();
+
+function makeCacheKey(subject: string, plaintext: string): string {
+  const canonical = subject + "\n" + plaintext.slice(0, 1000);
+  return crypto.createHash("sha256").update(canonical).digest("hex");
 }
 
-function parseJsonResponse(response: string): ParseResult {
-  let jsonText = response.trim();
-  
-  // Try to parse directly first
-  try {
-    const parsed = JSON.parse(jsonText);
-    return validateAndFixParseResult(parsed);
-  } catch (firstError) {
-    // Try balanced-brace extraction
-    const extracted = extractJsonWithBalancedBraces(jsonText);
-    if (extracted) {
-      try {
-        const parsed = JSON.parse(extracted);
-        return validateAndFixParseResult(parsed);
-      } catch (secondError) {
-        // Try simple repair on extracted JSON
-        const repaired = repairJson(extracted);
-        if (repaired) {
-          try {
-            const parsed = JSON.parse(repaired);
-            console.log('🔧 JSON repair successful');
-            return validateAndFixParseResult(parsed);
-          } catch (thirdError) {
-            console.warn('JSON repair failed:', thirdError.message);
-          }
-        }
-      }
-    }
-    
-    // Fallback: regex extraction
-    const jsonMatch = jsonText.match(/\{[^}]*\}/s);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return validateAndFixParseResult(parsed);
-      } catch (regexError) {
-        console.warn('Regex extraction also failed');
-      }
-    }
-    
-    // Last resort failed
-    console.warn('Could not parse JSON response after repair attempts');
-    console.warn('Raw response:', response);
-    throw new Error(`Failed to parse LLM response as JSON: ${firstError.message}`);
-  }
+async function ensureSession(modelPath: string) {
+  if (loadedSession && loadedModelPath === modelPath) return loadedSession;
+
+  const module = await loadLlamaModule();
+  const { getLlama, LlamaModel, LlamaContext, LlamaChatSession } = module;
+  const llama = await getLlama();
+  loadedModel = await llama.loadModel({ modelPath });
+  loadedContext = await loadedModel.createContext({ contextSize: LLM_CONTEXT, batchSize: 512 });
+  const sequence = loadedContext.getSequence();
+  loadedSession = new LlamaChatSession({ contextSequence: sequence, systemPrompt: SYSTEM_PROMPT });
+  loadedModelPath = modelPath;
+  return loadedSession;
 }
 
-function repairJson(jsonText: string): string | null {
-  try {
-    // Common repairs: trailing commas, unquoted keys, single quotes
-    let repaired = jsonText
-      .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
-      .replace(/([{,]\s*)(\w+):/g, '$1"$2":') // Quote unquoted keys
-      .replace(/'/g, '"'); // Convert single quotes to double quotes
-    
-    return repaired;
-  } catch (error) {
-    return null;
-  }
-}
+export async function parseEmailWithLLM(input: {
+  subject: string;
+  plaintext: string;
+  modelPath?: string;
+  temperature?: number;
+  maxTokens?: number;
+}): Promise<ParseResult> {
+  const subject = input.subject ?? "";
+  const plaintext = input.plaintext ?? "";
+  const modelPath = input.modelPath ?? DEFAULT_MODEL_PATH;
+  const temperature = input.temperature ?? LLM_TEMPERATURE;
+  const maxTokens = input.maxTokens ?? LLM_MAX_TOKENS;
 
-function extractJsonWithBalancedBraces(text: string): string | null {
-  let depth = 0;
-  let startIdx = -1;
-  
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '{') {
-      if (depth === 0) startIdx = i;
-      depth++;
-    } else if (text[i] === '}') {
-      depth--;
-      if (depth === 0 && startIdx >= 0) {
-        return text.slice(startIdx, i + 1);
-      }
-    }
-  }
-  
-  return null;
-}
+  const key = makeCacheKey(subject, plaintext);
+  const cached = cache.get(key);
+  if (cached) return cached;
 
-function validateAndFixParseResult(obj: any): ParseResult {
-  // Ensure required fields exist with correct types
-  const result: ParseResult = {
-    is_job_related: Boolean(obj.is_job_related),
-    company: obj.company && typeof obj.company === 'string' ? obj.company : null,
-    position: obj.position && typeof obj.position === 'string' ? obj.position : null,
-    status: null,
-    confidence: typeof obj.confidence === 'number' ? Math.max(0, Math.min(1, obj.confidence)) : 0.5
-  };
-  
-  // Validate status field
-  const validStatuses = ['Applied', 'Interview', 'Declined', 'Offer'];
-  if (obj.status && validStatuses.includes(obj.status)) {
-    result.status = obj.status;
-  }
-  
-  return result;
-}
+  const session = await ensureSession(modelPath);
 
-function applyPrefilter(subject: string, plaintext: string, fromAddress?: string): boolean {
-  if (!ONLYJOBS_ENABLE_PREFILTER) {
-    return true; // Pass through if prefilter disabled
-  }
-  
-  // Enhanced billing domain detection
-  const domain = fromAddress ? (fromAddress.split('@')[1] || '') : '';
-  const subjectLower = subject.toLowerCase();
-  
-  // Deny billing domains unless subject has strong job cues
-  if (/(billpay|billing|invoice|statement|payment)/i.test(domain)) {
-    const hasJobCues = /\b(job|application|applied|interview|offer|candidate|position|role|hiring)\b/i.test(subjectLower);
-    if (!hasJobCues) {
-      console.log(`🔍 Prefilter: SKIP (billing domain: ${domain}, no job cues in subject)`);
-      return false;
-    }
-  }
-  
-  const combined = `${subject} ${plaintext}`.toLowerCase();
-  const regex = new RegExp(ONLYJOBS_PREFILTER_REGEX, 'i');
-  const matches = regex.test(combined);
-  
-  // Require both job tokens AND subject has strong indicators
-  if (matches) {
-    const subjectHasJobTokens = /\b(application|applied|interview|offer|candidate|position|role|hiring)\b/i.test(subjectLower);
-    if (!subjectHasJobTokens) {
-      console.log(`🔍 Prefilter: SKIP (content has job tokens but subject lacks indicators)`);
-      return false;
-    }
-  }
-  
-  console.log(`🔍 Prefilter: ${matches ? 'PASS' : 'SKIP'} (regex: ${ONLYJOBS_PREFILTER_REGEX})`);
-  return matches;
-}
+  const hint = getStatusHint(subject, plaintext);
+  const userPrompt = [
+    hint ? `${hint}` : null,
+    `Input`,
+    `Subject: ${subject}`,
+    `Body: ${plaintext}`,
+    `Output`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 
-function truncateContent(plaintext: string): string {
-  if (plaintext.length <= ONLYJOBS_INFER_MAX_CHARS) {
-    return plaintext;
-  }
-  
-  const keepEnd = 800;
-  const keepStart = ONLYJOBS_INFER_MAX_CHARS - keepEnd - 10; // 10 for separator
-  
-  const start = plaintext.substring(0, keepStart);
-  const end = plaintext.substring(plaintext.length - keepEnd);
-  const truncated = `${start}\n...\n${end}`;
-  
-  console.log(`✂️ Truncated content: ${plaintext.length} -> ${truncated.length} chars`);
-  return truncated;
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs);
-    })
-  ]);
-}
-
-function isParsableStrictJSON(text: string): boolean {
-  try {
-    const parsed = JSON.parse(text);
-    return typeof parsed === 'object' && parsed !== null;
-  } catch {
-    return false;
-  }
-}
-
-async function performInferenceWithEarlyStop(session: any, fullPrompt: string): Promise<{ response: string; decisionPath: string }> {
-  return new Promise((resolve, reject) => {
-    let buffer = '';
-    let depth = 0;
-    let started = false;
-    let completed = false;
-
-    try {
-      const completion = session.prompt(fullPrompt, {
-        temperature: ONLYJOBS_TEMPERATURE,
-        maxTokens: ONLYJOBS_MAX_TOKENS,
-        onToken: (chunk: any) => {
-          if (completed) return;
-          
-          const token = typeof chunk === 'string' ? chunk : chunk.token || chunk.text || String(chunk);
-          buffer += token;
-          
-          // Track JSON brace depth
-          for (const char of token) {
-            if (char === '{') {
-              depth++;
-              started = true;
-            } else if (char === '}') {
-              depth--;
-            }
-          }
-          
-          // Check for complete JSON object
-          if (started && depth === 0) {
-            const startIdx = buffer.indexOf('{');
-            const endIdx = buffer.lastIndexOf('}');
-            if (startIdx >= 0 && endIdx > startIdx) {
-              const candidateJson = buffer.slice(startIdx, endIdx + 1);
-              if (isParsableStrictJSON(candidateJson)) {
-                completed = true;
-                resolve({ response: candidateJson, decisionPath: 'llm_success_early_stop' });
-                return;
-              }
-            }
-          }
-        }
-      });
-
-      // Handle completion without early stop
-      completion.then((fullResponse: string) => {
-        if (!completed) {
-          resolve({ response: fullResponse, decisionPath: 'llm_success' });
-        }
-      }).catch((error: any) => {
-        if (!completed) {
-          reject(error);
-        }
-      });
-
-    } catch (error) {
-      reject(error);
-    }
+  const response = await session.prompt(userPrompt, {
+    temperature,
+    maxTokens,
+    responseFormat: {
+      type: "json_schema",
+      schema,
+      schema_id: "OnlyJobsEmailParseSchema",
+    },
   });
-}
 
-async function performStandardInference(session: any, fullPrompt: string): Promise<{ response: string; decisionPath: string }> {
-  const response = await session.prompt(fullPrompt, {
-    temperature: ONLYJOBS_TEMPERATURE,
-    maxTokens: ONLYJOBS_MAX_TOKENS,
-  });
-  return { response, decisionPath: 'llm_success' };
-}
-
-export async function parseEmailWithLLM(input: ParseInput): Promise<ParseResult> {
-  const startTime = Date.now();
-  let decisionPath = '';
-  
+  // node-llama-cpp with responseFormat json_schema guarantees valid JSON matching schema
+  // but we still defensively parse and coerce nulls instead of 'unknown'
+  let parsed: ParseResult;
   try {
-    // Concurrency guard
-    if (concurrentRequests >= MAX_CONCURRENT_REQUESTS) {
-      console.warn(`⚠️ Too many concurrent requests (${concurrentRequests}), falling back to keyword`);
-      const keywordProvider = await import('../classifier/providers/keywordProvider');
-      return keywordProvider.parse(input);
-    }
-    
-    concurrentRequests++;
-    
-    try {
-      // Check cache first
-      const cached = getCachedResult(input.subject, input.plaintext);
-      if (cached) {
-        decisionPath = 'cache_hit';
-        console.log(`⚡ ${decisionPath} (${Date.now() - startTime}ms)`);
-        return cached;
-      }
-      
-      // Apply prefilter
-      if (!applyPrefilter(input.subject, input.plaintext, input.fromAddress)) {
-        decisionPath = 'prefilter_skip';
-        console.log(`⚡ ${decisionPath} (${Date.now() - startTime}ms)`);
-        const keywordProvider = await import('../classifier/providers/keywordProvider');
-        return keywordProvider.parse(input);
-      }
-      
-      // Initialize LLM
-      await initializeLLM();
-      
-      if (!loadedSession) {
-        throw new Error('Chat session not available');
-      }
-      
-      // Truncate content if needed
-      const truncatedContent = truncateContent(input.plaintext);
-      const userMessage = userPrompt(input.subject, truncatedContent);
-      
-      // Build single plain-string prompt 
-      const fullPrompt = `${SYSTEM_PROMPT}\n\n${userMessage}`;
-      
-      console.log(`🧠 Querying LLM (promptChars=${fullPrompt.length})...`);
-      
-      // Run inference with streaming early-stop if enabled
-      const inferenceResult = await withTimeout(
-        ONLYJOBS_EARLY_STOP_JSON ? 
-          performInferenceWithEarlyStop(loadedSession, fullPrompt) :
-          performStandardInference(loadedSession, fullPrompt),
-        ONLYJOBS_INFER_TIMEOUT_MS
-      );
-      
-      console.log('📝 LLM response:', inferenceResult.response);
-      
-      const parsedResult = parseJsonResponse(inferenceResult.response);
-      decisionPath = inferenceResult.decisionPath;
-      
-      // Apply normalization
-      parsedResult.status = normalizeStatus(parsedResult.status);
-      parsedResult.company = cleanText(parsedResult.company);
-      parsedResult.position = cleanText(parsedResult.position);
-      parsedResult.is_job_related = Boolean(parsedResult.is_job_related);
-      parsedResult.confidence = typeof parsedResult.confidence === 'number' ? 
-        Math.max(0, Math.min(1, parsedResult.confidence)) : 0.5;
-      
-      // Cache the result
-      setCachedResult(input.subject, input.plaintext, parsedResult);
-      
-      console.log(`✅ ${decisionPath} (${Date.now() - startTime}ms)`, parsedResult);
-      
-      // Periodic cache cleanup
-      if (Math.random() < 0.1) { // 10% chance
-        cleanupExpiredCache();
-      }
-      
-      return parsedResult;
-      
-    } finally {
-      concurrentRequests--;
-    }
-    
-  } catch (error) {
-    const errorTime = Date.now() - startTime;
-    
-    if (error.message.includes('timed out')) {
-      decisionPath = 'timeout_fallback';
-      console.warn(`⏱️ ${decisionPath} (${errorTime}ms):`, error.message);
-    } else if (error.message.includes('parse') || error.message.includes('JSON')) {
-      decisionPath = 'parse_fail_fallback';
-      console.warn(`🔧 ${decisionPath} (${errorTime}ms):`, error.message);
-    } else {
-      decisionPath = 'llm_error_fallback';
-      console.error(`❌ ${decisionPath} (${errorTime}ms):`, error);
-    }
-    
-    // Fallback to keyword provider
-    const keywordProvider = await import('../classifier/providers/keywordProvider');
-    const result = await keywordProvider.parse(input);
-    console.log(`🔄 Fallback result (${Date.now() - startTime}ms, ${decisionPath}):`, result);
-    return result;
+    parsed = JSON.parse(response) as ParseResult;
+  } catch (err) {
+    // Should not happen with json_schema, but ensure hard fallback
+    parsed = { is_job_related: false, company: null, position: null, status: null };
   }
+
+  // Enforce rules: if not job-related, everything else null
+  if (!parsed.is_job_related) {
+    parsed.company = null;
+    parsed.position = null;
+    parsed.status = null;
+  }
+
+  // Never return 'unknown' strings
+  if (parsed.company && /^unknown$/i.test(parsed.company)) parsed.company = null;
+  if (parsed.position && /^unknown$/i.test(parsed.position)) parsed.position = null;
+
+  cache.set(key, parsed);
+  return parsed;
 }

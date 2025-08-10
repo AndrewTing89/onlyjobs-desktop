@@ -9,7 +9,6 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Settings = lazy(() => import('./pages/Settings'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
-const MLTestPage = lazy(() => import('./pages/MLTestPage'));
 const TestIPC = lazy(() => import('./pages/TestIPC'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
@@ -99,7 +98,6 @@ function ElectronApp() {
               {/* Utility routes */}
               <Route path="/terms" element={<TermsOfService />} />
               <Route path="/privacy" element={<PrivacyPolicy />} />
-              <Route path="/ml-test" element={<MLTestPage />} />
               <Route path="/test-ipc" element={<TestIPC />} />
               
               {/* Catch all */}

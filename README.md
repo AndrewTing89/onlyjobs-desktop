@@ -1,17 +1,16 @@
 # OnlyJobs Desktop
 
-An AI-powered job application tracking desktop app that automatically syncs with Gmail, classifies job-related emails using machine learning, and provides real-time analytics.
+An AI-powered job application tracking desktop app that automatically syncs with Gmail, classifies job-related emails using local LLM, and provides real-time analytics.
 
 [![Electron](https://img.shields.io/badge/Electron-37-47848F?logo=electron)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?logo=typescript)](https://www.typescriptlang.org/)
-[![Python](https://img.shields.io/badge/Python-3.8+-3776AB?logo=python)](https://www.python.org/)
-[![ML Powered](https://img.shields.io/badge/ML-scikit--learn-F7931E?logo=scikit-learn)](https://scikit-learn.org/)
+[![LLM Powered](https://img.shields.io/badge/LLM-node--llama--cpp-00D4AA?logo=openai)](https://github.com/withcatai/node-llama-cpp)
 
 ## Features
 
 - 🔐 **Gmail Integration**: Secure OAuth 2.0 authentication with Gmail
-- 🤖 **AI Classification**: Automatically identifies and classifies job-related emails
+- 🤖 **LLM Classification**: Uses local language model to identify and classify job-related emails
 - 📊 **Real-time Dashboard**: Track your job applications with live updates
 - 🔄 **Multi-Account Support**: Connect multiple Gmail accounts
 - 💾 **Local Storage**: All data stored locally using SQLite
@@ -20,17 +19,16 @@ An AI-powered job application tracking desktop app that automatically syncs with
 ## Prerequisites
 
 - Node.js (v18 or higher)
-- Python 3.8+
 - Gmail account
 - Google Cloud Platform project with Gmail API enabled
 
-## Local LLM Mode (Preview)
+## LLM Classification
 
-The app supports a local LLM provider for enhanced email classification in Electron mode only. The default provider is "keyword" so web builds work unchanged. 
+The app uses a local LLM for accurate email classification with JSON schema validation. 
 
 - **Default Model**: Llama-3.2-3B-Instruct Q4_K_M (lightweight, CPU-optimized)
 - **Model Path**: `./models/model.gguf`
-- **Provider Toggle**: Set `CLASSIFIER_PROVIDER=llm` in `.env`
+- **Always On**: LLM-only classification (no legacy ML or keyword fallbacks)
 - **Setup Commands**:
   - `npm run llm:deps` - Install node-llama-cpp dependencies
   - `npm run llm:download` - Download the model file
@@ -70,12 +68,10 @@ The app supports a local LLM provider for enhanced email classification in Elect
 
 ## Installation
 
-1. Clone the repository (including the ML classifier submodule):
+1. Clone the repository:
 ```bash
-git clone --recurse-submodules https://github.com/yourusername/onlyjobs-desktop.git
+git clone https://github.com/yourusername/onlyjobs-desktop.git
 cd onlyjobs-desktop
-# if you already cloned without submodules
-git submodule update --init --recursive
 ```
 
 2. Install dependencies:
@@ -83,11 +79,9 @@ git submodule update --init --recursive
 npm install
 ```
 
-3. Install Python dependencies for the ML classifier:
+3. Download the LLM model:
 ```bash
-cd ml-classifier
-pip install -r requirements.txt
-cd ..
+npm run llm:download
 ```
 
 4. Add configuration files:
@@ -143,19 +137,23 @@ npm test
 
 ```
 onlyjobs-desktop/
-├── electron/           # Electron main process files
-│   ├── main.js        # Main entry point
-│   ├── ipc-handlers.js # IPC communication handlers
-│   ├── gmail-auth.js  # Gmail authentication
-│   └── gmail-multi-auth.js # Multi-account support
-├── src/               # React app source
-│   ├── components/    # React components
-│   ├── pages/        # Page components
-│   └── ElectronApp.tsx # Main Electron app component
-├── ml-classifier/     # Python ML classifier
-│   ├── scripts/      # Classification scripts
-│   └── data/models/  # Trained ML models
-└── public/           # Static assets
+├── electron/              # Electron main process files
+│   ├── main.js           # Main entry point
+│   ├── ipc-handlers.js   # IPC communication handlers
+│   ├── gmail-auth.js     # Gmail authentication
+│   ├── llm/              # Local LLM engine
+│   │   ├── llmEngine.ts  # LLM inference engine
+│   │   ├── config.ts     # Model configuration
+│   │   └── rules.ts      # Status hint patterns
+│   └── classifier/       # Classification providers
+│       └── providerFactory.js # LLM provider factory
+├── src/                  # React app source
+│   ├── components/       # React components
+│   ├── pages/           # Page components
+│   └── ElectronApp.tsx  # Main Electron app component
+├── models/              # Local LLM models
+│   └── model.gguf      # GGUF model file
+└── public/             # Static assets
 ```
 
 ## Key Technologies
@@ -163,16 +161,18 @@ onlyjobs-desktop/
 - **Frontend**: React 19, TypeScript, Material-UI
 - **Desktop**: Electron 37
 - **Database**: SQLite3 (better-sqlite3)
-- **ML**: Python, scikit-learn
+- **LLM**: node-llama-cpp with GGUF models
 - **Authentication**: Google OAuth 2.0 (AppAuth-JS)
 
 ## Development Notes
 
 ### Gmail Sync Process
 
-1. **Fetch Stage**: Downloads emails from Gmail with full content
-2. **Classification Stage**: Processes emails through ML classifier
-3. **Storage**: Saves job-related emails to local SQLite database
+1. **OAuth Authentication**: Connect Gmail account through secure OAuth flow
+2. **Email Fetching**: Download recent emails from Gmail via API
+3. **LLM Classification**: Process emails through local language model
+4. **Data Extraction**: Extract company, position, status information
+5. **Local Storage**: Save job-related emails to local SQLite database
 
 ### Database Schema
 
@@ -182,13 +182,14 @@ The app uses SQLite with the following main tables:
 - `gmail_accounts`: Manages multiple Gmail accounts
 - `sync_status`: Tracks sync progress
 
-### ML Classification
+### LLM Classification
 
-The classifier uses a trained model to identify job-related emails based on:
-- Email content and structure
-- Keywords and patterns
-- Sender information
-- Subject line analysis
+The local LLM engine identifies job-related emails and extracts structured data:
+- **Context Understanding**: Analyzes full email content and context
+- **Structured Output**: Returns JSON with company, position, status
+- **High Accuracy**: Better than traditional keyword-based approaches
+- **Privacy First**: All processing happens locally, no data sent to external APIs
+- **Fast Inference**: Optimized GGUF models for quick classification
 
 ## LLM Prompt & Evaluation
 
@@ -259,7 +260,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- ML classifier model provided by contributor
+- Local LLM processing powered by node-llama-cpp
 - Built with Electron and React
 - Gmail API integration powered by Google APIs
+- GGUF model format support from llama.cpp community
 
