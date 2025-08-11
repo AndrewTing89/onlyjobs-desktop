@@ -1,0 +1,42 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Build app
+      run: npm run dist
+    
+    - name: Ad-hoc sign the app
+      run: |
+        codesign --force --deep --sign - "dist/mac/OnlyJobs Desktop.app"
+        xattr -cr "dist/mac/OnlyJobs Desktop.app"
+    
+    - name: Create DMG
+      run: npx electron-installer-dmg "dist/mac/OnlyJobs Desktop.app" "OnlyJobs-Desktop" --out=dist/ --overwrite
+    
+    - name: Sign DMG
+      run: codesign --force --sign - "dist/OnlyJobs-Desktop.dmg"
+    
+    - name: Upload Release Assets
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/OnlyJobs-Desktop.dmg
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

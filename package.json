@@ -24,7 +24,10 @@
     "rebuild:native": "electron-rebuild -f -w better-sqlite3 -w node-llama-cpp",
     "dev:web": "react-scripts start",
     "dev:electron": "wait-on http://localhost:3000 && cross-env NODE_ENV=development electron ./electron/main.js",
-    "dev:all": "concurrently -k -n WEB,ELECTRON -c auto \"npm run dev:web\" \"npm run dev:electron\""
+    "dev:all": "concurrently -k -n WEB,ELECTRON -c auto \"npm run dev:web\" \"npm run dev:electron\"",
+    "package:mac": "./package-app.sh",
+    "package:windows": "./package-windows.sh",
+    "package:all": "npm run package:mac && npm run package:windows"
   },
   "repository": {
     "type": "git",
@@ -131,7 +134,18 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
-      "icon": "assets/icon.icns"
+      "icon": "assets/icon.icns",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ]
     },
     "win": {
       "target": "nsis",
