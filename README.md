@@ -1,11 +1,14 @@
-# OnlyJobs Desktop
+# OnlyJobs Desktop 💼
 
-An AI-powered job application tracking desktop app that automatically syncs with Gmail, classifies job-related emails using local LLM, and provides real-time analytics.
+An AI-powered job application tracker that automatically syncs with Gmail, uses local AI to classify emails, and helps you manage your job search efficiently.
 
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/AndrewTing89/onlyjobs-desktop/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](https://sourceforge.net/projects/onlyjobs-desktop/)
+[![Downloads](https://img.shields.io/sourceforge/dt/onlyjobs-desktop)](https://sourceforge.net/projects/onlyjobs-desktop/)
 [![Electron](https://img.shields.io/badge/Electron-37-47848F?logo=electron)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?logo=typescript)](https://www.typescriptlang.org/)
-[![LLM Powered](https://img.shields.io/badge/LLM-node--llama--cpp-00D4AA?logo=openai)](https://github.com/withcatai/node-llama-cpp)
+[![LLM Powered](https://img.shields.io/badge/LLM-Llama_3.2-00D4AA?logo=meta)](https://github.com/withcatai/node-llama-cpp)
 
 ## Features
 
