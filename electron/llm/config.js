@@ -3,7 +3,27 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getDbPath = exports.getElectronUserDataDir = exports.MODEL_NAME = exports.PROMPT_VERSION = exports.DECISION_VERSION = exports.GPU_LAYERS = exports.LLM_CONTEXT = exports.LLM_MAX_TOKENS = exports.LLM_TEMPERATURE = exports.DEFAULT_MODEL_PATH = void 0;
 const path = require("path");
 // Model configuration
-exports.DEFAULT_MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH ?? path.resolve(process.cwd(), "models", "model.gguf");
+// Determine if we're in a packaged app and get the correct path
+let defaultPath;
+
+// In Electron, process.resourcesPath is available in packaged apps
+if (process.resourcesPath && !__dirname.includes('node_modules')) {
+    // We're in a packaged app - models are in Resources directory
+    defaultPath = path.join(process.resourcesPath, "models", "model.gguf");
+    console.log('LLM Config: Running in packaged app');
+    console.log('LLM Config: Resources path:', process.resourcesPath);
+} else {
+    // In development, use relative path from the config file location
+    const configDir = __dirname; // electron/llm
+    const electronDir = path.dirname(configDir); // electron
+    const appRootPath = path.dirname(electronDir); // app root
+    defaultPath = path.join(appRootPath, "models", "model.gguf");
+    console.log('LLM Config: Running in development');
+    console.log('LLM Config: App root path:', appRootPath);
+}
+
+console.log('LLM Config: Default model path resolved to:', defaultPath);
+exports.DEFAULT_MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH ?? defaultPath;
 exports.LLM_TEMPERATURE = Number(process.env.ONLYJOBS_TEMPERATURE ?? 0.1);
 exports.LLM_MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS ?? 256);
 exports.LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 2048);
