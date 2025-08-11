@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "description": "> An intelligent job application tracking system that automatically syncs with Gmail, uses AI to classify and extract job application details, and provides real-time analytics through a modern web dashboard.",
   "main": "electron/main.js",
-  "homepage": ".",
+  "homepage": "./",
   "scripts": {
     "electron": "electron .",
     "electron-dev": "NODE_ENV=development electron .",
     "start": "react-scripts start",
-    "build": "react-scripts build",
+    "build": "PUBLIC_URL=. react-scripts build",
     "electron-dist": "npm run build && electron-builder",
     "dist": "npm run build && electron-builder --publish=never",
     "test": "react-scripts test",
@@ -46,6 +46,7 @@
     "cross-env": "^10.0.0",
     "electron": "^37.2.5",
     "electron-builder": "^26.0.12",
+    "electron-packager": "^17.1.2",
     "electron-rebuild": "^3.2.9",
     "electron-reload": "^2.0.0-alpha.1",
     "firebase-tools": "^14.11.2",
@@ -65,12 +66,13 @@
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
     "better-sqlite3": "^12.2.0",
+    "dotenv": "^17.2.1",
     "electron-store": "^10.1.0",
     "firebase": "^11.10.0",
     "framer-motion": "^12.23.1",
     "googleapis": "^154.1.0",
     "html-to-text": "^9.0.5",
-    "node-llama-cpp": "^3.11.0",
+    "node-llama-cpp": "^3.12.0",
     "python-shell": "^5.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -100,6 +102,7 @@
     ]
   },
   "build": {
+    "extends": null,
     "appId": "com.onlyjobs.desktop",
     "productName": "OnlyJobs Desktop",
     "directories": {
@@ -108,19 +111,20 @@
     "files": [
       "build/**/*",
       "electron/**/*",
-      "ml-classifier/src/**/*",
-      "ml-classifier/models/**/*",
-      "ml-classifier/requirements.txt",
-      "node_modules/**/*"
+      "models/**/*",
+      "node_modules/**/*",
+      "!electron/.env.backup",
+      "!electron/**/*.backup",
+      "!models/*.corrupted",
+      "!**/*.test.js",
+      "!**/test-*.js"
     ],
     "extraResources": [
       {
-        "from": "ml-classifier",
-        "to": "ml-classifier",
+        "from": "models",
+        "to": "models",
         "filter": [
-          "**/*",
-          "!**/.git",
-          "!**/node_modules"
+          "**/*"
         ]
       }
     ],
