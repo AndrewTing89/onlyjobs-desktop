@@ -34,9 +34,9 @@ class GmailAuth extends EventEmitter {
     }
     this.store = new Store(storeOptions);
     
-    // Gmail OAuth configuration
-    this.clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || '12002195951-6s2kd59s10acoh6bb43fq2dif0m5volv.apps.googleusercontent.com';
-    this.clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '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';
+    // Gmail OAuth configuration - Using the same Desktop OAuth credentials
+    this.clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || '17718847205-getvrh47jb81e0c2png9bv00jn3a9tpi.apps.googleusercontent.com';
+    this.clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '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';
     this.redirectUri = 'http://127.0.0.1:8001/gmail-callback'; // Using loopback IP as per Google OAuth requirements
     this.server = null;
     

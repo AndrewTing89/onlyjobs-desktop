@@ -63,15 +63,51 @@ function makeCacheKey(subject, plaintext) {
 async function ensureSession(modelPath) {
     if (loadedSession && loadedModelPath === modelPath)
         return loadedSession;
+    
+    console.log('LLM: Loading model from:', modelPath);
+    const fs = require('fs');
+    
+    // Check if model file exists
+    if (!fs.existsSync(modelPath)) {
+        throw new Error(`Model file not found at: ${modelPath}`);
+    }
+    
+    const stats = fs.statSync(modelPath);
+    console.log('LLM: Model file size:', stats.size, 'bytes');
+    
     const module = await loadLlamaModule();
     const { getLlama, LlamaModel, LlamaContext, LlamaChatSession } = module;
-    const llama = await getLlama();
-    loadedModel = await llama.loadModel({ modelPath });
-    loadedContext = await loadedModel.createContext({ contextSize: config_1.LLM_CONTEXT, batchSize: 512 });
-    const sequence = loadedContext.getSequence();
-    loadedSession = new LlamaChatSession({ contextSequence: sequence, systemPrompt: SYSTEM_PROMPT });
-    loadedModelPath = modelPath;
-    return loadedSession;
+    
+    try {
+        const llama = await getLlama();
+        console.log('LLM: Got llama instance, loading model...');
+        
+        loadedModel = await llama.loadModel({ 
+            modelPath,
+            gpuLayers: config_1.GPU_LAYERS || 0
+        });
+        
+        console.log('LLM: Model loaded, creating context...');
+        loadedContext = await loadedModel.createContext({ 
+            contextSize: config_1.LLM_CONTEXT, 
+            batchSize: 512 
+        });
+        
+        console.log('LLM: Context created, creating session...');
+        const sequence = loadedContext.getSequence();
+        loadedSession = new LlamaChatSession({ 
+            contextSequence: sequence, 
+            systemPrompt: SYSTEM_PROMPT 
+        });
+        
+        loadedModelPath = modelPath;
+        console.log('LLM: Session ready');
+        return loadedSession;
+    } catch (error) {
+        console.error('LLM: Detailed error loading model:', error);
+        console.error('LLM: Error stack:', error.stack);
+        throw error;
+    }
 }
 async function parseEmailWithLLM(input) {
     const subject = input.subject ?? "";
@@ -81,8 +117,10 @@ async function parseEmailWithLLM(input) {
     const maxTokens = input.maxTokens ?? config_1.LLM_MAX_TOKENS;
     const key = makeCacheKey(subject, plaintext);
     const cached = cache.get(key);
-    if (cached)
+    if (cached) {
+        console.log('LLM: Using cached result for:', subject.substring(0, 50));
         return cached;
+    }
     const session = await ensureSession(modelPath);
     const hint = (0, rules_1.getStatusHint)(subject, plaintext);
     // Truncate email content to prevent context overflow
@@ -100,6 +138,9 @@ async function parseEmailWithLLM(input) {
     ]
         .filter(Boolean)
         .join("\n");
+    
+    console.log('LLM: Processing email with subject:', subject.substring(0, 50));
+    
     const response = await session.prompt(userPrompt, {
         temperature,
         maxTokens,
@@ -109,13 +150,18 @@ async function parseEmailWithLLM(input) {
             schema_id: "OnlyJobsEmailParseSchema",
         },
     });
+    
+    console.log('LLM: Raw response:', response);
+    
     // node-llama-cpp with responseFormat json_schema guarantees valid JSON matching schema
     // but we still defensively parse and coerce nulls instead of 'unknown'
     let parsed;
     try {
         parsed = JSON.parse(response);
+        console.log('LLM: Parsed result:', parsed);
     }
     catch (err) {
+        console.error('LLM: Failed to parse response:', err);
         // Should not happen with json_schema, but ensure hard fallback
         parsed = { is_job_related: false, company: null, position: null, status: null };
     }

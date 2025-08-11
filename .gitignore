@@ -134,3 +134,4 @@ functions/
 # Local LLM models
 models/
 *.gguf
+ml-classifier/

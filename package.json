@@ -46,6 +46,7 @@
     "cross-env": "^10.0.0",
     "electron": "^37.2.5",
     "electron-builder": "^26.0.12",
+    "electron-installer-dmg": "^5.0.1",
     "electron-packager": "^17.1.2",
     "electron-rebuild": "^3.2.9",
     "electron-reload": "^2.0.0-alpha.1",

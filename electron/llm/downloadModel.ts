@@ -6,10 +6,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as https from 'https';
-import { DEFAULT_DOWNLOAD_URL, ONLYJOBS_MODEL_PATH } from './config';
+import { DEFAULT_MODEL_PATH } from './config';
+
+// Llama 3.2 3B Instruct Q4_K_M model URL
+const DEFAULT_DOWNLOAD_URL = 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf';
 
 async function downloadModel() {
-  const modelPath = path.resolve(ONLYJOBS_MODEL_PATH);
+  const modelPath = path.resolve(DEFAULT_MODEL_PATH);
   const modelDir = path.dirname(modelPath);
   const tempPath = `${modelPath}.tmp`;
   
