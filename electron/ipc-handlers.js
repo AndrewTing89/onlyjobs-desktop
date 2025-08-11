@@ -101,6 +101,20 @@ function initializeDatabase() {
   // Disable foreign keys during migration
   getDb().pragma('foreign_keys = OFF');
   
+  // First ensure the jobs table has all required columns
+  try {
+    const jobsTableInfo = getDb().prepare("PRAGMA table_info(jobs)").all();
+    const hasAccountEmail = jobsTableInfo.some(col => col.name === 'account_email');
+    
+    if (!hasAccountEmail && jobsTableInfo.length > 0) {
+      console.log('Adding missing account_email column to jobs table...');
+      getDb().exec('ALTER TABLE jobs ADD COLUMN account_email TEXT');
+      getDb().exec('ALTER TABLE jobs ADD COLUMN from_address TEXT');
+    }
+  } catch (e) {
+    console.log('Database migration check:', e.message);
+  }
+  
   try {
     // First, check if jobs table exists and needs migration
     const jobsTableExists = getDb().prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'").get();
@@ -186,6 +200,23 @@ function initializeDatabase() {
     console.error('Migration error:', error);
   }
   
+  // Add missing columns to email_sync table if they don't exist
+  try {
+    const emailSyncColumns = getDb().pragma('table_info(email_sync)');
+    const hasAccountEmail = emailSyncColumns.some(col => col.name === 'account_email');
+    
+    if (!hasAccountEmail) {
+      console.log('Adding account_email column to email_sync table...');
+      getDb().exec(`
+        ALTER TABLE email_sync 
+        ADD COLUMN account_email TEXT DEFAULT 'unknown@gmail.com'
+      `);
+      console.log('Added account_email column to email_sync table');
+    }
+  } catch (error) {
+    console.log('email_sync table migration:', error.message);
+  }
+  
   getDb().exec(`
     -- Gmail accounts table for multi-account support
     CREATE TABLE IF NOT EXISTS gmail_accounts (
@@ -240,6 +271,22 @@ function initializeDatabase() {
       total_emails_fetched INTEGER DEFAULT 0,
       total_emails_classified INTEGER DEFAULT 0,
       total_jobs_found INTEGER DEFAULT 0
+    );
+    
+    -- Sync history log table
+    CREATE TABLE IF NOT EXISTS sync_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sync_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      accounts_synced INTEGER,
+      emails_fetched INTEGER,
+      emails_processed INTEGER,
+      emails_classified INTEGER,
+      jobs_found INTEGER,
+      new_jobs INTEGER,
+      updated_jobs INTEGER,
+      duration_ms INTEGER,
+      status TEXT,
+      error_message TEXT
     );
 
     -- Indexes for performance
@@ -322,6 +369,40 @@ ipcMain.handle('db:get-job', async (event, id) => {
   } catch (error) {
     console.error('Error fetching job:', error);
     throw error;
+  }
+});
+
+ipcMain.handle('db:get-job-email', async (event, jobId) => {
+  try {
+    const stmt = getDb().prepare(`
+      SELECT email_content, email_history
+      FROM jobs
+      WHERE id = ?
+    `);
+    const result = stmt.get(jobId);
+    
+    if (!result) {
+      return { success: false, error: 'Job not found' };
+    }
+    
+    // Parse email_history if it's a JSON string
+    let emailHistory = [];
+    if (result.email_history) {
+      try {
+        emailHistory = JSON.parse(result.email_history);
+      } catch (e) {
+        console.error('Error parsing email history:', e);
+      }
+    }
+    
+    return {
+      success: true,
+      emailContent: result.email_content || '',
+      emailHistory: emailHistory
+    };
+  } catch (error) {
+    console.error('Error fetching job email:', error);
+    return { success: false, error: error.message };
   }
 });
 
@@ -618,15 +699,28 @@ try {
   console.error('Failed to initialize Gmail auth:', error);
 }
 
-// Initialize multi-account Gmail auth
-let gmailMultiAuth;
-try {
-  gmailMultiAuth = new GmailMultiAuth();
-  console.log('Gmail multi-auth initialized successfully');
-} catch (error) {
-  console.error('Failed to initialize Gmail multi-auth:', error);
-  console.error('Full error details:', error.stack);
-  // Don't set gmailMultiAuth to prevent undefined errors
+// Initialize multi-account Gmail auth - defer until first use
+let gmailMultiAuth = null;
+let gmailMultiAuthError = null;
+
+function getGmailMultiAuth() {
+  if (gmailMultiAuth) return gmailMultiAuth;
+  
+  if (gmailMultiAuthError) {
+    throw new Error(`Gmail multi-auth previously failed to initialize: ${gmailMultiAuthError}`);
+  }
+  
+  try {
+    console.log('Initializing GmailMultiAuth on first use...');
+    gmailMultiAuth = new GmailMultiAuth();
+    console.log('Gmail multi-auth initialized successfully');
+    return gmailMultiAuth;
+  } catch (error) {
+    console.error('Failed to initialize Gmail multi-auth:', error);
+    console.error('Full error details:', error.stack);
+    gmailMultiAuthError = error.message;
+    throw error;
+  }
 }
 
 // Listen for Gmail auth events
@@ -642,28 +736,59 @@ if (gmailAuth) {
 
 // Listen for auth events
 authFlow.on('auth-success', (data) => {
-  const mainWindow = BrowserWindow.getAllWindows()[0];
-  if (mainWindow) {
-    mainWindow.webContents.send('auth-success', data);
-  }
+  console.log('🟢 IPC: auth-success event received from authFlow');
+  const windows = BrowserWindow.getAllWindows();
+  console.log(`🔵 IPC: Broadcasting auth-success to ${windows.length} windows`);
+  windows.forEach(window => {
+    console.log(`🔵 IPC: Sending auth-success to window ${window.id}`);
+    window.webContents.send('auth-success', data);
+  });
 });
 
 authFlow.on('auth-error', (error) => {
-  const mainWindow = BrowserWindow.getAllWindows()[0];
-  if (mainWindow) {
-    mainWindow.webContents.send('auth-error', error.message);
-  }
+  console.log('🔴 IPC: auth-error event received from authFlow:', error);
+  const windows = BrowserWindow.getAllWindows();
+  windows.forEach(window => {
+    window.webContents.send('auth-error', error.message);
+  });
 });
 
 // Authentication operations
 ipcMain.handle('auth:sign-in', async () => {
-  console.log('IPC: auth:sign-in called');
+  console.log('🔵 IPC: auth:sign-in called from renderer');
   try {
-    await authFlow.signIn();
-    return { success: true };
+    const result = await authFlow.signIn();
+    console.log('🟢 IPC: Sign in completed, result:', result);
+    console.log('🔵 IPC: User data:', result?.user);
+    
+    // IMPORTANT: Also send the auth-success event to all windows
+    // This ensures the renderer gets notified even if the promise resolution doesn't work
+    if (result && result.user) {
+      const windows = BrowserWindow.getAllWindows();
+      console.log(`🔵 IPC: Broadcasting to ${windows.length} windows`);
+      windows.forEach(window => {
+        console.log(`🔵 IPC: Sending auth-success to window ${window.id}`);
+        window.webContents.send('auth-success', result);
+      });
+    }
+    
+    // Return the actual auth data so the frontend can update immediately
+    const response = { 
+      success: true,
+      user: result?.user,
+      tokens: result?.tokens
+    };
+    console.log('🟢 IPC: Returning response to renderer:', response);
+    return response;
   } catch (error) {
-    console.error('IPC: Sign in error:', error);
-    throw error;
+    console.error('🔴 IPC: Sign in error:', error);
+    console.error('🔴 IPC: Error details:', {
+      message: error?.message,
+      stack: error?.stack,
+      toString: error?.toString()
+    });
+    // Return a proper error object
+    throw new Error(error?.message || error?.toString() || 'Authentication failed');
   }
 });
 
@@ -680,7 +805,33 @@ ipcMain.handle('auth:sign-out', async () => {
 ipcMain.handle('auth:get-tokens', async () => {
   try {
     const tokens = authFlow.getStoredTokens();
-    return { success: true, tokens };
+    let userInfo = null;
+    
+    // Try to get user info from tokens
+    if (tokens && tokens.id_token) {
+      try {
+        // Decode JWT ID token to get user info
+        const parts = tokens.id_token.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+          userInfo = {
+            email: payload.email,
+            name: payload.name,
+            picture: payload.picture
+          };
+        }
+      } catch (e) {
+        console.error('Failed to parse ID token:', e);
+      }
+    }
+    
+    return { 
+      success: true, 
+      tokens: {
+        ...tokens,
+        ...userInfo
+      }
+    };
   } catch (error) {
     console.error('Get tokens error:', error);
     throw error;
@@ -862,6 +1013,22 @@ ipcMain.handle('gmail:get-sync-status', async () => {
   } catch (error) {
     console.error('Error getting sync status:', error);
     throw error;
+  }
+});
+
+// Get sync history
+ipcMain.handle('sync:get-history', async (event, limit = 20) => {
+  try {
+    const history = getDb().prepare(`
+      SELECT * FROM sync_history 
+      ORDER BY sync_date DESC 
+      LIMIT ?
+    `).all(limit);
+    
+    return { success: true, history };
+  } catch (error) {
+    console.error('Error getting sync history:', error);
+    return { success: false, error: error.message };
   }
 });
 
@@ -1137,6 +1304,7 @@ ipcMain.handle('oauth-completed', async (event, data) => {
 // Multi-account Gmail handlers
 ipcMain.handle('gmail:get-accounts', async () => {
   try {
+    const gmailMultiAuth = getGmailMultiAuth();
     const accounts = gmailMultiAuth.getAllAccounts();
     return { success: true, accounts };
   } catch (error) {
@@ -1149,19 +1317,7 @@ ipcMain.handle('gmail:add-account', async () => {
   try {
     console.log('IPC: gmail:add-account called');
     
-    if (!gmailMultiAuth) {
-      console.error('GmailMultiAuth is not initialized!');
-      // Try to initialize it now
-      try {
-        const GmailMultiAuth = require('./gmail-multi-auth');
-        gmailMultiAuth = new GmailMultiAuth();
-        console.log('GmailMultiAuth initialized on demand');
-      } catch (initError) {
-        console.error('Failed to initialize GmailMultiAuth:', initError);
-        throw new Error('Gmail multi-account support not available. Please check the logs.');
-      }
-    }
-    
+    const gmailMultiAuth = getGmailMultiAuth();
     const account = await gmailMultiAuth.addAccount();
     console.log('IPC: Gmail account added:', account.email);
     return { success: true, account };
@@ -1173,6 +1329,7 @@ ipcMain.handle('gmail:add-account', async () => {
 
 ipcMain.handle('gmail:remove-account', async (event, email) => {
   try {
+    const gmailMultiAuth = getGmailMultiAuth();
     gmailMultiAuth.removeAccount(email);
     return { success: true };
   } catch (error) {
@@ -1183,8 +1340,10 @@ ipcMain.handle('gmail:remove-account', async (event, email) => {
 
 // Multi-account sync
 ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
+  const syncStartTime = Date.now();
   try {
     const mainWindow = BrowserWindow.getAllWindows()[0];
+    const gmailMultiAuth = getGmailMultiAuth();
     const accounts = gmailMultiAuth.getAllAccounts();
     
     if (accounts.length === 0) {
@@ -1224,17 +1383,48 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       
       try {
         // Fetch emails from this account
+        // Calculate date for 'after' query
+        const afterDate = new Date();
+        afterDate.setDate(afterDate.getDate() - daysToSync);
+        const dateString = afterDate.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+        
+        console.log(`Fetching emails for ${account.email} after ${dateString}`);
+        console.log(`Query params: maxResults=${maxEmails}, query="in:inbox after:${dateString}"`);
+        
         const fetchResult = await gmailMultiAuth.fetchEmailsFromAccount(account.email, {
           maxResults: maxEmails,
-          query: `in:inbox newer_than:${daysToSync}d`
+          query: `in:inbox after:${dateString}`
+        });
+        
+        console.log('Fetch result:', {
+          hasMessages: !!fetchResult.messages,
+          messageCount: fetchResult.messages ? fetchResult.messages.length : 0,
+          nextPageToken: fetchResult.nextPageToken,
+          accountEmail: fetchResult.accountEmail
         });
         
         if (!fetchResult.messages || fetchResult.messages.length === 0) {
+          console.log(`No messages found for ${account.email}`);
           continue;
         }
         
         // Process each email directly
+        let emailIndex = 0;
         for (const email of fetchResult.messages) {
+          emailIndex++;
+          
+          // Send progress update for each email
+          mainWindow.webContents.send('sync-progress', {
+            current: i,
+            total: accounts.length,
+            status: `Processing email ${emailIndex}/${fetchResult.messages.length} from ${account.email}...`,
+            account: account.email,
+            emailProgress: {
+              current: emailIndex,
+              total: fetchResult.messages.length
+            }
+          });
+          
           try {
             // Use atomic INSERT OR IGNORE to check and mark as processing in one operation
             // This eliminates the race condition between check and insert
@@ -1269,13 +1459,90 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
             
             totalEmailsFetched++;
             
-            // If job-related, create job entry
+            // If job-related, create or update job entry
             if (classification.is_job_related) {
-              const jobId = `job_${Date.now()}_${performance.now().toString().replace('.', '_')}_${Math.random().toString(36).substr(2, 9)}`;
-              const jobStmt = getDb().prepare(`
-                INSERT OR IGNORE INTO jobs (id, gmail_message_id, company, position, status, applied_date, account_email, from_address, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              // Create similarity key for deduplication
+              const company = classification.company || 'Unknown';
+              const position = classification.position || 'Unknown Position';
+              const similarityKey = `${company.toLowerCase().replace(/[^a-z0-9]/g, '')}_${position.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+              
+              // Check for existing similar job within 30 days
+              const thirtyDaysAgo = new Date();
+              thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+              
+              const existingJobStmt = getDb().prepare(`
+                SELECT id, status, email_history 
+                FROM jobs 
+                WHERE similarity_key = ? 
+                  AND account_email = ?
+                  AND applied_date > ?
+                ORDER BY applied_date DESC
+                LIMIT 1
               `);
+              
+              const existingJob = existingJobStmt.get(similarityKey, account.email, thirtyDaysAgo.toISOString());
+              
+              if (existingJob) {
+                // Update existing job with new email
+                console.log(`Found existing job for ${company} - ${position}, updating...`);
+                
+                // Parse existing email history
+                let emailHistory = [];
+                try {
+                  emailHistory = JSON.parse(existingJob.email_history || '[]');
+                } catch (e) {
+                  emailHistory = [];
+                }
+                
+                // Add this email to history
+                emailHistory.push({
+                  gmail_message_id: email.id,
+                  date: _extractDate(email),
+                  subject: subject
+                });
+                
+                // Update status if new one is higher priority
+                const statusPriority = { 'Applied': 1, 'Interviewed': 2, 'Declined': 3, 'Offer': 4 };
+                const currentPriority = statusPriority[existingJob.status] || 0;
+                const newStatus = classification.status ? 
+                  (classification.status.toLowerCase().includes('interview') ? 'Interviewed' :
+                   classification.status.toLowerCase().includes('offer') ? 'Offer' :
+                   classification.status.toLowerCase().includes('declined') || classification.status.toLowerCase().includes('reject') ? 'Declined' :
+                   'Applied') : 'Applied';
+                const newPriority = statusPriority[newStatus] || 1;
+                
+                const finalStatus = newPriority > currentPriority ? newStatus : existingJob.status;
+                
+                // Update the job
+                const updateJobStmt = getDb().prepare(`
+                  UPDATE jobs 
+                  SET status = ?,
+                      email_history = ?,
+                      email_content = ?
+                  WHERE id = ?
+                `);
+                
+                updateJobStmt.run(
+                  finalStatus,
+                  JSON.stringify(emailHistory),
+                  emailContent,
+                  existingJob.id
+                );
+                
+                totalJobsFound++;
+                foundJobs.push({
+                  ...existingJob,
+                  status: finalStatus,
+                  updated: true
+                });
+                
+              } else {
+                // Create new job
+                const jobId = `job_${Date.now()}_${performance.now().toString().replace('.', '_')}_${Math.random().toString(36).substr(2, 9)}`;
+                const jobStmt = getDb().prepare(`
+                  INSERT OR IGNORE INTO jobs (id, gmail_message_id, company, position, status, applied_date, account_email, from_address, notes, similarity_key, email_history, email_content)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `);
               
               // Map LLM status to our 4-state system
               let status = 'Applied';
@@ -1298,6 +1565,13 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
                 account_email: account.email
               });
               
+              // Initial email history
+              const emailHistory = [{
+                gmail_message_id: email.id,
+                date: extractedDate,
+                subject: subject
+              }];
+              
               const jobResult = jobStmt.run(
                 jobId,
                 email.id,
@@ -1307,7 +1581,10 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
                 extractedDate,
                 account.email,
                 from,
-                email.snippet || ''
+                email.snippet || '',
+                similarityKey,
+                JSON.stringify(emailHistory),
+                emailContent
               );
               
               console.log('Job insert result:', { changes: jobResult.changes, lastInsertRowid: jobResult.lastInsertRowid });
@@ -1336,6 +1613,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
                   mainWindow.webContents.send('job-found', newJob);
                 }
               }
+              }
             }
           } catch (error) {
             console.error(`Error processing email ${email.id}:`, error);
@@ -1360,6 +1638,27 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     `);
     finalUpdate.run(totalEmailsFetched, totalEmailsClassified, totalJobsFound);
     
+    // Log to sync history
+    const syncEnd = Date.now();
+    const duration = syncEnd - syncStartTime;
+    const historyInsert = getDb().prepare(`
+      INSERT INTO sync_history (
+        accounts_synced, emails_fetched, emails_processed, emails_classified,
+        jobs_found, new_jobs, updated_jobs, duration_ms, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    historyInsert.run(
+      accounts.length,
+      totalEmailsFetched,
+      totalEmailsFetched,
+      totalEmailsClassified,
+      totalJobsFound,
+      totalJobsFound, // For now, assume all are new
+      0, // Updated jobs tracking needs improvement
+      duration,
+      'completed'
+    );
+    
     mainWindow.webContents.send('sync-complete', {
       emailsFetched: totalEmailsFetched,
       emailsClassified: totalEmailsClassified,
@@ -1377,6 +1676,21 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
   } catch (error) {
     console.error('Multi-account sync error:', error);
     throw error;
+  }
+});
+
+// Clear email sync for re-processing
+ipcMain.handle('db:clear-email-sync-only', async () => {
+  try {
+    const result = getDb().prepare('DELETE FROM email_sync').run();
+    console.log(`Cleared ${result.changes} records from email_sync table`);
+    return { 
+      success: true, 
+      message: `Cleared ${result.changes} email sync records` 
+    };
+  } catch (error) {
+    console.error('Error clearing email sync:', error);
+    return { success: false, error: error.message };
   }
 });
 
@@ -1441,6 +1755,32 @@ ipcMain.handle('db:clear-email-sync', async () => {
   } catch (error) {
     console.error('❌ Error clearing email sync history:', error);
     throw error;
+  }
+});
+
+// Get email content for a job
+ipcMain.handle('get-job-email', async (event, jobId) => {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      SELECT email_content, email_history 
+      FROM jobs 
+      WHERE id = ?
+    `);
+    const result = stmt.get(jobId);
+    
+    if (result) {
+      return {
+        success: true,
+        emailContent: result.email_content,
+        emailHistory: JSON.parse(result.email_history || '[]')
+      };
+    } else {
+      return { success: false, error: 'Job not found' };
+    }
+  } catch (error) {
+    console.error('Error fetching job email:', error);
+    return { success: false, error: error.message };
   }
 });
 

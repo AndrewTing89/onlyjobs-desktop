@@ -22,9 +22,11 @@ import {
   CalendarToday,
   Email,
   Search,
-  Refresh
+  Refresh,
+  Visibility
 } from '@mui/icons-material';
 import { LoadingSpinner } from './LoadingSpinner';
+import { EmailViewer } from './EmailViewer';
 
 const accent = "#FF7043";
 
@@ -63,6 +65,8 @@ export default function JobsList() {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [syncStatus, setSyncStatus] = useState<any>(null);
+  const [emailViewerOpen, setEmailViewerOpen] = useState(false);
+  const [viewingJob, setViewingJob] = useState<Job | null>(null);
 
   useEffect(() => {
     loadJobs();
@@ -70,7 +74,6 @@ export default function JobsList() {
     
     // Listen for individual job additions during sync
     const handleJobFound = (newJob: Job) => {
-      console.log('New job found during sync:', newJob);
       setJobs(prevJobs => {
         // Check if job already exists to avoid duplicates
         const existingJob = prevJobs.find(job => job.id === newJob.id);
@@ -143,6 +146,11 @@ export default function JobsList() {
   const handleMenuClose = () => {
     setAnchorEl(null);
     setSelectedJob(null);
+  };
+  
+  const handleViewEmail = (job: Job) => {
+    setViewingJob(job);
+    setEmailViewerOpen(true);
   };
 
   const handleStatusChange = async (newStatus: string) => {
@@ -265,7 +273,6 @@ export default function JobsList() {
               {filteredJobs.map((job, index) => (
                 <ListItem 
                   key={job.id} 
-                  className="animate-card gpu-accelerated"
                   sx={{ 
                     py: 2.5,
                     px: 2,
@@ -276,34 +283,14 @@ export default function JobsList() {
                     opacity: 0,
                     animation: 'staggerFadeInUp 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
                     animationDelay: `${index * 50}ms`,
-                    transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+                    transition: 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94), box-shadow 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
                     position: 'relative',
-                    cursor: 'pointer',
                     '&:hover': {
-                      transform: 'translateX(6px) translateY(-2px)',
-                      boxShadow: '0 4px 16px rgba(255, 112, 67, 0.15)',
-                      borderColor: 'primary.main',
-                      '&::before': {
-                        opacity: 1,
-                        transform: 'scaleX(1)',
-                      },
+                      transform: 'translateX(4px)',
+                      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
                       '& .job-status-chip': {
                         transform: 'scale(1.05)',
                       },
-                    },
-                    '&::before': {
-                      content: '""',
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
-                      width: 4,
-                      backgroundColor: 'primary.main',
-                      borderRadius: '0 3px 3px 0',
-                      opacity: 0,
-                      transform: 'scaleX(0)',
-                      transformOrigin: 'left center',
-                      transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
                     }
                   }}
                 >
@@ -372,12 +359,28 @@ export default function JobsList() {
                     }
                   />
                   <ListItemSecondaryAction>
-                    <IconButton
-                      edge="end"
-                      onClick={(e) => handleMenuOpen(e, job)}
-                    >
-                      <MoreVert />
-                    </IconButton>
+                    <Box sx={{ display: 'flex', gap: 0.5 }}>
+                      <IconButton
+                        onClick={() => handleViewEmail(job)}
+                        size="small"
+                        title="View Email"
+                        sx={{
+                          color: 'primary.main',
+                          '&:hover': {
+                            backgroundColor: 'primary.main',
+                            color: 'white',
+                          }
+                        }}
+                      >
+                        <Visibility />
+                      </IconButton>
+                      <IconButton
+                        edge="end"
+                        onClick={(e) => handleMenuOpen(e, job)}
+                      >
+                        <MoreVert />
+                      </IconButton>
+                    </Box>
                   </ListItemSecondaryAction>
                 </ListItem>
               ))}
@@ -416,6 +419,18 @@ export default function JobsList() {
           Delete
         </MenuItem>
       </Menu>
+
+      {viewingJob && (
+        <EmailViewer
+          open={emailViewerOpen}
+          onClose={() => {
+            setEmailViewerOpen(false);
+            setViewingJob(null);
+          }}
+          jobId={viewingJob.id}
+          jobTitle={`${viewingJob.company} - ${viewingJob.position}`}
+        />
+      )}
 
     </Box>
   );

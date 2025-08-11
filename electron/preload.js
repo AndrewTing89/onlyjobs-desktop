@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Database operations
   getJobs: (filters) => ipcRenderer.invoke('db:get-jobs', filters),
   getJob: (id) => ipcRenderer.invoke('db:get-job', id),
+  getJobEmail: (id) => ipcRenderer.invoke('db:get-job-email', id),
   createJob: (job) => ipcRenderer.invoke('db:create-job', job),
   updateJob: (id, updates) => ipcRenderer.invoke('db:update-job', id, updates),
   deleteJob: (id) => ipcRenderer.invoke('db:delete-job', id),

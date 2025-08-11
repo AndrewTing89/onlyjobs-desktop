@@ -2,6 +2,7 @@ interface ElectronAPI {
   // Database operations
   getJobs: (filters?: any) => Promise<any>;
   getJob: (id: string) => Promise<any>;
+  getJobEmail: (id: string) => Promise<{ success: boolean; emailContent?: string; emailHistory?: any[]; error?: string }>;
   createJob: (job: any) => Promise<any>;
   updateJob: (id: string, updates: any) => Promise<any>;
   deleteJob: (id: string) => Promise<any>;
