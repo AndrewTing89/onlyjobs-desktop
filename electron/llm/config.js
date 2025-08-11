@@ -6,8 +6,10 @@ const path = require("path");
 // Determine if we're in a packaged app and get the correct path
 let defaultPath;
 
-// In Electron, process.resourcesPath is available in packaged apps
-if (process.resourcesPath && !__dirname.includes('node_modules')) {
+// Check if we're in a packaged app by looking for app.asar in the path
+const isPackaged = __dirname.includes('app.asar');
+
+if (isPackaged && process.resourcesPath) {
     // We're in a packaged app - models are in Resources directory
     defaultPath = path.join(process.resourcesPath, "models", "model.gguf");
     console.log('LLM Config: Running in packaged app');
