@@ -34,7 +34,9 @@ async function classifyWithCleanLLM(input) {
     
     const result = await parseEmailWithLLM({
       subject: input.subject || '',
-      plaintext: input.plaintext || ''
+      plaintext: input.plaintext || '',
+      from: input.fromAddress || input.from || '',
+      headers: input.headers || {}
     });
     
     // Convert to expected format and add metadata
