@@ -16,6 +16,7 @@ import {
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import { JobStats } from '../../services/analytics.service';
+import AnimatedCounter from '../AnimatedCounter';
 
 interface QuickStatsProps {
   stats: JobStats;
@@ -36,12 +37,30 @@ function StatCard({ title, value, icon, color, subtitle, trend }: StatCardProps)
 
   return (
     <Card
+      className="animate-card gpu-accelerated"
       sx={{
         height: '100%',
-        transition: 'all 0.2s ease-in-out',
+        transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+        cursor: 'pointer',
+        position: 'relative',
+        overflow: 'hidden',
         '&:hover': {
-          transform: 'translateY(-2px)',
-          boxShadow: theme.shadows[8],
+          transform: 'translateY(-4px)',
+          boxShadow: theme.shadows[12],
+          '&::before': {
+            opacity: 1,
+          },
+        },
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 3,
+          background: `linear-gradient(90deg, ${color}, ${color}80)`,
+          opacity: 0,
+          transition: 'opacity 0.3s ease',
         },
       }}
     >
@@ -81,17 +100,32 @@ function StatCard({ title, value, icon, color, subtitle, trend }: StatCardProps)
           )}
         </Box>
 
-        <Typography
-          variant="h2"
-          sx={{
-            fontWeight: 700,
-            color: theme.palette.text.primary,
-            mb: 0.5,
-            lineHeight: 1.2,
-          }}
-        >
-          {typeof value === 'number' ? value.toLocaleString() : value}
-        </Typography>
+        {typeof value === 'number' ? (
+          <AnimatedCounter
+            value={value}
+            variant="h2"
+            sx={{
+              fontWeight: 700,
+              color: theme.palette.text.primary,
+              mb: 0.5,
+              lineHeight: 1.2,
+            }}
+            duration={1200}
+          />
+        ) : (
+          <AnimatedCounter
+            value={parseFloat(value.replace('%', '')) || 0}
+            variant="h2"
+            suffix="%"
+            sx={{
+              fontWeight: 700,
+              color: theme.palette.text.primary,
+              mb: 0.5,
+              lineHeight: 1.2,
+            }}
+            duration={1200}
+          />
+        )}
 
         <Typography
           variant="body1"
@@ -157,7 +191,14 @@ export default function QuickStats({ stats, weeklyTrend }: QuickStatsProps) {
   return (
     <Grid container spacing={3} sx={{ mb: 4 }}>
       {statCards.map((card, index) => (
-        <Grid size={{ xs: 12, sm: 6, md: 3 }} key={index}>
+        <Grid 
+          size={{ xs: 12, sm: 6, md: 3 }} 
+          key={index}
+          className="stat-card-enter"
+          sx={{
+            animationDelay: `${index * 100}ms`,
+          }}
+        >
           <StatCard {...card} />
         </Grid>
       ))}

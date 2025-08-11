@@ -87,7 +87,17 @@ export default function ApplicationTrends({ data, chartType = 'line' }: Applicat
   };
 
   return (
-    <Card sx={{ height: '100%' }}>
+    <Card 
+      className="chart-container animate-card gpu-accelerated"
+      sx={{ 
+        height: '100%',
+        transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+        '&:hover': {
+          transform: 'translateY(-2px)',
+          boxShadow: theme.shadows[8],
+        },
+      }}
+    >
       <CardContent sx={{ p: 3 }}>
         <Box sx={{ mb: 3 }}>
           <Typography
@@ -110,7 +120,10 @@ export default function ApplicationTrends({ data, chartType = 'line' }: Applicat
           </Typography>
         </Box>
 
-        <Box sx={{ height: 300 }}>
+        <Box 
+          sx={{ height: 300 }}
+          className="chart-loading"
+        >
           <ResponsiveContainer width="100%" height="100%">
             {chartType === 'line' ? (
               <LineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
@@ -134,7 +147,9 @@ export default function ApplicationTrends({ data, chartType = 'line' }: Applicat
                   stroke={chartColors.applications}
                   strokeWidth={3}
                   dot={{ fill: chartColors.applications, r: 4 }}
-                  activeDot={{ r: 6 }}
+                  activeDot={{ r: 8, stroke: chartColors.applications, strokeWidth: 2, fill: theme.palette.background.paper }}
+                  animationDuration={1500}
+                  animationBegin={0}
                 />
                 <Line
                   type="monotone"
@@ -143,6 +158,9 @@ export default function ApplicationTrends({ data, chartType = 'line' }: Applicat
                   stroke={chartColors.interviews}
                   strokeWidth={2}
                   dot={{ fill: chartColors.interviews, r: 3 }}
+                  activeDot={{ r: 6, stroke: chartColors.interviews, strokeWidth: 2, fill: theme.palette.background.paper }}
+                  animationDuration={1500}
+                  animationBegin={200}
                 />
                 <Line
                   type="monotone"
@@ -151,6 +169,9 @@ export default function ApplicationTrends({ data, chartType = 'line' }: Applicat
                   stroke={chartColors.offers}
                   strokeWidth={2}
                   dot={{ fill: chartColors.offers, r: 3 }}
+                  activeDot={{ r: 6, stroke: chartColors.offers, strokeWidth: 2, fill: theme.palette.background.paper }}
+                  animationDuration={1500}
+                  animationBegin={400}
                 />
               </LineChart>
             ) : (
@@ -173,18 +194,24 @@ export default function ApplicationTrends({ data, chartType = 'line' }: Applicat
                   name="Applications"
                   fill={chartColors.applications}
                   radius={[2, 2, 0, 0]}
+                  animationDuration={1200}
+                  animationBegin={0}
                 />
                 <Bar
                   dataKey="interviews"
                   name="Interviews"
                   fill={chartColors.interviews}
                   radius={[2, 2, 0, 0]}
+                  animationDuration={1200}
+                  animationBegin={200}
                 />
                 <Bar
                   dataKey="offers"
                   name="Offers"
                   fill={chartColors.offers}
                   radius={[2, 2, 0, 0]}
+                  animationDuration={1200}
+                  animationBegin={400}
                 />
               </BarChart>
             )}

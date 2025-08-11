@@ -19,6 +19,7 @@ import {
 } from 'recharts';
 import { useTheme } from '@mui/material/styles';
 import { PipelineData } from '../../services/analytics.service';
+import AnimatedProgress from '../AnimatedProgress';
 
 interface PipelineVisualizationProps {
   data: PipelineData[];
@@ -67,18 +68,13 @@ function PipelineStage({ stage, isLast }: PipelineStageProps) {
           </Typography>
         </Box>
       </Box>
-      <LinearProgress
-        variant="determinate"
+      <AnimatedProgress
         value={stage.percentage}
-        sx={{
-          height: 8,
-          borderRadius: 4,
-          backgroundColor: theme.palette.grey[200],
-          '& .MuiLinearProgress-bar': {
-            backgroundColor: stage.color,
-            borderRadius: 4,
-          },
-        }}
+        maxValue={100}
+        color={stage.color}
+        height={10}
+        variant="glow"
+        animationDuration={1500}
       />
     </Box>
   );
@@ -127,6 +123,8 @@ export default function PipelineVisualization({ data, view = 'linear' }: Pipelin
           dataKey="count"
           startAngle={90}
           endAngle={450}
+          animationDuration={1200}
+          animationBegin={300}
         >
           {data.map((entry, index) => (
             <Cell key={`cell-${index}`} fill={entry.color} />
@@ -162,6 +160,8 @@ export default function PipelineVisualization({ data, view = 'linear' }: Pipelin
             dataKey="value"
             data={funnelData}
             isAnimationActive
+            animationDuration={1500}
+            animationBegin={200}
           >
             <LabelList position="center" fill="#fff" stroke="none" />
           </Funnel>
@@ -184,7 +184,17 @@ export default function PipelineVisualization({ data, view = 'linear' }: Pipelin
   );
 
   return (
-    <Card sx={{ height: '100%' }}>
+    <Card 
+      className="chart-container animate-card gpu-accelerated"
+      sx={{ 
+        height: '100%',
+        transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+        '&:hover': {
+          transform: 'translateY(-2px)',
+          boxShadow: theme.shadows[8],
+        },
+      }}
+    >
       <CardContent sx={{ p: 3 }}>
         <Box sx={{ mb: 3 }}>
           <Typography

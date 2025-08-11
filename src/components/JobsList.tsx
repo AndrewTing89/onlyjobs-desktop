@@ -10,7 +10,6 @@ import {
   ListItemText,
   ListItemSecondaryAction,
   IconButton,
-  CircularProgress,
   Alert,
   Menu,
   MenuItem,
@@ -25,6 +24,7 @@ import {
   Search,
   Refresh
 } from '@mui/icons-material';
+import { LoadingSpinner } from './LoadingSpinner';
 
 const accent = "#FF7043";
 
@@ -183,7 +183,7 @@ export default function JobsList() {
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-        <CircularProgress />
+        <LoadingSpinner variant="dots" size="medium" />
       </Box>
     );
   }
@@ -215,7 +215,24 @@ export default function JobsList() {
             placeholder="Search jobs..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            sx={{ mb: 2 }}
+            className="form-input-focus"
+            sx={{ 
+              mb: 2,
+              '& .MuiOutlinedInput-root': {
+                transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+                '&:hover': {
+                  boxShadow: '0 2px 8px rgba(255, 112, 67, 0.1)',
+                },
+                '&.Mui-focused': {
+                  boxShadow: '0 0 0 3px rgba(255, 112, 67, 0.2)',
+                  transform: 'scale(1.01)',
+                },
+              },
+              '& .MuiInputAdornment-root .MuiSvgIcon-root': {
+                transition: 'color 0.3s ease',
+                color: searchTerm ? 'primary.main' : 'text.secondary',
+              },
+            }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -226,7 +243,15 @@ export default function JobsList() {
           />
 
           {error && (
-            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
+            <Alert 
+              severity="error" 
+              className="notification-enter notification-error"
+              sx={{ 
+                mb: 2,
+                transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+              }} 
+              onClose={() => setError('')}
+            >
               {error}
             </Alert>
           )}
@@ -237,16 +262,48 @@ export default function JobsList() {
             </Typography>
           ) : (
             <List sx={{ py: 0 }}>
-              {filteredJobs.map((job) => (
+              {filteredJobs.map((job, index) => (
                 <ListItem 
                   key={job.id} 
+                  className="animate-card gpu-accelerated"
                   sx={{ 
                     py: 2.5,
                     px: 2,
                     borderBottom: '1px solid',
                     borderColor: 'divider',
+                    borderRadius: 1.5,
+                    mb: 0.5,
+                    opacity: 0,
+                    animation: 'staggerFadeInUp 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
+                    animationDelay: `${index * 50}ms`,
+                    transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+                    position: 'relative',
+                    cursor: 'pointer',
                     '&:hover': {
-                      backgroundColor: 'action.hover'
+                      transform: 'translateX(6px) translateY(-2px)',
+                      boxShadow: '0 4px 16px rgba(255, 112, 67, 0.15)',
+                      borderColor: 'primary.main',
+                      '&::before': {
+                        opacity: 1,
+                        transform: 'scaleX(1)',
+                      },
+                      '& .job-status-chip': {
+                        transform: 'scale(1.05)',
+                      },
+                    },
+                    '&::before': {
+                      content: '""',
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: 4,
+                      backgroundColor: 'primary.main',
+                      borderRadius: '0 3px 3px 0',
+                      opacity: 0,
+                      transform: 'scaleX(0)',
+                      transformOrigin: 'left center',
+                      transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
                     }
                   }}
                 >
@@ -281,11 +338,13 @@ export default function JobsList() {
                           <Chip
                             label={job.status}
                             size="small"
+                            className="job-status-chip"
                             sx={{
                               backgroundColor: statusColors[job.status] + '20',
                               color: statusColors[job.status],
                               border: `1px solid ${statusColors[job.status]}40`,
-                              fontWeight: 500
+                              fontWeight: 500,
+                              transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
                             }}
                           />
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>

@@ -151,7 +151,10 @@ export default function Dashboard() {
           </Box>
 
           {/* Main Content */}
-          <Box sx={{ flexGrow: 1, p: 3, pt: 1, overflow: 'auto' }}>
+          <Box 
+            sx={{ flexGrow: 1, p: 3, pt: 1, overflow: 'auto' }}
+            className="page-enter gpu-accelerated"
+          >
             {isElectron ? (
               <>
                 {/* Analytics Overview for Electron */}

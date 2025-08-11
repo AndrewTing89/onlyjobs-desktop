@@ -130,6 +130,47 @@ export const onlyJobsTheme: Theme = createTheme({
           borderRadius: 8,
           textTransform: 'none',
           fontWeight: 500,
+          position: 'relative',
+          overflow: 'hidden',
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          '&:hover': {
+            transform: 'translateY(-1px)',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+          },
+          '&:active': {
+            transform: 'translateY(0)',
+            transition: 'all 0.1s cubic-bezier(0.4, 0, 0.2, 1)',
+          },
+          // Ripple effect enhancement
+          '&::before': {
+            content: '""',
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            width: 0,
+            height: 0,
+            borderRadius: '50%',
+            background: 'currentColor',
+            opacity: 0,
+            transform: 'translate(-50%, -50%)',
+            transition: 'all 0.6s ease-out',
+          },
+          '&:hover::before': {
+            width: '300px',
+            height: '300px',
+            opacity: 0.1,
+          },
+        },
+        contained: {
+          '&:hover': {
+            boxShadow: '0 6px 20px rgba(0, 0, 0, 0.2)',
+          },
+        },
+        outlined: {
+          '&:hover': {
+            borderColor: 'currentColor',
+            backgroundColor: 'rgba(currentColor, 0.04)',
+          },
         },
       },
     },
@@ -138,9 +179,29 @@ export const onlyJobsTheme: Theme = createTheme({
         root: {
           borderRadius: 12,
           boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          position: 'relative',
           '&:hover': {
-            boxShadow: '0 4px 16px rgba(0,0,0,0.12)', 
-          }
+            boxShadow: '0 8px 25px rgba(0,0,0,0.15)',
+            transform: 'translateY(-2px)',
+          },
+          // Subtle glow effect on hover
+          '&::after': {
+            content: '""',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            borderRadius: 12,
+            opacity: 0,
+            background: 'linear-gradient(45deg, rgba(255,112,67,0.1) 0%, rgba(33,150,243,0.1) 100%)',
+            transition: 'opacity 0.3s ease',
+            pointerEvents: 'none',
+          },
+          '&:hover::after': {
+            opacity: 1,
+          },
         },
       },
     },

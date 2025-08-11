@@ -8,7 +8,6 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Alert,
-  CircularProgress,
   CssBaseline,
 } from '@mui/material';
 import { useTheme, ThemeProvider } from '@mui/material/styles';
@@ -23,6 +22,7 @@ import QuickStats from '../components/analytics/QuickStats';
 import ApplicationTrends from '../components/analytics/ApplicationTrends';
 import PipelineVisualization from '../components/analytics/PipelineVisualization';
 import { onlyJobsTheme } from '../theme';
+import { LoadingSpinner } from '../components/LoadingSpinner';
 
 // Import layout components
 import Sidebar from '../components/layout/Sidebar';
@@ -174,7 +174,7 @@ export default function AnalyticsDashboard() {
                   height: '400px',
                 }}
               >
-                <CircularProgress size={48} />
+                <LoadingSpinner variant="professional" size="large" />
               </Box>
             </Box>
           </Box>
@@ -298,7 +298,10 @@ export default function AnalyticsDashboard() {
           </Box>
 
           {/* Main Content */}
-          <Box sx={{ flexGrow: 1, p: 3, pt: 1, overflow: 'auto' }}>
+          <Box 
+            sx={{ flexGrow: 1, p: 3, pt: 1, overflow: 'auto' }}
+            className="page-enter gpu-accelerated"
+          >
             {/* Analytics Dashboard Header */}
             <Box sx={{ mb: 4 }}>
               <Typography

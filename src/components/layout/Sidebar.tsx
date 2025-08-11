@@ -82,24 +82,70 @@ export default function Sidebar({ currentPath = '/' }: SidebarProps) {
       </Toolbar>
       <Divider />
       <List sx={{ px: 2 }}>
-        {sidebarItems.map((item) => (
-          <ListItem key={item.text} disablePadding sx={{ mb: 1 }}>
+        {sidebarItems.map((item, index) => (
+          <ListItem 
+            key={item.text} 
+            disablePadding 
+            sx={{ 
+              mb: 1,
+              opacity: 0,
+              animation: 'slideInLeft 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
+              animationDelay: `${index * 100 + 200}ms`,
+            }}
+            className="list-item-enter"
+          >
             <ListItemButton
               selected={isActive(item.path)}
+              className="interactive-hover gpu-accelerated"
               sx={{
                 borderRadius: 2,
+                transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+                position: 'relative',
+                overflow: 'hidden',
                 '&.Mui-selected': {
                   backgroundColor: theme.palette.primary.main,
                   color: theme.palette.primary.contrastText,
+                  transform: 'translateX(4px)',
+                  boxShadow: '0 2px 8px rgba(255, 112, 67, 0.3)',
                   '& .MuiListItemIcon-root': {
                     color: theme.palette.primary.contrastText,
+                    transform: 'scale(1.1)',
+                  },
+                  '&::before': {
+                    opacity: 1,
+                    transform: 'scaleX(1)',
                   },
                   '&:hover': {
                     backgroundColor: theme.palette.primary.dark,
+                    transform: 'translateX(6px)',
+                    boxShadow: '0 4px 12px rgba(255, 112, 67, 0.4)',
                   },
+                },
+                '&::before': {
+                  content: '""',
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 3,
+                  backgroundColor: theme.palette.primary.main,
+                  borderRadius: '0 2px 2px 0',
+                  opacity: 0,
+                  transform: 'scaleX(0)',
+                  transformOrigin: 'left center',
+                  transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
                 },
                 '&:hover': {
                   backgroundColor: 'rgba(255, 112, 67, 0.08)',
+                  transform: 'translateX(2px)',
+                  '&::before': {
+                    opacity: 0.6,
+                    transform: 'scaleX(1)',
+                  },
+                  '& .MuiListItemIcon-root': {
+                    transform: 'scale(1.05)',
+                    color: theme.palette.primary.main,
+                  },
                 },
               }}
               onClick={() => handleNavigation(item)}
@@ -110,6 +156,7 @@ export default function Sidebar({ currentPath = '/' }: SidebarProps) {
                     ? theme.palette.primary.contrastText
                     : theme.palette.primary.main,
                   minWidth: 40,
+                  transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
                 }}
               >
                 {item.icon}
@@ -119,6 +166,7 @@ export default function Sidebar({ currentPath = '/' }: SidebarProps) {
                 sx={{
                   '& .MuiTypography-root': {
                     fontWeight: isActive(item.path) ? 600 : 500,
+                    transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
                   }
                 }}
               />
