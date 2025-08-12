@@ -135,8 +135,16 @@
       "node_modules/node-llama-cpp/**/*.node",
       "node_modules/**/*.dylib"
     ],
-    "extraResources": [],
-    "compression": "store",
+    "extraResources": [
+      {
+        "from": "models",
+        "to": "models",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "compression": "maximum",
     "npmRebuild": true,
     "nodeGypRebuild": false,
     "buildDependenciesFromSource": false,
