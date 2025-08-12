@@ -171,8 +171,7 @@
       "icon": "assets/icon.icns"
     },
     "win": {
-      "target": "nsis",
-      "icon": "assets/icon.ico"
+      "target": "nsis"
     },
     "linux": {
       "target": "AppImage",
