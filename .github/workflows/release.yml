@@ -41,16 +41,36 @@ jobs:
           CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
-          # Import certificate from secrets
-          echo -n "$APPLE_CERT_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+          # Import certificate from secrets (remove any potential whitespace)
+          echo "$APPLE_CERT_BASE64" | tr -d '\n\r ' | base64 --decode > $CERTIFICATE_PATH
+          
+          # Verify certificate file was created and has content
+          if [ ! -f "$CERTIFICATE_PATH" ]; then
+            echo "Certificate file was not created!"
+            exit 1
+          fi
+          
+          FILE_SIZE=$(stat -f%z "$CERTIFICATE_PATH" 2>/dev/null || stat -c%s "$CERTIFICATE_PATH" 2>/dev/null)
+          echo "Certificate file size: $FILE_SIZE bytes"
+          
+          if [ "$FILE_SIZE" -eq 0 ]; then
+            echo "Certificate file is empty!"
+            echo "Base64 length: ${#APPLE_CERT_BASE64}"
+            echo "First 50 chars: ${APPLE_CERT_BASE64:0:50}"
+            exit 1
+          fi
 
           # Create temporary keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
-          # Import certificate to keychain
-          security import $CERTIFICATE_PATH -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          # Import certificate to keychain with better error handling
+          security import $CERTIFICATE_PATH -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH || {
+            echo "Failed to import certificate. Checking certificate validity..."
+            openssl pkcs12 -in $CERTIFICATE_PATH -passin pass:"$APPLE_CERT_PASSWORD" -info -nokeys 2>&1 | head -20
+            exit 1
+          }
           security list-keychain -d user -s $KEYCHAIN_PATH
 
           # Allow codesign to access keychain
