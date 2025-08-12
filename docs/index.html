@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OnlyJobs Desktop - AI-Powered Job Application Tracker</title>
+    <meta name="description" content="Track your job applications automatically with AI-powered Gmail integration and real-time analytics.">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <span class="logo">OnlyJobs</span>
+            </div>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#how-it-works">How It Works</a>
+                <a href="#download" class="btn-primary">Download</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <h1 class="hero-title">Never Lose Track of a Job Application Again</h1>
+                <p class="hero-subtitle">
+                    OnlyJobs automatically syncs with your Gmail, uses AI to classify job emails, 
+                    and provides real-time analytics - all running locally on your desktop for complete privacy.
+                </p>
+                <div class="hero-buttons">
+                    <button id="downloadBtn" class="btn-download">
+                        <span class="download-icon">↓</span>
+                        <span id="downloadText">Download for Your OS</span>
+                    </button>
+                    <a href="https://github.com/ndting/onlyjobs-desktop" class="btn-secondary">
+                        View on GitHub
+                    </a>
+                </div>
+                <p class="hero-note">Available for macOS and Windows • Free and Open Source</p>
+            </div>
+            <div class="hero-image">
+                <div class="app-preview">
+                    <div class="app-window">
+                        <div class="window-header">
+                            <div class="window-controls">
+                                <span class="control red"></span>
+                                <span class="control yellow"></span>
+                                <span class="control green"></span>
+                            </div>
+                            <span class="window-title">OnlyJobs Desktop</span>
+                        </div>
+                        <div class="window-content">
+                            <div class="demo-dashboard">
+                                <div class="stat-card">
+                                    <div class="stat-number">42</div>
+                                    <div class="stat-label">Applications</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-number">8</div>
+                                    <div class="stat-label">Interviews</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-number">3</div>
+                                    <div class="stat-label">Offers</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <div class="container">
+            <h2 class="section-title">Powerful Features for Job Seekers</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">📧</div>
+                    <h3>Gmail Auto-Sync</h3>
+                    <p>Automatically detects and imports job-related emails from your Gmail inbox. No manual entry needed.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🤖</div>
+                    <h3>AI Classification</h3>
+                    <p>Local ML model categorizes emails as applications, rejections, interviews, or offers automatically.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Real-Time Analytics</h3>
+                    <p>Track application metrics, response rates, and interview conversion with beautiful visualizations.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>100% Private</h3>
+                    <p>All data processing happens locally on your machine. Your job search data never leaves your computer.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🌐</div>
+                    <h3>Multi-Account Support</h3>
+                    <p>Connect multiple Gmail accounts to track applications across different email addresses.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Lightning Fast</h3>
+                    <p>Native desktop app built with Electron for blazing fast performance and instant updates.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works Section -->
+    <section id="how-it-works" class="how-it-works">
+        <div class="container">
+            <h2 class="section-title">How It Works</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <h3>Connect Gmail</h3>
+                    <p>Securely connect your Gmail account with OAuth 2.0</p>
+                </div>
+                <div class="step-arrow">→</div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <h3>AI Scans Emails</h3>
+                    <p>Local AI model identifies and categorizes job-related emails</p>
+                </div>
+                <div class="step-arrow">→</div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <h3>Track Progress</h3>
+                    <p>View your application pipeline and analytics in real-time</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Download Section -->
+    <section id="download" class="download-section">
+        <div class="container">
+            <h2 class="section-title">Download OnlyJobs Desktop</h2>
+            <div class="download-options">
+                <div class="download-card">
+                    <div class="os-icon">🍎</div>
+                    <h3>macOS</h3>
+                    <p>Requires macOS 10.15 or later</p>
+                    <div class="download-buttons">
+                        <a href="#" id="macArmBtn" class="btn-download-small">
+                            Apple Silicon (M1/M2/M3)
+                        </a>
+                        <a href="#" id="macIntelBtn" class="btn-download-small">
+                            Intel Mac
+                        </a>
+                    </div>
+                </div>
+                <div class="download-card">
+                    <div class="os-icon">🪟</div>
+                    <h3>Windows</h3>
+                    <p>Requires Windows 10 or later</p>
+                    <a href="#" id="windowsBtn" class="btn-download-small">
+                        Download for Windows
+                    </a>
+                </div>
+            </div>
+            <p class="download-note">
+                First time installing? You may need to approve the app in your system security settings.
+                <a href="https://github.com/ndting/onlyjobs-desktop/releases" target="_blank">View all releases →</a>
+            </p>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <span class="logo">OnlyJobs</span>
+                    <p>The smart way to track your job applications</p>
+                </div>
+                <div class="footer-links">
+                    <h4>Resources</h4>
+                    <a href="https://github.com/ndting/onlyjobs-desktop">GitHub</a>
+                    <a href="https://github.com/ndting/onlyjobs-desktop/releases">Releases</a>
+                    <a href="https://github.com/ndting/onlyjobs-desktop/issues">Report Issue</a>
+                </div>
+                <div class="footer-links">
+                    <h4>Built With</h4>
+                    <a href="https://www.electronjs.org/">Electron</a>
+                    <a href="https://reactjs.org/">React</a>
+                    <a href="https://www.typescriptlang.org/">TypeScript</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 OnlyJobs Desktop. Open source under MIT License.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="scripts.js"></script>
+</body>
+</html>
