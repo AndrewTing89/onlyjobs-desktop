@@ -135,3 +135,31 @@ functions/
 models/
 *.gguf
 ml-classifier/
+
+# Certificates and signing
+*.cer
+*.p12
+*.certSigningRequest
+developer_id_*.cer
+AppleRootCA.cer
+AppleWWDRCAG3.cer
+DeveloperIDG2CA.cer
+old_certificates/
+credentials/
+entitlements.mac.plist
+
+# Build and signing scripts
+build-production.sh
+sign-*.sh
+fix-*.sh
+notarize.sh
+prepare-release.sh
+old_scripts/
+scripts/export-certs-for-github.sh
+
+# Test and temporary files
+test_sign.txt
+test-installation.sh
+AFTER_RESTART.md
+RELEASING.md
+DISTRIBUTION.md

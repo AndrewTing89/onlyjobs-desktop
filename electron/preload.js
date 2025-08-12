@@ -24,6 +24,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   trainModel: (options) => ipcRenderer.invoke('ml:train-model', options),
   initializeMl: () => ipcRenderer.invoke('ml:initialize'),
   
+  // Prompt management
+  getPrompt: () => ipcRenderer.invoke('prompt:get'),
+  setPrompt: (prompt) => ipcRenderer.invoke('prompt:set', prompt),
+  resetPrompt: () => ipcRenderer.invoke('prompt:reset'),
+  getPromptInfo: () => ipcRenderer.invoke('prompt:info'),
+  
   // Authentication operations
   auth: {
     signIn: () => ipcRenderer.invoke('auth:sign-in'),

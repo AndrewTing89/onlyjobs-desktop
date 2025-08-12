@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const { convert } = require('html-to-text');
 const { getClassifierProvider } = require('./classifier');
 const classifier = getClassifierProvider();
+const { SYSTEM_PROMPT: DEFAULT_SYSTEM_PROMPT } = require('./llm/prompts');
 
 // LLM-only classification handler (no ML, no keyword fallback)
 const llmHandler = {
@@ -1780,6 +1781,100 @@ ipcMain.handle('get-job-email', async (event, jobId) => {
     }
   } catch (error) {
     console.error('Error fetching job email:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Prompt management handlers
+const promptFilePath = path.join(app.getPath('userData'), 'classificationPrompt.txt');
+
+// Get the current prompt (custom or default)
+ipcMain.handle('prompt:get', async () => {
+  try {
+    // Try to read custom prompt
+    try {
+      const customPrompt = await fs.readFile(promptFilePath, 'utf-8');
+      return { success: true, prompt: customPrompt, isCustom: true };
+    } catch (error) {
+      // File doesn't exist, return default prompt
+      return { success: true, prompt: DEFAULT_SYSTEM_PROMPT, isCustom: false };
+    }
+  } catch (error) {
+    console.error('Error getting prompt:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Set a custom prompt
+ipcMain.handle('prompt:set', async (event, prompt) => {
+  try {
+    // Validate prompt
+    if (!prompt || typeof prompt !== 'string') {
+      throw new Error('Invalid prompt: must be a non-empty string');
+    }
+    
+    // Write to file
+    await fs.writeFile(promptFilePath, prompt, 'utf-8');
+    
+    // Clear the LLM session cache to use new prompt
+    if (classifier && classifier.clearCache) {
+      classifier.clearCache();
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error setting prompt:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Reset to default prompt
+ipcMain.handle('prompt:reset', async () => {
+  try {
+    // Delete custom prompt file
+    try {
+      await fs.unlink(promptFilePath);
+    } catch (error) {
+      // File might not exist, that's ok
+    }
+    
+    // Clear the LLM session cache
+    if (classifier && classifier.clearCache) {
+      classifier.clearCache();
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error resetting prompt:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Get prompt info (version, stats, etc.)
+ipcMain.handle('prompt:info', async () => {
+  try {
+    let isCustom = false;
+    let customPromptLength = 0;
+    
+    try {
+      const customPrompt = await fs.readFile(promptFilePath, 'utf-8');
+      isCustom = true;
+      customPromptLength = customPrompt.length;
+    } catch {
+      // No custom prompt
+    }
+    
+    return {
+      success: true,
+      info: {
+        isCustom,
+        defaultPromptLength: DEFAULT_SYSTEM_PROMPT.length,
+        customPromptLength,
+        promptPath: promptFilePath
+      }
+    };
+  } catch (error) {
+    console.error('Error getting prompt info:', error);
     return { success: false, error: error.message };
   }
 });

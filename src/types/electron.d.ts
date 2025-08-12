@@ -48,6 +48,12 @@ declare global {
       trainModel: (options?: any) => Promise<any>;
       initializeMl: () => Promise<any>;
       
+      // Prompt management
+      getPrompt: () => Promise<{ success: boolean; prompt: string; isCustom: boolean }>;
+      setPrompt: (prompt: string) => Promise<{ success: boolean; error?: string }>;
+      resetPrompt: () => Promise<{ success: boolean; prompt: string }>;
+      getPromptInfo: () => Promise<{ success: boolean; modelPath: string; userDataPath: string; promptFilePath: string }>;
+      
       // Event listeners
       onSyncProgress: (callback: (progress: any) => void) => void;
       onSyncComplete: (callback: (result: any) => void) => void;

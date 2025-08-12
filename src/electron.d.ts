@@ -24,6 +24,12 @@ interface ElectronAPI {
   trainModel: (options?: any) => Promise<any>;
   initializeMl: () => Promise<any>;
   
+  // Prompt management
+  getPrompt: () => Promise<{ success: boolean; prompt: string; isCustom: boolean }>;
+  setPrompt: (prompt: string) => Promise<{ success: boolean; error?: string }>;
+  resetPrompt: () => Promise<{ success: boolean; prompt: string }>;
+  getPromptInfo: () => Promise<{ success: boolean; modelPath: string; userDataPath: string; promptFilePath: string }>;
+  
   // Authentication operations
   auth: {
     signIn: () => Promise<any>;

@@ -1,15 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseEmailWithLLM = void 0;
+exports.parseEmailWithLLM = exports.DEFAULT_SYSTEM_PROMPT = void 0;
 const crypto_1 = require("crypto");
 const config_1 = require("./config");
 const rules_1 = require("./rules");
+const fs = require('fs').promises;
+const path = require('path');
+const { app } = require('electron');
+
 // We import lazily since node-llama-cpp is heavy
 let llamaModule = null;
 let loadedSession = null; // LlamaChatSession
 let loadedContext = null; // LlamaContext
 let loadedModel = null; // LlamaModel
 let loadedModelPath = null;
+let currentSystemPrompt = null; // Track current prompt to detect changes
 async function loadLlamaModule() {
     if (llamaModule)
         return llamaModule;
@@ -32,7 +37,8 @@ const schema = {
     required: ["is_job_related", "company", "position", "status"],
     additionalProperties: false,
 };
-const SYSTEM_PROMPT = [
+// Default system prompt (fallback if no custom prompt exists)
+const DEFAULT_SYSTEM_PROMPT = exports.DEFAULT_SYSTEM_PROMPT = [
     "You are an email parser. Output ONLY JSON matching the schema, with no extra text.",
     "Decide if the email is job-related (job application, recruiting, ATS, interview, offer, rejection, etc.).",
     "If not job-related → is_job_related=false, and company=null, position=null, status=null.",
@@ -55,24 +61,59 @@ const SYSTEM_PROMPT = [
     "Input: Subject: Career newsletter\\nBody: Industry news and career advice.",
     '{"is_job_related":false,"company":null,"position":null,"status":null}',
 ].join("\n");
+
+// Load custom prompt or fallback to default
+async function loadSystemPrompt() {
+    try {
+        const promptPath = path.join(app.getPath('userData'), 'classificationPrompt.txt');
+        const customPrompt = await fs.readFile(promptPath, 'utf-8');
+        console.log('LLM: Using custom classification prompt');
+        return customPrompt;
+    } catch (error) {
+        // Custom prompt doesn't exist, use default
+        console.log('LLM: Using default classification prompt');
+        return DEFAULT_SYSTEM_PROMPT;
+    }
+}
 const cache = new Map();
 function makeCacheKey(subject, plaintext) {
     const canonical = subject + "\n" + plaintext.slice(0, 1000);
     return crypto_1.createHash("sha256").update(canonical).digest("hex");
 }
 async function ensureSession(modelPath) {
-    if (loadedSession && loadedModelPath === modelPath)
+    // Load the current system prompt
+    const systemPrompt = await loadSystemPrompt();
+    
+    // Check if we need to recreate session due to prompt change
+    if (loadedSession && loadedModelPath === modelPath && currentSystemPrompt === systemPrompt) {
         return loadedSession;
+    }
+    
+    // If only the prompt changed, we can reuse the model and context
+    if (loadedModel && loadedContext && loadedModelPath === modelPath && currentSystemPrompt !== systemPrompt) {
+        console.log('LLM: Prompt changed, recreating session with new prompt...');
+        const sequence = loadedContext.getSequence();
+        const module = await loadLlamaModule();
+        const { LlamaChatSession } = module;
+        loadedSession = new LlamaChatSession({ 
+            contextSequence: sequence, 
+            systemPrompt: systemPrompt
+        });
+        currentSystemPrompt = systemPrompt;
+        loadedModelPath = modelPath;
+        console.log('LLM: Session recreated with updated prompt');
+        return loadedSession;
+    }
     
     console.log('LLM: Loading model from:', modelPath);
-    const fs = require('fs');
+    const fsSync = require('fs');
     
     // Check if model file exists
-    if (!fs.existsSync(modelPath)) {
+    if (!fsSync.existsSync(modelPath)) {
         throw new Error(`Model file not found at: ${modelPath}`);
     }
     
-    const stats = fs.statSync(modelPath);
+    const stats = fsSync.statSync(modelPath);
     console.log('LLM: Model file size:', stats.size, 'bytes');
     
     const module = await loadLlamaModule();
@@ -93,11 +134,11 @@ async function ensureSession(modelPath) {
             batchSize: 512 
         });
         
-        console.log('LLM: Context created, creating session...');
+        console.log('LLM: Context created, creating session with prompt...');
         const sequence = loadedContext.getSequence();
         loadedSession = new LlamaChatSession({ 
             contextSequence: sequence, 
-            systemPrompt: SYSTEM_PROMPT 
+            systemPrompt: systemPrompt 
         });
         
         loadedModelPath = modelPath;

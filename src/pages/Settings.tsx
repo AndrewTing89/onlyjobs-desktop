@@ -34,6 +34,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useAuth as useElectronAuth } from "../contexts/ElectronAuthContext";
 import { GmailConnection } from "../components/GmailConnection";
 import { SyncStatus } from "../components/SyncStatus";
+import { PromptEditor } from "../components/PromptEditor";
 
 const useAuthContext = window.electronAPI ? useElectronAuth : useAuth;
 
@@ -293,6 +294,11 @@ export default function Settings() {
                   </Box>
                 </CardContent>
               </Card>
+            )}
+
+            {/* LLM Prompt Editor - Electron Only */}
+            {isElectron && (
+              <PromptEditor isElectron={isElectron} />
             )}
 
             {/* Database Management Section - Electron Only */}
