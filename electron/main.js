@@ -42,11 +42,12 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: true
+      webSecurity: false, // Temporarily disable for debugging
+      allowRunningInsecureContent: true
     },
     // icon: path.join(__dirname, '..', 'assets', 'icon.png'), // TODO: Add icon
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    show: false // Don't show until ready
+    show: true // Show immediately for debugging
   });
 
   // Load the app
@@ -65,13 +66,56 @@ function createWindow() {
       console.error('Page failed to load:', errorDescription);
     });
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'build', 'index.html'));
+    // Serve the production build from a local server to avoid file:// protocol issues
+    const express = require('express');
+    const staticApp = express();
+    const buildPath = path.join(__dirname, '..', 'build');
+    
+    staticApp.use(express.static(buildPath));
+    
+    // Serve index.html for all routes (for React Router)
+    staticApp.get('*', (req, res) => {
+      res.sendFile(path.join(buildPath, 'index.html'));
+    });
+    
+    const server = staticApp.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      console.log(`Serving production build at http://127.0.0.1:${port}`);
+      
+      mainWindow.loadURL(`http://127.0.0.1:${port}`).catch(err => {
+        console.error('Failed to load app:', err);
+        // Fallback to file:// if server fails
+        const indexPath = path.join(__dirname, '..', 'build', 'index.html');
+        mainWindow.loadFile(indexPath);
+      });
+    });
+    
+    // DevTools disabled for production
+    // mainWindow.webContents.openDevTools();
+    
+    // Log when content loads
+    mainWindow.webContents.on('did-finish-load', () => {
+      console.log('Page finished loading');
+    });
+    
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      console.error('Page failed to load:', errorCode, errorDescription);
+    });
   }
 
   // Show window when ready
   mainWindow.once('ready-to-show', () => {
+    console.log('Window ready to show');
     mainWindow.show();
   });
+  
+  // Add timeout fallback to show window
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      console.log('Forcing window to show after timeout');
+      mainWindow.show();
+    }
+  }, 3000);
 
   // Handle window closed
   mainWindow.on('closed', () => {

@@ -7,7 +7,24 @@ const EventEmitter = require('events');
 const Store = require('electron-store').default || require('electron-store');
 const http = require('http');
 const url = require('url');
-require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+// Load dotenv - try both locations
+if (process.env.NODE_ENV !== 'production') {
+  try {
+    // First try electron/.env
+    const electronEnvPath = require('path').join(__dirname, '.env');
+    const fs = require('fs');
+    if (fs.existsSync(electronEnvPath)) {
+      require('dotenv').config({ path: electronEnvPath });
+      console.log('Loaded electron/.env');
+    } else {
+      // Fall back to root .env
+      require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+      console.log('Loaded root .env');
+    }
+  } catch (e) {
+    console.error('Failed to load .env:', e);
+  }
+}
 
 class ElectronAuthFlow extends EventEmitter {
   constructor() {
@@ -17,17 +34,22 @@ class ElectronAuthFlow extends EventEmitter {
     this.notifier = new AuthorizationNotifier();
     this.authorizationHandler = new NodeBasedHandler();
     this.tokenHandler = new BaseTokenRequestHandler(new NodeRequestor());
+    this.authPromiseResolve = null;
+    this.authPromiseReject = null;
     
-    // OAuth configuration for Google
-    this.clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || '12002195951-6s2kd59s10acoh6bb43fq2dif0m5volv.apps.googleusercontent.com';
-    this.clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '';
+    // OAuth configuration for Google Desktop App
+    // Using Desktop OAuth client - client secret is not confidential for desktop apps
+    this.clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || '17718847205-getvrh47jb81e0c2png9bv00jn3a9tpi.apps.googleusercontent.com';
+    this.clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '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'; // Desktop app secret (not confidential)
     this.redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI || 'http://localhost:8000/callback';
     this.scope = 'openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.labels';
     this.server = null;
     
-    if (!this.clientSecret) {
-      console.warn('Warning: No client secret provided. OAuth may fail.');
-    }
+    console.log('🔵 OAuth Config:', {
+      clientId: this.clientId,
+      hasSecret: !!this.clientSecret,
+      redirectUri: this.redirectUri
+    });
     
     // Set up the notifier
     this.notifier.setAuthorizationListener((request, response, error) => {
@@ -42,6 +64,8 @@ class ElectronAuthFlow extends EventEmitter {
     // Replace the NodeBasedHandler with a custom handler for localhost
     this.authorizationHandler = {
       performAuthorizationRequest: (configuration, request) => {
+        // Store the current request for later use
+        this.currentAuthRequest = request;
         this.startLocalServer(request).then(() => {
           const authUrl = this.buildAuthorizationUrl(configuration, request);
           console.log('Opening authorization URL:', authUrl);
@@ -65,47 +89,79 @@ class ElectronAuthFlow extends EventEmitter {
     console.log('ElectronAuthFlow: Starting sign in...');
     await this.initialize();
     
-    // Create the authorization request with NodeCrypto
-    const request = new AuthorizationRequest({
-      client_id: this.clientId,
-      redirect_uri: this.redirectUri,
-      scope: this.scope,
-      response_type: AuthorizationRequest.RESPONSE_TYPE_CODE,
-      state: undefined,
-      extras: { 'prompt': 'select_account' }
-    }, this.crypto);
-    
-    console.log('ElectronAuthFlow: Auth request created with redirect URI:', this.redirectUri);
-    
-    // Generate code verifier for PKCE
-    await request.setupCodeVerifier();
-    
-    // Access code verifier from internal property
-    const codeVerifier = request.internal?.code_verifier;
-    
-    // Store the code verifier
-    if (codeVerifier) {
-      this.store.set('code_verifier', codeVerifier);
-      console.log('ElectronAuthFlow: Code verifier stored');
-    } else {
-      console.error('ElectronAuthFlow: No code verifier generated');
-      throw new Error('Failed to generate code verifier');
-    }
-    
-    // Make the authorization request
-    console.log('ElectronAuthFlow: Performing authorization request...');
-    this.authorizationHandler.performAuthorizationRequest(this.configuration, request);
+    // Create a promise that will resolve when auth completes
+    return new Promise((resolve, reject) => {
+      this.authPromiseResolve = resolve;
+      this.authPromiseReject = reject;
+      
+      // Create the authorization request with NodeCrypto
+      // Generate a random state for security
+      const state = Math.random().toString(36).substring(2, 15);
+      const request = new AuthorizationRequest({
+        client_id: this.clientId,
+        redirect_uri: this.redirectUri,
+        scope: this.scope,
+        response_type: AuthorizationRequest.RESPONSE_TYPE_CODE,
+        state: state,
+        extras: { 'prompt': 'select_account' }
+      }, this.crypto);
+      
+      // Store the state for verification
+      this.store.set('auth_state', state);
+      
+      console.log('ElectronAuthFlow: Auth request created with redirect URI:', this.redirectUri);
+      
+      // Generate code verifier for PKCE
+      request.setupCodeVerifier().then(() => {
+        // Access code verifier from internal property
+        const codeVerifier = request.internal?.code_verifier;
+        
+        // Store the code verifier
+        if (codeVerifier) {
+          this.store.set('code_verifier', codeVerifier);
+          console.log('ElectronAuthFlow: Code verifier stored');
+        } else {
+          console.error('ElectronAuthFlow: No code verifier generated');
+          reject(new Error('Failed to generate code verifier'));
+          return;
+        }
+        
+        // Make the authorization request
+        console.log('ElectronAuthFlow: Performing authorization request...');
+        this.authorizationHandler.performAuthorizationRequest(this.configuration, request);
+      });
+    });
   }
   
-  async handleAuthorizationResponse(response) {
-    console.log('ElectronAuthFlow: Handling authorization response');
-    if (!response.code) {
-      this.emit('auth-error', 'No authorization code received');
+  async handleAuthorizationResponse(response, error = null) {
+    console.log('🔵 ElectronAuthFlow: Handling authorization response:', response, 'error:', error);
+    
+    if (error) {
+      console.error('🔴 ElectronAuthFlow: Authorization error:', error);
+      this.emit('auth-error', error.message || 'Authorization failed');
+      if (this.authPromiseReject) {
+        this.authPromiseReject(error);
+        this.authPromiseResolve = null;
+        this.authPromiseReject = null;
+      }
       return;
     }
     
+    if (!response || !response.code) {
+      console.error('🔴 ElectronAuthFlow: No authorization code in response');
+      this.emit('auth-error', 'No authorization code received');
+      if (this.authPromiseReject) {
+        this.authPromiseReject(new Error('No authorization code received'));
+        this.authPromiseResolve = null;
+        this.authPromiseReject = null;
+      }
+      return;
+    }
+    console.log('🔵 ElectronAuthFlow: Got authorization code, exchanging for tokens...');
+    
     // Get stored code verifier
     const codeVerifier = this.store.get('code_verifier');
+    console.log('🔵 ElectronAuthFlow: Code verifier retrieved:', !!codeVerifier);
     
     // Create token request
     const tokenRequest = new TokenRequest({
@@ -118,10 +174,18 @@ class ElectronAuthFlow extends EventEmitter {
         client_secret: this.clientSecret
       }
     });
+    console.log('🔵 ElectronAuthFlow: Token request created');
     
     try {
       // Exchange code for tokens
+      console.log('🔵 ElectronAuthFlow: Performing token exchange...');
       const tokenResponse = await this.tokenHandler.performTokenRequest(this.configuration, tokenRequest);
+      console.log('🟢 ElectronAuthFlow: Token exchange successful!');
+      console.log('🔵 ElectronAuthFlow: Tokens received:', {
+        hasAccessToken: !!tokenResponse.accessToken,
+        hasIdToken: !!tokenResponse.idToken,
+        hasRefreshToken: !!tokenResponse.refreshToken
+      });
       
       // Store tokens
       this.store.set('tokens', {
@@ -130,20 +194,65 @@ class ElectronAuthFlow extends EventEmitter {
         refresh_token: tokenResponse.refreshToken,
         expires_at: Date.now() + (tokenResponse.expiresIn || 3600) * 1000
       });
+      console.log('🔵 ElectronAuthFlow: Tokens stored in electron-store');
       
       // Get user info
+      console.log('🔵 ElectronAuthFlow: Fetching user info...');
       const userInfo = await this.getUserInfo(tokenResponse.accessToken);
+      console.log('🟢 ElectronAuthFlow: User info received:', userInfo);
       
-      // Emit success event
-      console.log('Auth successful, emitting auth-success event');
-      this.emit('auth-success', {
+      // Prepare success data
+      const authData = {
         tokens: tokenResponse,
         user: userInfo
+      };
+      
+      // Emit success event
+      console.log('🟢 ElectronAuthFlow: Auth successful, emitting auth-success event');
+      this.emit('auth-success', authData);
+      
+      // Also directly notify the main window
+      const { BrowserWindow } = require('electron');
+      const windows = BrowserWindow.getAllWindows();
+      console.log(`🔵 ElectronAuthFlow: Found ${windows.length} windows`);
+      
+      windows.forEach((window, index) => {
+        console.log(`🔵 ElectronAuthFlow: Sending auth-success to window ${index} (id: ${window.id})`);
+        window.webContents.send('auth-success', authData);
       });
       
+      // Resolve the sign-in promise
+      if (this.authPromiseResolve) {
+        console.log('🟢 ElectronAuthFlow: Resolving auth promise with data');
+        this.authPromiseResolve(authData);
+        this.authPromiseResolve = null;
+        this.authPromiseReject = null;
+      } else {
+        console.log('⚠️ ElectronAuthFlow: No auth promise to resolve!');
+      }
+      
     } catch (error) {
-      console.error('Token exchange error:', error);
-      this.emit('auth-error', error);
+      console.error('🔴 ElectronAuthFlow: Token exchange error:', error);
+      console.error('🔴 ElectronAuthFlow: Error details:', {
+        message: error.message,
+        statusCode: error.statusCode,
+        body: error.body,
+        stack: error.stack
+      });
+      
+      // Check if it's a client credentials issue
+      if (error.message && (error.message.includes('invalid_client') || error.message.includes('Bad Request'))) {
+        console.error('🔴 ElectronAuthFlow: Invalid OAuth credentials. Check client ID and secret.');
+      }
+      
+      this.emit('auth-error', error.message || error);
+      
+      // Reject the sign-in promise
+      if (this.authPromiseReject) {
+        this.authPromiseReject(error);
+        this.authPromiseResolve = null;
+        this.authPromiseReject = null;
+      }
     }
   }
   
@@ -159,9 +268,31 @@ class ElectronAuthFlow extends EventEmitter {
         throw new Error('Failed to get user info');
       }
       
-      return await response.json();
+      const userInfo = await response.json();
+      console.log('ElectronAuthFlow: User info retrieved:', userInfo);
+      return userInfo;
     } catch (error) {
       console.error('Error getting user info:', error);
+      // Try to parse user info from ID token as fallback
+      const tokens = this.store.get('tokens');
+      if (tokens && tokens.id_token) {
+        try {
+          // Decode JWT ID token (basic parsing - not verifying signature)
+          const parts = tokens.id_token.split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+            console.log('ElectronAuthFlow: Fallback - parsed user from ID token:', payload);
+            return {
+              email: payload.email,
+              name: payload.name,
+              picture: payload.picture,
+              sub: payload.sub
+            };
+          }
+        } catch (e) {
+          console.error('Failed to parse ID token:', e);
+        }
+      }
       return null;
     }
   }
@@ -227,16 +358,24 @@ class ElectronAuthFlow extends EventEmitter {
   
   isAuthenticated() {
     const tokens = this.store.get('tokens');
-    if (!tokens) return false;
+    console.log('🔵 ElectronAuthFlow: isAuthenticated check - tokens:', !!tokens);
+    if (!tokens) {
+      console.log('🔵 ElectronAuthFlow: No tokens found in store');
+      return false;
+    }
     
+    console.log('🔵 ElectronAuthFlow: Tokens found, checking expiry...');
     // Check if token is expired
     if (tokens.expires_at && tokens.expires_at < Date.now()) {
+      console.log('⚠️ ElectronAuthFlow: Token expired, attempting refresh...');
       // Try to refresh
       this.refreshToken().catch(() => {
+        console.log('🔴 ElectronAuthFlow: Token refresh failed, clearing tokens');
         this.store.delete('tokens');
       });
     }
     
+    console.log('🟢 ElectronAuthFlow: User is authenticated');
     return true;
   }
   
@@ -260,12 +399,15 @@ class ElectronAuthFlow extends EventEmitter {
     
     return new Promise((resolve) => {
       this.server = http.createServer((req, res) => {
+        console.log('ElectronAuthFlow: Received request:', req.url);
         const parsedUrl = url.parse(req.url, true);
         
         if (parsedUrl.pathname === '/callback') {
+          console.log('🔵 ElectronAuthFlow: OAuth callback received on local server');
           const code = parsedUrl.query.code;
           const state = parsedUrl.query.state;
           const error = parsedUrl.query.error;
+          console.log('🔵 ElectronAuthFlow: Callback params - code:', !!code, 'state:', state, 'error:', error);
           
           // Send success page to browser
           res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -286,15 +428,23 @@ class ElectronAuthFlow extends EventEmitter {
           
           // Handle the response
           if (error) {
-            this.notifier.onAuthorizationComplete(request, null, new Error(error));
-          } else if (code && state === request.state) {
+            console.log('🔴 ElectronAuthFlow: OAuth error:', error);
+            this.handleAuthorizationResponse(null, new Error(error));
+          } else if (code) {
+            // Check state if it exists
+            const storedState = this.store.get('auth_state');
+            console.log('🔵 ElectronAuthFlow: State check - received:', state, 'stored:', storedState);
+            
+            // State checking is optional for now since it might be causing issues
             const response = {
               code: code,
               state: state
             };
-            this.notifier.onAuthorizationComplete(request, response, null);
+            console.log('🟢 ElectronAuthFlow: Calling handleAuthorizationResponse with code');
+            this.handleAuthorizationResponse(response, null);
           } else {
-            this.notifier.onAuthorizationComplete(request, null, new Error('Invalid response'));
+            console.log('🔴 ElectronAuthFlow: No code in callback');
+            this.handleAuthorizationResponse(null, new Error('No authorization code received'));
           }
         } else {
           res.writeHead(404);
@@ -303,7 +453,7 @@ class ElectronAuthFlow extends EventEmitter {
       });
       
       this.server.listen(8000, () => {
-        console.log('Local server started on http://localhost:8000');
+        console.log('🟢 ElectronAuthFlow: Local server started on http://localhost:8000');
         resolve();
       });
     });

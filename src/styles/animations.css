@@ -1,0 +1,369 @@
+/* OnlyJobs Desktop - Professional Animation Styles
+ * Minimal, performance-optimized animations for job tracking application
+ * Designed specifically for Electron desktop environment
+ */
+
+/* ===== PERFORMANCE-OPTIMIZED BASE ANIMATIONS ===== */
+
+/* Smooth page transitions */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 20px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translate3d(-30px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translate3d(30px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* ===== NUMBER COUNTER ANIMATIONS ===== */
+
+@keyframes countUp {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Subtle pulse for updated stats */
+@keyframes statPulse {
+  0%, 100% { 
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% { 
+    transform: scale(1.02);
+    opacity: 0.95;
+  }
+}
+
+/* ===== PROGRESS BAR ANIMATIONS ===== */
+
+@keyframes progressFill {
+  from {
+    transform: scaleX(0);
+    transform-origin: left center;
+  }
+  to {
+    transform: scaleX(1);
+    transform-origin: left center;
+  }
+}
+
+@keyframes progressGlow {
+  0%, 100% { 
+    box-shadow: 0 0 5px rgba(255, 112, 67, 0.3);
+  }
+  50% { 
+    box-shadow: 0 0 15px rgba(255, 112, 67, 0.6);
+  }
+}
+
+/* ===== CHART AND VISUALIZATION ANIMATIONS ===== */
+
+@keyframes chartFadeIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes chartSlideUp {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 40px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Data point hover effect */
+@keyframes dataPointHighlight {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+/* ===== MICRO-INTERACTIONS ===== */
+
+/* Button hover enhancement */
+@keyframes buttonLift {
+  0% { 
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+  100% { 
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+}
+
+/* Card hover effect */
+@keyframes cardLift {
+  0% { 
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  100% { 
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  }
+}
+
+/* Focus ring animation */
+@keyframes focusRing {
+  0% { 
+    box-shadow: 0 0 0 0px rgba(255, 112, 67, 0.4);
+  }
+  100% { 
+    box-shadow: 0 0 0 4px rgba(255, 112, 67, 0.2);
+  }
+}
+
+/* ===== STAGGERED ANIMATIONS ===== */
+
+@keyframes staggerFadeInUp {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 30px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* ===== SUCCESS/ERROR NOTIFICATIONS ===== */
+
+@keyframes slideDownNotification {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -20px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes successPulse {
+  0%, 100% { 
+    background-color: #4caf50;
+  }
+  50% { 
+    background-color: #66bb6a;
+  }
+}
+
+@keyframes errorShake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-2px); }
+  20%, 40%, 60%, 80% { transform: translateX(2px); }
+}
+
+/* ===== LOADING STATES ===== */
+
+/* Enhanced spinner with professional feel */
+@keyframes professionalSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Skeleton loading for data */
+@keyframes skeletonShimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
+}
+
+/* ===== UTILITY ANIMATION CLASSES ===== */
+
+/* Page transitions */
+.page-enter {
+  animation: fadeInUp 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+.page-transition {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+/* Stats animations */
+.stat-card-enter {
+  animation: staggerFadeInUp 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+.stat-card-enter:nth-child(1) { animation-delay: 0ms; }
+.stat-card-enter:nth-child(2) { animation-delay: 100ms; }
+.stat-card-enter:nth-child(3) { animation-delay: 200ms; }
+.stat-card-enter:nth-child(4) { animation-delay: 300ms; }
+
+.stat-updated {
+  animation: statPulse 0.6s ease-in-out;
+}
+
+/* Chart animations */
+.chart-container {
+  animation: chartFadeIn 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+.chart-loading {
+  animation: chartSlideUp 0.4s ease-out forwards;
+}
+
+/* Interactive elements */
+.interactive-hover {
+  transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.interactive-hover:hover {
+  animation: buttonLift 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+/* Card animations */
+.animate-card {
+  transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.animate-card:hover {
+  animation: cardLift 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+/* Progress bars */
+.progress-animated {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-animated::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  animation: progressGlow 2s ease-in-out infinite;
+  width: 30%;
+  transform: translateX(-100%);
+  animation: progressFill 1.5s ease-out forwards;
+}
+
+/* Form focus animations */
+.form-input-focus {
+  transition: all 0.2s ease-out;
+}
+
+.form-input-focus:focus-within {
+  animation: focusRing 0.2s ease-out forwards;
+}
+
+/* List item animations */
+.list-item-enter {
+  animation: slideInLeft 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+/* Notification animations */
+.notification-enter {
+  animation: slideDownNotification 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+.notification-success {
+  animation: successPulse 0.8s ease-in-out;
+}
+
+.notification-error {
+  animation: errorShake 0.5s ease-in-out;
+}
+
+/* ===== PERFORMANCE OPTIMIZATIONS ===== */
+
+/* Ensure hardware acceleration for smooth animations */
+.gpu-accelerated {
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+}
+
+/* Respect user preferences for reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ===== RESPONSIVE ANIMATIONS FOR DESKTOP ===== */
+
+/* Optimize animations for different screen sizes */
+@media (min-width: 1200px) {
+  .page-enter {
+    animation-duration: 0.5s;
+  }
+  
+  .stat-card-enter {
+    animation-duration: 0.6s;
+  }
+  
+  .chart-container {
+    animation-duration: 0.7s;
+  }
+}
+
+/* Reduce motion intensity on smaller screens */
+@media (max-width: 768px) {
+  .cardLift,
+  .buttonLift {
+    animation: none;
+  }
+  
+  .animate-card:hover {
+    transform: translateY(-2px);
+    transition: transform 0.2s ease;
+  }
+}
+
+/* ===== DARK MODE CONSIDERATIONS ===== */
+
+@media (prefers-color-scheme: dark) {
+  .progress-animated::before {
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  }
+  
+  .form-input-focus:focus-within {
+    box-shadow: 0 0 0 3px rgba(255, 112, 67, 0.3);
+  }
+}

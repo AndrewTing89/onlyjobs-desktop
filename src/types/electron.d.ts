@@ -9,8 +9,12 @@ declare global {
       updateJob: (id: string, updates: any) => Promise<any>;
       deleteJob: (id: string) => Promise<any>;
       
+      // Database management operations
+      clearAllRecords: () => Promise<{ success: boolean; message: string; details: any }>;
+      clearEmailSync: () => Promise<{ success: boolean; message: string; recordsDeleted: number }>;
+      
       // Email classification
-      classifyEmail: (content: string) => Promise<any>;
+      classifyEmail: (input: string | { subject: string; plaintext: string }) => Promise<any>;
       
       // Gmail operations
       authenticateGmail: () => Promise<any>;
@@ -43,6 +47,12 @@ declare global {
       isMlReady: () => Promise<any>;
       trainModel: (options?: any) => Promise<any>;
       initializeMl: () => Promise<any>;
+      
+      // Prompt management
+      getPrompt: () => Promise<{ success: boolean; prompt: string; isCustom: boolean }>;
+      setPrompt: (prompt: string) => Promise<{ success: boolean; error?: string }>;
+      resetPrompt: () => Promise<{ success: boolean; prompt: string }>;
+      getPromptInfo: () => Promise<{ success: boolean; modelPath: string; userDataPath: string; promptFilePath: string }>;
       
       // Event listeners
       onSyncProgress: (callback: (progress: any) => void) => void;

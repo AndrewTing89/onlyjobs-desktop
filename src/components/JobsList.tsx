@@ -10,7 +10,6 @@ import {
   ListItemText,
   ListItemSecondaryAction,
   IconButton,
-  CircularProgress,
   Alert,
   Menu,
   MenuItem,
@@ -26,7 +25,8 @@ import {
   Refresh,
   Visibility
 } from '@mui/icons-material';
-import { EmailViewModal } from './EmailViewModal';
+import { LoadingSpinner } from './LoadingSpinner';
+import { EmailViewer } from './EmailViewer';
 
 const accent = "#FF7043";
 
@@ -41,7 +41,6 @@ interface Job {
   salary_range?: string;
   notes?: string;
   email_id?: string;
-  ml_confidence?: number;
   created_at: string;
   updated_at: string;
   account_email?: string;
@@ -50,21 +49,13 @@ interface Job {
 }
 
 const statusColors: Record<string, string> = {
-  active: '#4CAF50',
-  applied: '#2196F3',
-  interviewing: '#FF9800',
-  offered: '#9C27B0',
-  rejected: '#F44336',
-  withdrawn: '#9E9E9E'
+  Applied: '#2196F3',
+  Interviewed: '#FF9800', 
+  Offer: '#9C27B0',
+  Declined: '#F44336'
 };
 
-const jobTypeLabels: Record<string, string> = {
-  application_sent: 'Applied',
-  interview: 'Interview',
-  offer: 'Offer',
-  rejection: 'Rejected',
-  follow_up: 'Follow-up'
-};
+// Job type labels are no longer needed since we use status directly
 
 export default function JobsList() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -74,22 +65,53 @@ export default function JobsList() {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [syncStatus, setSyncStatus] = useState<any>(null);
-  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailViewerOpen, setEmailViewerOpen] = useState(false);
   const [viewingJob, setViewingJob] = useState<Job | null>(null);
 
   useEffect(() => {
     loadJobs();
     loadSyncStatus();
     
-    // Listen for new jobs
-    const handleJobFound = (job: Job) => {
-      setJobs(prev => [job, ...prev]);
+    // Listen for individual job additions during sync
+    const handleJobFound = (newJob: Job) => {
+      setJobs(prevJobs => {
+        // Check if job already exists to avoid duplicates
+        const existingJob = prevJobs.find(job => job.id === newJob.id);
+        if (existingJob) {
+          return prevJobs;
+        }
+        
+        // Insert the new job and maintain proper date ordering (newest first)
+        const updatedJobs = [...prevJobs, newJob];
+        return updatedJobs.sort((a, b) => {
+          // First sort by applied_date (newest first)
+          const dateA = new Date(a.applied_date);
+          const dateB = new Date(b.applied_date);
+          if (dateB.getTime() !== dateA.getTime()) {
+            return dateB.getTime() - dateA.getTime();
+          }
+          // If dates are equal, sort by created_at (newest first)
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+      });
+    };
+    
+    // Listen for sync completion and reload jobs (as backup)
+    const handleSyncComplete = () => {
+      console.log('Sync completed, reloading jobs from database');
+      loadJobs();
+      loadSyncStatus();
     };
     
     window.electronAPI.on('job-found', handleJobFound);
+    window.electronAPI.onSyncComplete(handleSyncComplete);
     
     return () => {
-      window.electronAPI.removeListener('job-found', handleJobFound);
+      // Clean up listeners if they exist
+      if (window.electronAPI.removeListener) {
+        window.electronAPI.removeListener('job-found', handleJobFound);
+        window.electronAPI.removeListener('sync-complete', handleSyncComplete);
+      }
     };
   }, []);
 
@@ -125,6 +147,11 @@ export default function JobsList() {
     setAnchorEl(null);
     setSelectedJob(null);
   };
+  
+  const handleViewEmail = (job: Job) => {
+    setViewingJob(job);
+    setEmailViewerOpen(true);
+  };
 
   const handleStatusChange = async (newStatus: string) => {
     if (!selectedJob) return;
@@ -154,31 +181,17 @@ export default function JobsList() {
     handleMenuClose();
   };
 
-  const handleViewEmail = async (job: Job) => {
-    // Always fetch the full job details to ensure we have the email content
-    try {
-      const fullJob = await window.electronAPI.getJob(job.id);
-      console.log('Fetched job details:', fullJob); // Debug log
-      console.log('Raw content exists:', !!fullJob?.raw_content);
-      console.log('Raw content length:', fullJob?.raw_content?.length);
-      console.log('Raw content preview:', fullJob?.raw_content?.substring(0, 100));
-      setViewingJob(fullJob);
-    } catch (error) {
-      console.error('Error fetching job details:', error);
-      setViewingJob(job);
-    }
-    setEmailModalOpen(true);
-  };
+  // Email viewing removed since we no longer store raw content
 
   const filteredJobs = jobs.filter(job => 
-    job.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    job.position.toLowerCase().includes(searchTerm.toLowerCase())
+    (job.company || 'Unknown Company').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (job.position || 'Unknown Position').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-        <CircularProgress />
+        <LoadingSpinner variant="dots" size="medium" />
       </Box>
     );
   }
@@ -210,7 +223,24 @@ export default function JobsList() {
             placeholder="Search jobs..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            sx={{ mb: 2 }}
+            className="form-input-focus"
+            sx={{ 
+              mb: 2,
+              '& .MuiOutlinedInput-root': {
+                transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+                '&:hover': {
+                  boxShadow: '0 2px 8px rgba(255, 112, 67, 0.1)',
+                },
+                '&.Mui-focused': {
+                  boxShadow: '0 0 0 3px rgba(255, 112, 67, 0.2)',
+                  transform: 'scale(1.01)',
+                },
+              },
+              '& .MuiInputAdornment-root .MuiSvgIcon-root': {
+                transition: 'color 0.3s ease',
+                color: searchTerm ? 'primary.main' : 'text.secondary',
+              },
+            }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -221,7 +251,15 @@ export default function JobsList() {
           />
 
           {error && (
-            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
+            <Alert 
+              severity="error" 
+              className="notification-enter notification-error"
+              sx={{ 
+                mb: 2,
+                transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+              }} 
+              onClose={() => setError('')}
+            >
               {error}
             </Alert>
           )}
@@ -232,7 +270,7 @@ export default function JobsList() {
             </Typography>
           ) : (
             <List sx={{ py: 0 }}>
-              {filteredJobs.map((job) => (
+              {filteredJobs.map((job, index) => (
                 <ListItem 
                   key={job.id} 
                   sx={{ 
@@ -240,8 +278,19 @@ export default function JobsList() {
                     px: 2,
                     borderBottom: '1px solid',
                     borderColor: 'divider',
+                    borderRadius: 1.5,
+                    mb: 0.5,
+                    opacity: 0,
+                    animation: 'staggerFadeInUp 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
+                    animationDelay: `${index * 50}ms`,
+                    transition: 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94), box-shadow 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+                    position: 'relative',
                     '&:hover': {
-                      backgroundColor: 'action.hover'
+                      transform: 'translateX(4px)',
+                      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+                      '& .job-status-chip': {
+                        transform: 'scale(1.05)',
+                      },
                     }
                   }}
                 >
@@ -252,11 +301,11 @@ export default function JobsList() {
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                             <Business sx={{ fontSize: 18, color: accent }} />
                             <Typography variant="h6" sx={{ fontSize: '1.1rem', fontWeight: 500 }}>
-                              {job.company}
+                              {job.company || 'Unknown Company'}
                             </Typography>
                           </Box>
                           <Typography variant="body1" color="text.secondary">
-                            {job.position}
+                            {job.position || 'Unknown Position'}
                           </Typography>
                         </Box>
                         {job.from_address && (
@@ -276,36 +325,28 @@ export default function JobsList() {
                           <Chip
                             label={job.status}
                             size="small"
+                            className="job-status-chip"
                             sx={{
                               backgroundColor: statusColors[job.status] + '20',
                               color: statusColors[job.status],
                               border: `1px solid ${statusColors[job.status]}40`,
-                              fontWeight: 500
+                              fontWeight: 500,
+                              transition: 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
                             }}
                           />
-                          {job.job_type && (
-                            <Chip
-                              label={jobTypeLabels[job.job_type] || job.job_type}
-                              size="small"
-                              variant="outlined"
-                              color="primary"
-                            />
-                          )}
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                             <CalendarToday sx={{ fontSize: 16, color: 'text.secondary' }} />
                             <Typography variant="body2" color="text.secondary">
-                              {new Date(job.applied_date).toLocaleDateString('en-US', {
-                                month: 'short',
-                                day: 'numeric',
-                                year: 'numeric'
-                              })}
+                              {job.applied_date && !isNaN(new Date(job.applied_date).getTime()) 
+                                ? new Date(job.applied_date).toLocaleDateString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    year: 'numeric'
+                                  })
+                                : 'No date'
+                              }
                             </Typography>
                           </Box>
-                          {job.ml_confidence && (
-                            <Typography variant="body2" color="text.secondary">
-                              {Math.round(job.ml_confidence * 100)}% match
-                            </Typography>
-                          )}
                         </Box>
                         {job.account_email && (
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
@@ -318,12 +359,18 @@ export default function JobsList() {
                     }
                   />
                   <ListItemSecondaryAction>
-                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Box sx={{ display: 'flex', gap: 0.5 }}>
                       <IconButton
-                        edge="end"
                         onClick={() => handleViewEmail(job)}
+                        size="small"
                         title="View Email"
-                        sx={{ mr: 1 }}
+                        sx={{
+                          color: 'primary.main',
+                          '&:hover': {
+                            backgroundColor: 'primary.main',
+                            color: 'white',
+                          }
+                        }}
                       >
                         <Visibility />
                       </IconButton>
@@ -373,17 +420,18 @@ export default function JobsList() {
         </MenuItem>
       </Menu>
 
-      {emailModalOpen && viewingJob && (
-        <EmailViewModal
-          open={emailModalOpen}
+      {viewingJob && (
+        <EmailViewer
+          open={emailViewerOpen}
           onClose={() => {
-            setEmailModalOpen(false);
+            setEmailViewerOpen(false);
             setViewingJob(null);
           }}
-          emailContent={viewingJob.raw_content || ''}
-          job={viewingJob}
+          jobId={viewingJob.id}
+          jobTitle={`${viewingJob.company} - ${viewingJob.position}`}
         />
       )}
+
     </Box>
   );
 }

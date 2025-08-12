@@ -2,18 +2,33 @@ interface ElectronAPI {
   // Database operations
   getJobs: (filters?: any) => Promise<any>;
   getJob: (id: string) => Promise<any>;
+  getJobEmail: (id: string) => Promise<{ success: boolean; emailContent?: string; emailHistory?: any[]; error?: string }>;
   createJob: (job: any) => Promise<any>;
   updateJob: (id: string, updates: any) => Promise<any>;
   deleteJob: (id: string) => Promise<any>;
   
+  // Database management operations
+  clearAllRecords: () => Promise<{ success: boolean; message: string; details: any }>;
+  clearEmailSync: () => Promise<{ success: boolean; message: string; recordsDeleted: number }>;
+  
+  // Email operations for compatibility
+  getJobInbox?: (jobId: string) => Promise<any>;
+  getEmailDetail?: (emailId: string) => Promise<any>;
+  
   // Email classification
-  classifyEmail: (content: string) => Promise<any>;
+  classifyEmail: (input: string | { subject: string; plaintext: string }) => Promise<any>;
   
   // ML Model operations
   getMlStatus: () => Promise<any>;
   isMlReady: () => Promise<any>;
   trainModel: (options?: any) => Promise<any>;
   initializeMl: () => Promise<any>;
+  
+  // Prompt management
+  getPrompt: () => Promise<{ success: boolean; prompt: string; isCustom: boolean }>;
+  setPrompt: (prompt: string) => Promise<{ success: boolean; error?: string }>;
+  resetPrompt: () => Promise<{ success: boolean; prompt: string }>;
+  getPromptInfo: () => Promise<{ success: boolean; modelPath: string; userDataPath: string; promptFilePath: string }>;
   
   // Authentication operations
   auth: {

@@ -30,7 +30,6 @@ interface EmailViewModalProps {
     from_address?: string;
     applied_date: string;
     job_type?: string;
-    ml_confidence?: number;
     raw_content?: string; // Add this field
   };
 }
@@ -122,11 +121,11 @@ export const EmailViewModal: React.FC<EmailViewModalProps> = ({
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 1 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <BusinessIcon fontSize="small" color="action" />
-              <Typography variant="subtitle1">{job.company}</Typography>
+              <Typography variant="subtitle1">{job.company || 'Unknown Company'}</Typography>
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <WorkIcon fontSize="small" color="action" />
-              <Typography variant="subtitle1">{job.position}</Typography>
+              <Typography variant="subtitle1">{job.position || 'Unknown Position'}</Typography>
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <CalendarTodayIcon fontSize="small" color="action" />
@@ -144,13 +143,6 @@ export const EmailViewModal: React.FC<EmailViewModalProps> = ({
               label={job.job_type.replace('_', ' ')}
               size="small"
               sx={{ mr: 1 }}
-            />
-          )}
-          {job.ml_confidence && (
-            <Chip
-              label={`${Math.round(job.ml_confidence * 100)}% confidence`}
-              size="small"
-              variant="outlined"
             />
           )}
         </Paper>

@@ -19,7 +19,6 @@ const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const GmailCallback = lazy(() => import('./pages/GmailCallback'));
 const OAuthTest = lazy(() => import('./pages/OAuthTest'));
 const ElectronOAuthSuccess = lazy(() => import('./pages/ElectronOAuthSuccess'));
-const MLTestPage = lazy(() => import('./pages/MLTestPage'));
 const TestIPC = lazy(() => import('./pages/TestIPC'));
 const ElectronBridge = lazy(() => import('./pages/ElectronBridge'));
 const ElectronAuth = lazy(() => import('./pages/ElectronAuth'));
@@ -80,14 +79,6 @@ function App() {
               }
             />
             
-            <Route
-              path="/ml-test"
-              element={
-                <ProtectedRoute>
-                  <MLTestPage />
-                </ProtectedRoute>
-              }
-            />
             
             <Route
               path="/test-ipc"

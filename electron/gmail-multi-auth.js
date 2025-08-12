@@ -44,15 +44,19 @@ class GmailMultiAuth extends EventEmitter {
       
       console.log('GmailMultiAuth: Initializing database at:', dbPath);
       this.db = new Database(dbPath);
+      
+      // Initialize gmail_accounts table schema
+      this.initializeDatabaseSchema();
+      
       console.log('GmailMultiAuth: Database initialized successfully');
     } catch (error) {
       console.error('GmailMultiAuth: Failed to initialize database:', error);
       throw error;
     }
     
-    // Gmail OAuth configuration
-    this.clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || '12002195951-6s2kd59s10acoh6bb43fq2dif0m5volv.apps.googleusercontent.com';
-    this.clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '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';
+    // Gmail OAuth configuration - Using the same Desktop OAuth credentials
+    this.clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || '17718847205-getvrh47jb81e0c2png9bv00jn3a9tpi.apps.googleusercontent.com';
+    this.clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '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';
     this.redirectUri = 'http://127.0.0.1:8001/gmail-callback';
     this.server = null;
     
@@ -65,6 +69,32 @@ class GmailMultiAuth extends EventEmitter {
     
     // OAuth clients per account
     this.oauthClients = new Map();
+  }
+  
+  // Initialize database schema for gmail_accounts table
+  initializeDatabaseSchema() {
+    try {
+      this.db.exec(`
+        -- Gmail accounts table for multi-account support
+        CREATE TABLE IF NOT EXISTS gmail_accounts (
+          id TEXT,
+          email TEXT PRIMARY KEY,
+          display_name TEXT,
+          access_token TEXT,
+          refresh_token TEXT,
+          token_expiry TIMESTAMP,
+          sync_enabled BOOLEAN DEFAULT 1,
+          is_active BOOLEAN DEFAULT 1,
+          last_sync TIMESTAMP,
+          connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      console.log('GmailMultiAuth: Database schema initialized');
+    } catch (error) {
+      console.error('GmailMultiAuth: Error initializing database schema:', error);
+      throw error;
+    }
   }
   
   // Get or create OAuth client for an account
@@ -323,6 +353,13 @@ class GmailMultiAuth extends EventEmitter {
     try {
       const oauth2Client = this.getOAuthClient(email);
       
+      // Gmail API has a max of 500 per request, but usually returns 50-100
+      // We'll fetch multiple pages if needed to reach the desired maxResults
+      const allMessages = [];
+      let currentPageToken = pageToken;
+      let totalFetched = 0;
+      const batchSize = Math.min(maxResults, 100); // Fetch 100 at a time max
+      
       // Check if tokens need refresh
       const account = this.getAccount(email);
       if (account && account.refresh_token) {
@@ -342,27 +379,66 @@ class GmailMultiAuth extends EventEmitter {
       
       const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
       
-      console.log(`GmailMultiAuth: Fetching emails from ${email}...`);
+      console.log(`GmailMultiAuth: Fetching up to ${maxResults} emails from ${email}...`);
+      console.log(`GmailMultiAuth: Query: "${query}"`);
       
-      // List messages
-      const params = {
-        userId: 'me',
-        maxResults,
-        q: query || 'in:inbox'
-      };
-      
-      if (pageToken) {
-        params.pageToken = pageToken;
+      // Fetch messages in batches until we reach maxResults
+      while (totalFetched < maxResults) {
+        const remainingToFetch = maxResults - totalFetched;
+        const thisBatchSize = Math.min(batchSize, remainingToFetch);
+        
+        const params = {
+          userId: 'me',
+          maxResults: thisBatchSize,
+          q: query || 'in:inbox'
+        };
+        
+        if (currentPageToken) {
+          params.pageToken = currentPageToken;
+        }
+        
+        console.log(`GmailMultiAuth: Fetching batch - size: ${thisBatchSize}, total so far: ${totalFetched}`);
+        
+        let response;
+        try {
+          response = await gmail.users.messages.list(params);
+          console.log('GmailMultiAuth: Batch response:', {
+            messagesFound: response.data.messages ? response.data.messages.length : 0,
+            resultSizeEstimate: response.data.resultSizeEstimate,
+            nextPageToken: response.data.nextPageToken
+          });
+        } catch (apiError) {
+          console.error('GmailMultiAuth: Gmail API error:', apiError);
+          console.error('Error details:', {
+            message: apiError.message,
+            code: apiError.code,
+            errors: apiError.errors
+          });
+          throw apiError;
+        }
+        
+        const messages = response.data.messages || [];
+        if (messages.length === 0) {
+          console.log('GmailMultiAuth: No more messages available');
+          break;
+        }
+        
+        allMessages.push(...messages);
+        totalFetched += messages.length;
+        
+        // Check if there are more pages
+        currentPageToken = response.data.nextPageToken;
+        if (!currentPageToken) {
+          console.log('GmailMultiAuth: No more pages available');
+          break;
+        }
       }
       
-      const response = await gmail.users.messages.list(params);
-      const messages = response.data.messages || [];
-      
-      console.log(`GmailMultiAuth: Found ${messages.length} messages from ${email}`);
+      console.log(`GmailMultiAuth: Total fetched ${allMessages.length} messages from ${email}`);
       
       // Fetch full message details
       const fullMessages = [];
-      for (const message of messages) {
+      for (const message of allMessages) {
         try {
           const fullMessage = await gmail.users.messages.get({
             userId: 'me',
@@ -383,7 +459,7 @@ class GmailMultiAuth extends EventEmitter {
       
       return {
         messages: fullMessages,
-        nextPageToken: response.data.nextPageToken,
+        nextPageToken: currentPageToken,
         accountEmail: email
       };
       

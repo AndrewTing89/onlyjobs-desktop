@@ -3,16 +3,35 @@
   "version": "1.0.0",
   "description": "> An intelligent job application tracking system that automatically syncs with Gmail, uses AI to classify and extract job application details, and provides real-time analytics through a modern web dashboard.",
   "main": "electron/main.js",
-  "homepage": ".",
+  "homepage": "./",
   "scripts": {
     "electron": "electron .",
     "electron-dev": "NODE_ENV=development electron .",
     "start": "react-scripts start",
-    "build": "react-scripts build",
+    "build": "cross-env CI=false PUBLIC_URL=. react-scripts build",
+    "postinstall": "electron-builder install-app-deps",
     "electron-dist": "npm run build && electron-builder",
     "dist": "npm run build && electron-builder --publish=never",
+    "dist:mac-arm": "npm run build && electron-builder --mac --arm64 --publish=never",
+    "dist:mac-intel": "npm run build && electron-builder --mac --x64 --publish=never",
+    "dist:win": "npm run build && electron-builder --win --publish=never",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "diagnose:native": "cross-env ELECTRON_RUN_AS_NODE=1 electron ./scripts/diagnoseNative.electron.js",
+    "llm:deps": "npm i node-llama-cpp --legacy-peer-deps",
+    "llm:download": "tsx electron/llm/downloadModel.ts",
+    "llm:test": "cross-env CLASSIFIER_PROVIDER=llm ELECTRON_RUN_AS_NODE=1 npx tsx ./electron/llm/manualTest.ts",
+    "llm:evaluate": "cross-env ELECTRON_RUN_AS_NODE=1 ONLYJOBS_DISABLE_CACHE_FOR_TEST=1 electron ./scripts/evalLLM.electron.js",
+    "llm:normalize": "cross-env ELECTRON_RUN_AS_NODE=1 electron ./scripts/normalizeExisting.electron.js",
+    "rebuild:llm": "electron-rebuild -f -w node-llama-cpp",
+    "rebuild:llm:clean": "bash ./scripts/cleanRebuildLLM.sh",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3 -w node-llama-cpp",
+    "dev:web": "react-scripts start",
+    "dev:electron": "wait-on http://localhost:3000 && cross-env NODE_ENV=development electron ./electron/main.js",
+    "dev:all": "concurrently -k -n WEB,ELECTRON -c auto \"npm run dev:web\" \"npm run dev:electron\"",
+    "package:mac": "./package-app.sh",
+    "package:windows": "./package-windows.sh",
+    "package:all": "npm run package:mac && npm run package:windows"
   },
   "repository": {
     "type": "git",
@@ -25,19 +44,27 @@
     "url": "https://github.com/AndrewTing89/onlyjobs-desktop/issues"
   },
   "devDependencies": {
+    "@electron/osx-sign": "^2.0.0",
     "@types/jest": "^27.5.2",
     "@types/node": "^16.18.126",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/react-router-dom": "^5.3.3",
+    "concurrently": "^9.2.0",
+    "cross-env": "^10.0.0",
     "electron": "^37.2.5",
     "electron-builder": "^26.0.12",
+    "electron-installer-dmg": "^5.0.1",
+    "electron-osx-sign": "^0.6.0",
+    "electron-packager": "^17.1.2",
+    "electron-rebuild": "^3.2.9",
     "electron-reload": "^2.0.0-alpha.1",
     "firebase-tools": "^14.11.2",
-    "http-proxy-middleware": "^3.0.5"
+    "http-proxy-middleware": "^3.0.5",
+    "tsx": "^4.20.3",
+    "wait-on": "^8.0.4"
   },
   "dependencies": {
-    "@chakra-ui/react": "^3.22.0",
     "@electron/remote": "^2.1.3",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
@@ -49,11 +76,13 @@
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
     "better-sqlite3": "^12.2.0",
+    "dotenv": "^17.2.1",
     "electron-store": "^10.1.0",
     "firebase": "^11.10.0",
     "framer-motion": "^12.23.1",
     "googleapis": "^154.1.0",
     "html-to-text": "^9.0.5",
+    "node-llama-cpp": "^3.12.0",
     "python-shell": "^5.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -83,6 +112,7 @@
     ]
   },
   "build": {
+    "extends": null,
     "appId": "com.onlyjobs.desktop",
     "productName": "OnlyJobs Desktop",
     "directories": {
@@ -91,24 +121,53 @@
     "files": [
       "build/**/*",
       "electron/**/*",
-      "ml-classifier/src/**/*",
-      "ml-classifier/models/**/*",
-      "ml-classifier/requirements.txt",
-      "node_modules/**/*"
+      "package.json",
+      "!electron/.env.backup",
+      "!electron/**/*.backup",
+      "!**/*.test.js",
+      "!**/test-*.js",
+      "!**/.DS_Store",
+      "!**/.git",
+      "!**/.gitignore"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*.node",
+      "node_modules/node-llama-cpp/**/*.node",
+      "node_modules/**/*.dylib"
     ],
     "extraResources": [
       {
-        "from": "ml-classifier",
-        "to": "ml-classifier",
+        "from": "models",
+        "to": "models",
         "filter": [
-          "**/*",
-          "!**/.git",
-          "!**/node_modules"
+          "**/*"
         ]
       }
     ],
+    "compression": "store",
+    "npmRebuild": true,
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
     "mac": {
       "category": "public.app-category.productivity",
+      "icon": "assets/icon.icns",
+      "identity": "Andrew Ting (NGANSYMPNR)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "notarize": false,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "OnlyJobs Desktop",
       "icon": "assets/icon.icns"
     },
     "win": {
@@ -123,6 +182,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "electronVersion": "37.2.5"
   }
 }

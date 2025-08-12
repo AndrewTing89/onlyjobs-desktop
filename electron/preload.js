@@ -6,9 +6,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Database operations
   getJobs: (filters) => ipcRenderer.invoke('db:get-jobs', filters),
   getJob: (id) => ipcRenderer.invoke('db:get-job', id),
+  getJobEmail: (id) => ipcRenderer.invoke('db:get-job-email', id),
   createJob: (job) => ipcRenderer.invoke('db:create-job', job),
   updateJob: (id, updates) => ipcRenderer.invoke('db:update-job', id, updates),
   deleteJob: (id) => ipcRenderer.invoke('db:delete-job', id),
+  
+  // Database management operations
+  clearAllRecords: () => ipcRenderer.invoke('db:clear-all-records'),
+  clearEmailSync: () => ipcRenderer.invoke('db:clear-email-sync'),
   
   // Email classification
   classifyEmail: (content) => ipcRenderer.invoke('classify-email', content),
@@ -18,6 +23,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isMlReady: () => ipcRenderer.invoke('ml:is-ready'),
   trainModel: (options) => ipcRenderer.invoke('ml:train-model', options),
   initializeMl: () => ipcRenderer.invoke('ml:initialize'),
+  
+  // Prompt management
+  getPrompt: () => ipcRenderer.invoke('prompt:get'),
+  setPrompt: (prompt) => ipcRenderer.invoke('prompt:set', prompt),
+  resetPrompt: () => ipcRenderer.invoke('prompt:reset'),
+  getPromptInfo: () => ipcRenderer.invoke('prompt:info'),
   
   // Authentication operations
   auth: {
