@@ -3,40 +3,187 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*'  # Triggers when you push a version tag like v1.0.0
+  workflow_dispatch:  # Allows manual triggering from GitHub Actions tab
 
 jobs:
-  build:
+  build-mac:
+    name: Build macOS
     runs-on: macos-latest
-    
+    strategy:
+      matrix:
+        arch: [arm64, x64]
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '20'
-    
-    - name: Install dependencies
-      run: npm ci
-    
-    - name: Build app
-      run: npm run dist
-    
-    - name: Ad-hoc sign the app
-      run: |
-        codesign --force --deep --sign - "dist/mac/OnlyJobs Desktop.app"
-        xattr -cr "dist/mac/OnlyJobs Desktop.app"
-    
-    - name: Create DMG
-      run: npx electron-installer-dmg "dist/mac/OnlyJobs Desktop.app" "OnlyJobs-Desktop" --out=dist/ --overwrite
-    
-    - name: Sign DMG
-      run: codesign --force --sign - "dist/OnlyJobs-Desktop.dmg"
-    
-    - name: Upload Release Assets
-      uses: softprops/action-gh-release@v1
-      with:
-        files: dist/OnlyJobs-Desktop.dmg
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci --legacy-peer-deps
+          npm run postinstall
+
+      - name: Download LLM model
+        run: npm run llm:download || echo "Model download failed, continuing anyway"
+        continue-on-error: true
+
+      - name: Import Apple certificates
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # Create variables
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # Import certificate from secrets
+          echo -n "$APPLE_CERT_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+
+          # Create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import certificate to keychain
+          security import $CERTIFICATE_PATH -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+          # Allow codesign to access keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+      - name: Build Electron app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ secrets.APPLE_CERT_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          USE_HARD_LINKS: false
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            npm run dist:mac-arm
+          else
+            npm run dist:mac-intel
+          fi
+
+      - name: Notarize macOS app
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Find the DMG file
+          DMG_FILE=$(find dist -name "*.dmg" -type f | head -n 1)
+          
+          if [ -z "$DMG_FILE" ]; then
+            echo "No DMG file found!"
+            exit 1
+          fi
+          
+          echo "Notarizing $DMG_FILE..."
+          
+          # Submit for notarization
+          xcrun notarytool submit "$DMG_FILE" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          
+          # Staple the notarization
+          xcrun stapler staple "$DMG_FILE"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.arch }}-build
+          path: dist/*.dmg
+          retention-days: 1
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci --legacy-peer-deps
+          npm run postinstall
+
+      - name: Download LLM model
+        run: npm run llm:download || echo "Model download failed, continuing anyway"
+        continue-on-error: true
+
+      - name: Build Electron app
+        env:
+          USE_HARD_LINKS: false
+        run: npm run dist:win
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: dist/*.exe
+          retention-days: 1
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-mac, build-windows]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-files
+
+      - name: Display structure of downloaded files
+        run: ls -la release-files/**
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-files/**/*.dmg
+            release-files/**/*.exe
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          body: |
+            ## Download Instructions
+
+            ### macOS
+            - **Apple Silicon (M1/M2/M3)**: Download the `-arm64.dmg` file
+            - **Intel Macs**: Download the file ending in `.dmg` (without -arm64)
+            
+            ### Windows
+            - Download the `.exe` installer
+            
+            ## Installation
+            
+            **macOS**: Open the DMG file and drag OnlyJobs Desktop to your Applications folder
+            
+            **Windows**: Run the installer and follow the setup wizard
+            
+            ---
+            *First time users may see security warnings. On macOS, right-click and select "Open" if you see a security warning. On Windows, click "More info" → "Run anyway" if SmartScreen appears.*
