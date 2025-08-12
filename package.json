@@ -8,7 +8,7 @@
     "electron": "electron .",
     "electron-dev": "NODE_ENV=development electron .",
     "start": "react-scripts start",
-    "build": "CI=false PUBLIC_URL=. react-scripts build",
+    "build": "cross-env CI=false PUBLIC_URL=. react-scripts build",
     "postinstall": "electron-builder install-app-deps",
     "electron-dist": "npm run build && electron-builder",
     "dist": "npm run build && electron-builder --publish=never",
