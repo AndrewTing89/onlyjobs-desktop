@@ -61,13 +61,14 @@ const classificationSchema = {
   type: "object",
   properties: {
     is_job_related: { type: "boolean" },
+    manual_record_risk: { type: "string", enum: ["none", "low", "medium", "high"] }
   },
-  required: ["is_job_related"],
+  required: ["is_job_related", "manual_record_risk"],
   additionalProperties: false,
 };
 
-// Stage 1: Ultra-fast job classification prompt (optimized for speed)
-const STAGE1_CLASSIFICATION_PROMPT = `Job email classifier. Output ONLY JSON: {"is_job_related":boolean}
+// Stage 1: Ultra-fast job classification prompt (optimized for speed with manual record awareness)
+const STAGE1_CLASSIFICATION_PROMPT = `Job email classifier for mixed automatic/manual record system. Output ONLY JSON: {"is_job_related":boolean,"manual_record_risk":"none"|"low"|"medium"|"high"}
 
 Job-related emails:
 - Application confirmations/receipts
@@ -83,24 +84,36 @@ Not job-related:
 - Personal emails
 - General business correspondence
 
+Manual record risk assessment:
+- "high": Generic confirmations users often manually create first
+- "medium": Specific company/role combinations users might track manually
+- "low": System-generated emails unlikely manually duplicated
+- "none": Clearly automated emails with unique identifiers
+
 Examples:
-"Application received" → {"is_job_related":true}
-"Interview invitation" → {"is_job_related":true}
-"Job offer" → {"is_job_related":true}
-"We regret to inform" → {"is_job_related":true}
-"Weekly newsletter" → {"is_job_related":false}
-"LinkedIn notification" → {"is_job_related":false}
+"Application received" → {"is_job_related":true,"manual_record_risk":"medium"}
+"Interview invitation for Software Engineer at Google" → {"is_job_related":true,"manual_record_risk":"low"}
+"Job offer" → {"is_job_related":true,"manual_record_risk":"low"}
+"Thank you for your interest" → {"is_job_related":true,"manual_record_risk":"high"}
+"Weekly newsletter" → {"is_job_related":false,"manual_record_risk":"none"}
 
 Output ONLY the JSON.`;
 
-// Stage 2: Detailed parsing prompt (optimized for accuracy)
-const STAGE2_PARSING_PROMPT = `Expert job email parser. Extract company, position, and status from job-related emails.
+// Stage 2: Detailed parsing prompt (optimized for accuracy with manual record conflict awareness)
+const STAGE2_PARSING_PROMPT = `Expert job email parser for mixed automatic/manual record system. Extract company, position, and status from job-related emails.
 
 Output JSON schema:
 {
   "company": string | null,
   "position": string | null,
-  "status": "Applied" | "Interview" | "Declined" | "Offer" | null
+  "status": "Applied" | "Interview" | "Declined" | "Offer" | null,
+  "confidence": number,
+  "processing_context": {
+    "email_indicators": string[],
+    "extraction_method": "direct_parsing"|"pattern_matching"|"fuzzy_inference",
+    "data_quality": "high"|"medium"|"low",
+    "potential_duplicates": boolean
+  }
 }
 
 **Company Extraction Rules:**

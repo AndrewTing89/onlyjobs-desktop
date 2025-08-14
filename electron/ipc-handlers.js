@@ -328,6 +328,12 @@ ipcMain.handle('db:get-job', async (event, id) => {
 ipcMain.handle('db:create-job', async (event, job) => {
   try {
     const id = job.id || `job_${Date.now()}_${performance.now().toString().replace('.', '_')}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // For manual job creation, we need to handle the case where there's no gmail_message_id
+    const gmail_message_id = job.gmail_message_id || `manual_${id}`;
+    const account_email = job.account_email || 'manual@onlyjobs.com';
+    const from_address = job.from_address || 'Manual Entry';
+    
     const stmt = getDb().prepare(`
       INSERT OR IGNORE INTO jobs (id, gmail_message_id, company, position, status, applied_date, location, salary_range, notes, ml_confidence, account_email, from_address)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -335,7 +341,7 @@ ipcMain.handle('db:create-job', async (event, job) => {
     
     const result = stmt.run(
       id,
-      job.gmail_message_id,
+      gmail_message_id,
       job.company,
       job.position,
       job.status || 'Applied',
@@ -343,12 +349,30 @@ ipcMain.handle('db:create-job', async (event, job) => {
       job.location,
       job.salary_range,
       job.notes,
-      job.ml_confidence,
-      job.account_email,
-      job.from_address
+      job.ml_confidence || null,
+      account_email,
+      from_address
     );
 
-    return { id, ...job, changes: result.changes };
+    const createdJob = {
+      id,
+      gmail_message_id,
+      company: job.company,
+      position: job.position,
+      status: job.status || 'Applied',
+      applied_date: job.applied_date || new Date().toISOString().split('T')[0],
+      location: job.location,
+      salary_range: job.salary_range,
+      notes: job.notes,
+      ml_confidence: job.ml_confidence || null,
+      account_email,
+      from_address,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      changes: result.changes
+    };
+
+    return createdJob;
   } catch (error) {
     console.error('Error creating job:', error);
     throw error;
@@ -380,6 +404,107 @@ ipcMain.handle('db:delete-job', async (event, id) => {
     return { changes: result.changes };
   } catch (error) {
     console.error('Error deleting job:', error);
+    throw error;
+  }
+});
+
+// Enhanced job editing handler with validation
+ipcMain.handle('db:edit-job', async (event, id, updates) => {
+  try {
+    // Validate that we don't allow editing time fields
+    const restrictedFields = ['created_at', 'updated_at', 'applied_date'];
+    const allowedFields = Object.keys(updates).filter(key => !restrictedFields.includes(key));
+    
+    if (allowedFields.length === 0) {
+      throw new Error('No valid fields to update');
+    }
+    
+    const fields = allowedFields.map(key => `${key} = ?`).join(', ');
+    const values = allowedFields.map(key => updates[key]);
+    values.push(id);
+
+    const stmt = getDb().prepare(`
+      UPDATE jobs SET ${fields}, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `);
+    
+    const result = stmt.run(...values);
+    
+    // Return the updated job record
+    if (result.changes > 0) {
+      const getUpdatedJob = getDb().prepare('SELECT * FROM jobs WHERE id = ?');
+      const updatedJob = getUpdatedJob.get(id);
+      return { success: true, job: updatedJob, changes: result.changes };
+    }
+    
+    return { success: false, message: 'Job not found or no changes made' };
+  } catch (error) {
+    console.error('Error editing job:', error);
+    throw error;
+  }
+});
+
+// Manual job creation handler with better defaults and validation
+ipcMain.handle('db:create-manual-job', async (event, jobData) => {
+  try {
+    // Validate required fields
+    if (!jobData.company || !jobData.position) {
+      throw new Error('Company and position are required fields');
+    }
+    
+    // Validate status
+    const validStatuses = ['Applied', 'Interviewed', 'Declined', 'Offer'];
+    if (jobData.status && !validStatuses.includes(jobData.status)) {
+      throw new Error(`Status must be one of: ${validStatuses.join(', ')}`);
+    }
+    
+    const id = `manual_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const gmail_message_id = `manual_${id}`;
+    const currentDate = new Date().toISOString().split('T')[0];
+    
+    const stmt = getDb().prepare(`
+      INSERT INTO jobs (id, gmail_message_id, company, position, status, applied_date, location, salary_range, notes, ml_confidence, account_email, from_address)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    const result = stmt.run(
+      id,
+      gmail_message_id,
+      jobData.company.trim(),
+      jobData.position.trim(),
+      jobData.status || 'Applied',
+      jobData.applied_date || currentDate,
+      jobData.location?.trim() || null,
+      jobData.salary_range?.trim() || null,
+      jobData.notes?.trim() || null,
+      null, // ml_confidence is null for manual entries
+      'manual@onlyjobs.com',
+      'Manual Entry'
+    );
+
+    if (result.changes > 0) {
+      const createdJob = {
+        id,
+        gmail_message_id,
+        company: jobData.company.trim(),
+        position: jobData.position.trim(),
+        status: jobData.status || 'Applied',
+        applied_date: jobData.applied_date || currentDate,
+        location: jobData.location?.trim() || null,
+        salary_range: jobData.salary_range?.trim() || null,
+        notes: jobData.notes?.trim() || null,
+        ml_confidence: null,
+        account_email: 'manual@onlyjobs.com',
+        from_address: 'Manual Entry',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      
+      return { success: true, job: createdJob };
+    }
+    
+    throw new Error('Failed to create job record');
+  } catch (error) {
+    console.error('Error creating manual job:', error);
     throw error;
   }
 });

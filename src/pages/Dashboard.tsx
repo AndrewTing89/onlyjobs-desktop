@@ -7,7 +7,9 @@ import {
   Card,
   CardContent,
   Typography,
+  Button,
 } from "@mui/material";
+import { Add } from "@mui/icons-material";
 import { useNavigate, useLocation } from "react-router-dom";
 import { ThemeProvider } from '@mui/material/styles';
 import { onlyJobsTheme } from '../theme';
@@ -20,6 +22,7 @@ import TopBar from "../components/layout/TopBar";
 import { LookerDashboard } from "../components/LookerDashboard";
 import { GmailMultiAccount } from "../components/GmailMultiAccount";
 import JobsList from "../components/JobsList";
+import AddJobDialog from "../components/AddJobDialog";
 
 // Import analytics components
 import QuickStats from "../components/analytics/QuickStats";
@@ -47,6 +50,9 @@ export default function Dashboard() {
     message: "", 
     severity: "success" as "success" | "error" 
   });
+
+  // Dialog state for manual job addition
+  const [addJobDialogOpen, setAddJobDialogOpen] = useState(false);
 
   // Analytics state
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -186,6 +192,11 @@ export default function Dashboard() {
     }
   };
 
+  // Handle dialog close
+  const handleAddJobDialogClose = () => {
+    setAddJobDialogOpen(false);
+  };
+
   return (
     <ThemeProvider theme={onlyJobsTheme}>
       <Box sx={{ display: "flex", height: "100vh" }}>
@@ -260,20 +271,94 @@ export default function Dashboard() {
                 {/* Jobs List */}
                 <Card>
                   <CardContent sx={{ p: 3 }}>
-                    <Typography 
-                      variant="h3" 
-                      sx={{ 
-                        mb: 2, 
-                        fontWeight: 600,
-                        color: onlyJobsTheme.palette.text.primary 
-                      }}
-                    >
-                      Job Applications
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                      <Typography 
+                        variant="h3" 
+                        sx={{ 
+                          fontWeight: 600,
+                          color: onlyJobsTheme.palette.text.primary 
+                        }}
+                      >
+                        Job Applications
+                      </Typography>
+                      <Button
+                        variant="contained"
+                        size="medium"
+                        startIcon={<Add />}
+                        onClick={() => setAddJobDialogOpen(true)}
+                        sx={{
+                          minWidth: 140,
+                          '&:hover': {
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 4px 12px rgba(25, 118, 210, 0.4)'
+                          }
+                        }}
+                      >
+                        Add Job
+                      </Button>
+                    </Box>
                     <JobsList 
                       jobs={filteredJobs}
                       searchTerm={filterState.searchTerm}
                       onSearchChange={filterActions.updateSearchTerm}
+                      onJobUpdated={(updatedJob) => {
+                        // Update the jobs state and recalculate analytics
+                        setJobs(prevJobs => {
+                          const newJobs = prevJobs.map(job => 
+                            job.id === updatedJob.id ? updatedJob : job
+                          );
+                          
+                          // Recalculate analytics for updated jobs
+                          const analyticsJobs = newJobs.map((job) => ({
+                            id: job.id,
+                            userId: 'electron-user',
+                            company: job.company,
+                            jobTitle: job.position,
+                            location: job.location || 'Unknown Location',
+                            status: job.status as JobStatus,
+                            appliedDate: new Date(job.applied_date),
+                            lastUpdated: new Date(job.updated_at),
+                            source: 'gmail' as const,
+                            emailId: job.email_id,
+                          }));
+                          
+                          const stats = analyticsService.calculateJobStats(analyticsJobs);
+                          setJobStats(stats);
+                          
+                          const trend = analyticsService.getWeeklyTrend(analyticsJobs);
+                          setWeeklyTrend(trend);
+                          
+                          return newJobs;
+                        });
+                      }}
+                      onJobCreated={(newJob) => {
+                        // Add the new job and recalculate analytics
+                        setJobs(prevJobs => {
+                          const newJobs = [...prevJobs, newJob];
+                          
+                          // Recalculate analytics for all jobs including the new one
+                          const analyticsJobs = newJobs.map((job) => ({
+                            id: job.id,
+                            userId: 'electron-user',
+                            company: job.company,
+                            jobTitle: job.position,
+                            location: job.location || 'Unknown Location',
+                            status: job.status as JobStatus,
+                            appliedDate: new Date(job.applied_date),
+                            lastUpdated: new Date(job.updated_at),
+                            source: 'gmail' as const,
+                            emailId: job.email_id,
+                          }));
+                          
+                          const stats = analyticsService.calculateJobStats(analyticsJobs);
+                          setJobStats(stats);
+                          
+                          const trend = analyticsService.getWeeklyTrend(analyticsJobs);
+                          setWeeklyTrend(trend);
+                          
+                          return newJobs;
+                        });
+                      }}
                     />
                   </CardContent>
                 </Card>
@@ -302,6 +387,51 @@ export default function Dashboard() {
             {snackbar.message}
           </Alert>
         </Snackbar>
+
+        {/* Add Job Dialog */}
+        {isElectron && (
+          <AddJobDialog
+            open={addJobDialogOpen}
+            onClose={handleAddJobDialogClose}
+            onJobCreated={(newJob) => {
+              // Add the new job and recalculate analytics
+              setJobs(prevJobs => {
+                const newJobs = [...prevJobs, newJob];
+                
+                // Recalculate analytics for all jobs including the new one
+                const analyticsJobs = newJobs.map((job) => ({
+                  id: job.id,
+                  userId: 'electron-user',
+                  company: job.company,
+                  jobTitle: job.position,
+                  location: job.location || 'Unknown Location',
+                  status: job.status as JobStatus,
+                  appliedDate: new Date(job.applied_date),
+                  lastUpdated: new Date(job.updated_at),
+                  source: 'gmail' as const,
+                  emailId: job.email_id,
+                }));
+                
+                const stats = analyticsService.calculateJobStats(analyticsJobs);
+                setJobStats(stats);
+                
+                const trend = analyticsService.getWeeklyTrend(analyticsJobs);
+                setWeeklyTrend(trend);
+                
+                return newJobs;
+              });
+              
+              // Show success message
+              setSnackbar({
+                open: true,
+                message: 'Job application added successfully!',
+                severity: 'success'
+              });
+              
+              handleAddJobDialogClose();
+            }}
+          />
+        )}
       </Box>
     </ThemeProvider>
   );

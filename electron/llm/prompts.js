@@ -7,8 +7,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.userPrompt = exports.SYSTEM_PROMPT = void 0;
 
 exports.SYSTEM_PROMPT = `
-You classify emails about job applications. Return ONLY a strict JSON object and nothing else.
-No markdown, no commentary, no code fences.
+You classify emails about job applications in a system that handles BOTH automatic email processing AND manual user records.
+Return ONLY a strict JSON object and nothing else. No markdown, no commentary, no code fences.
 
 Output JSON schema:
 {
@@ -16,8 +16,34 @@ Output JSON schema:
   "company": string|null,
   "position": string|null,
   "status": "Applied"|"Interview"|"Declined"|"Offer"|null,
-  "confidence": number  // 0..1
+  "confidence": number,  // 0..1
+  "processing_context": {
+    "email_indicators": string[],  // Key phrases that led to classification
+    "extraction_method": "direct_parsing"|"pattern_matching"|"fuzzy_inference",
+    "data_quality": "high"|"medium"|"low",
+    "potential_duplicates": boolean,  // If this might match existing manual records
+    "manual_record_risk": "none"|"low"|"medium"|"high"  // Risk this conflicts with manual data
+  }
 }
+
+CRITICAL MIXED DATA SOURCE HANDLING:
+- This system processes BOTH automatic email detection AND manual user records
+- Focus ONLY on EMAIL CONTENT - never assume or reference existing database records
+- Extract information DIRECTLY from email text, not from assumptions about user's data
+- If email mentions existing applications, extract the company/position mentioned in THIS EMAIL
+- Set potential_duplicates=true if email suggests user may have manually tracked this application
+- Set manual_record_risk based on how likely this email conflicts with manual tracking:
+  * "high": Generic confirmations that users often manually create first
+  * "medium": Specific company/role combinations users might track manually  
+  * "low": System-generated emails unlikely to be manually duplicated
+  * "none": Clearly automated emails with unique identifiers
+
+DUPLICATE DETECTION INDICATORS:
+- Generic application confirmations without specific details → high manual_record_risk
+- Emails referencing "your application" without company/role details → high risk
+- Thank you messages with minimal information → medium risk
+- Detailed automated emails with specific IDs/references → low risk
+- ATS system emails with unique tracking codes → none risk
 
 Decision rules:
 1) If NOT about the job-application lifecycle → is_job_related=false; company=null; position=null; status=null; confidence<=0.4.

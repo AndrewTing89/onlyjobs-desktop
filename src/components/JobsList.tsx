@@ -14,7 +14,8 @@ import {
   Menu,
   MenuItem,
   TextField,
-  InputAdornment
+  InputAdornment,
+  Button
 } from '@mui/material';
 import {
   MoreVert,
@@ -22,10 +23,14 @@ import {
   CalendarToday,
   Email,
   Search,
-  Refresh
+  Refresh,
+  Add,
+  Edit
 } from '@mui/icons-material';
 import { LoadingSpinner } from './LoadingSpinner';
 import { Job } from '../types/filter.types';
+import EditJobDialog from './EditJobDialog';
+import AddJobDialog from './AddJobDialog';
 
 const accent = "#FF7043";
 
@@ -44,6 +49,8 @@ interface JobsListProps {
   onSearchChange?: (term: string) => void;
   loading?: boolean;
   showSearch?: boolean;
+  onJobUpdated?: (updatedJob: Job) => void;
+  onJobCreated?: (newJob: Job) => void;
 }
 
 export default function JobsList({ 
@@ -51,7 +58,9 @@ export default function JobsList({
   searchTerm: propSearchTerm = '', 
   onSearchChange,
   loading: propLoading = false,
-  showSearch = true 
+  showSearch = true,
+  onJobUpdated,
+  onJobCreated
 }: JobsListProps) {
   const [jobs, setJobs] = useState<Job[]>(propJobs || []);
   const [loading, setLoading] = useState(!propJobs && true);
@@ -60,6 +69,11 @@ export default function JobsList({
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [syncStatus, setSyncStatus] = useState<any>(null);
+  
+  // Dialog states
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [jobToEdit, setJobToEdit] = useState<Job | null>(null);
 
   // Update local state when props change
   useEffect(() => {
@@ -189,6 +203,63 @@ export default function JobsList({
     handleMenuClose();
   };
 
+  const handleEdit = () => {
+    if (selectedJob) {
+      setJobToEdit(selectedJob);
+      setEditDialogOpen(true);
+      handleMenuClose();
+    }
+  };
+
+  const handleAdd = () => {
+    setAddDialogOpen(true);
+  };
+
+  const handleJobUpdated = (updatedJob: Job) => {
+    setJobs(prevJobs => 
+      prevJobs.map(job => 
+        job.id === updatedJob.id ? updatedJob : job
+      )
+    );
+    setEditDialogOpen(false);
+    setJobToEdit(null);
+    
+    // Call parent callback if provided
+    if (onJobUpdated) {
+      onJobUpdated(updatedJob);
+    }
+  };
+
+  const handleJobCreated = (newJob: Job) => {
+    setJobs(prevJobs => {
+      // Add new job and maintain proper date ordering (newest first)
+      const updatedJobs = [...prevJobs, newJob];
+      return updatedJobs.sort((a, b) => {
+        const dateA = new Date(a.applied_date);
+        const dateB = new Date(b.applied_date);
+        if (dateB.getTime() !== dateA.getTime()) {
+          return dateB.getTime() - dateA.getTime();
+        }
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+    });
+    setAddDialogOpen(false);
+    
+    // Call parent callback if provided
+    if (onJobCreated) {
+      onJobCreated(newJob);
+    }
+  };
+
+  const handleEditDialogClose = () => {
+    setEditDialogOpen(false);
+    setJobToEdit(null);
+  };
+
+  const handleAddDialogClose = () => {
+    setAddDialogOpen(false);
+  };
+
   // Handle search term changes
   const handleSearchChange = (newSearchTerm: string) => {
     setSearchTerm(newSearchTerm);
@@ -218,7 +289,7 @@ export default function JobsList({
           <CardContent>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
               <Typography variant="h6">Job Applications</Typography>
-              <Box sx={{ display: 'flex', gap: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 {syncStatus && (
                   <Typography variant="body2" color="text.secondary">
                     {syncStatus.last_sync_time ? 
@@ -227,6 +298,21 @@ export default function JobsList({
                     {syncStatus.total_jobs_found && ` • ${syncStatus.total_jobs_found} jobs found`}
                   </Typography>
                 )}
+                <Button
+                  variant="contained"
+                  size="small"
+                  startIcon={<Add />}
+                  onClick={handleAdd}
+                  sx={{
+                    minWidth: 120,
+                    '&:hover': {
+                      transform: 'translateY(-1px)',
+                      boxShadow: '0 4px 12px rgba(25, 118, 210, 0.4)'
+                    }
+                  }}
+                >
+                  Add Job
+                </Button>
                 <IconButton size="small" onClick={loadJobs} title="Refresh">
                   <Refresh />
                 </IconButton>
@@ -447,10 +533,37 @@ export default function JobsList({
           </MenuItem>
         ))}
         <MenuItem divider />
+        <MenuItem 
+          onClick={handleEdit}
+          sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: 1,
+            '&:hover': { backgroundColor: 'primary.light', color: 'primary.contrastText' }
+          }}
+        >
+          <Edit fontSize="small" />
+          Edit Job
+        </MenuItem>
         <MenuItem onClick={handleDelete} sx={{ color: 'error.main' }}>
           Delete
         </MenuItem>
       </Menu>
+
+      {/* Edit Job Dialog */}
+      <EditJobDialog
+        open={editDialogOpen}
+        onClose={handleEditDialogClose}
+        job={jobToEdit}
+        onJobUpdated={handleJobUpdated}
+      />
+
+      {/* Add Job Dialog */}
+      <AddJobDialog
+        open={addDialogOpen}
+        onClose={handleAddDialogClose}
+        onJobCreated={handleJobCreated}
+      />
     </Box>
   );
 }

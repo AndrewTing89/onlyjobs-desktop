@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateJob: (id, updates) => ipcRenderer.invoke('db:update-job', id, updates),
   deleteJob: (id) => ipcRenderer.invoke('db:delete-job', id),
   
+  // Enhanced job operations
+  editJob: (id, updates) => ipcRenderer.invoke('db:edit-job', id, updates),
+  createManualJob: (jobData) => ipcRenderer.invoke('db:create-manual-job', jobData),
+  
   // Database management operations
   clearAllRecords: () => ipcRenderer.invoke('db:clear-all-records'),
   clearEmailSync: () => ipcRenderer.invoke('db:clear-email-sync'),

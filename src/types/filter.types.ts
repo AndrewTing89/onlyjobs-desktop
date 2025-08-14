@@ -2,6 +2,7 @@
 
 export interface Job {
   id: string;
+  gmail_message_id?: string;
   company: string;
   position: string;
   status: string;
@@ -16,6 +17,7 @@ export interface Job {
   account_email?: string;
   from_address?: string;
   raw_content?: string;
+  ml_confidence?: number;
 }
 
 export type JobStatus = 'Applied' | 'Interviewed' | 'Offer' | 'Declined';
