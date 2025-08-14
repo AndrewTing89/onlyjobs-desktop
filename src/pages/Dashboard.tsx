@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Box,
   CssBaseline,
@@ -25,6 +25,11 @@ import JobsList from "../components/JobsList";
 import QuickStats from "../components/analytics/QuickStats";
 import analyticsService, { JobStats } from "../services/analytics.service";
 
+// Import filter components
+import { JobsFilter } from "../components/filters";
+import { useJobFilters } from "../hooks/useJobFilters";
+import { Job, JobStatus } from "../types/filter.types";
+
 // Import the appropriate auth context based on environment
 import { useAuth as useFirebaseAuth } from "../contexts/AuthContext";
 import { useAuth as useElectronAuth } from "../contexts/ElectronAuthContext";
@@ -44,7 +49,7 @@ export default function Dashboard() {
   });
 
   // Analytics state
-  const [jobs, setJobs] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [jobStats, setJobStats] = useState<JobStats>({
     totalApplications: 0,
     appliedCount: 0,
@@ -57,6 +62,36 @@ export default function Dashboard() {
   });
   const [weeklyTrend, setWeeklyTrend] = useState({ change: 0, isIncrease: false });
 
+  // Initialize job filters
+  const {
+    filterState,
+    filterOptions,
+    filteredJobs,
+    jobCount,
+    actions: filterActions,
+  } = useJobFilters(jobs);
+
+  // Calculate filtered stats for analytics
+  const filteredStats = useMemo(() => {
+    if (filteredJobs.length === 0) return jobStats;
+    
+    // Transform filtered jobs to analytics format
+    const analyticsJobs = filteredJobs.map((job) => ({
+      id: job.id,
+      userId: 'electron-user',
+      company: job.company,
+      jobTitle: job.position,
+      location: job.location || 'Unknown Location',
+      status: job.status as JobStatus,
+      appliedDate: new Date(job.applied_date),
+      lastUpdated: new Date(job.updated_at),
+      source: 'gmail' as const,
+      emailId: job.email_id,
+    }));
+    
+    return analyticsService.calculateJobStats(analyticsJobs);
+  }, [filteredJobs, jobStats]);
+
   // For Electron, we use simplified auth
   const currentUser = isElectron ? authData.currentUser : authData.currentUser;
   const logout = isElectron ? authData.signOut : authData.logout;
@@ -67,26 +102,46 @@ export default function Dashboard() {
       if (isElectron && window.electronAPI) {
         try {
           const jobsData = await window.electronAPI.getJobs();
-          setJobs(jobsData);
           
-          // Transform and calculate stats
-          const transformedJobs = jobsData.map((job: any) => ({
+          // Transform jobs data to match our Job interface
+          const transformedJobs: Job[] = jobsData.map((job: any) => ({
             id: job.id?.toString() || Math.random().toString(),
-            userId: job.userId || 'electron-user',
             company: job.company || 'Unknown Company',
-            jobTitle: job.position || job.jobTitle || 'Unknown Position',
-            location: job.location || 'Unknown Location',
+            position: job.position || 'Unknown Position',
             status: job.status || 'Applied',
-            appliedDate: new Date(job.applied_date || job.appliedDate || Date.now()),
-            lastUpdated: new Date(job.lastUpdated || job.applied_date || Date.now()),
-            source: 'gmail',
-            emailId: job.emailId,
+            job_type: job.job_type,
+            applied_date: job.applied_date || new Date().toISOString(),
+            location: job.location,
+            salary_range: job.salary_range,
+            notes: job.notes,
+            email_id: job.email_id,
+            created_at: job.created_at || new Date().toISOString(),
+            updated_at: job.updated_at || new Date().toISOString(),
+            account_email: job.account_email,
+            from_address: job.from_address,
+            raw_content: job.raw_content,
           }));
           
-          const stats = analyticsService.calculateJobStats(transformedJobs);
+          setJobs(transformedJobs);
+          
+          // Transform for analytics (keeping existing format)
+          const analyticsJobs = transformedJobs.map((job) => ({
+            id: job.id,
+            userId: 'electron-user',
+            company: job.company,
+            jobTitle: job.position,
+            location: job.location || 'Unknown Location',
+            status: job.status as JobStatus,
+            appliedDate: new Date(job.applied_date),
+            lastUpdated: new Date(job.updated_at),
+            source: 'gmail' as const,
+            emailId: job.email_id,
+          }));
+          
+          const stats = analyticsService.calculateJobStats(analyticsJobs);
           setJobStats(stats);
           
-          const trend = analyticsService.getWeeklyTrend(transformedJobs);
+          const trend = analyticsService.getWeeklyTrend(analyticsJobs);
           setWeeklyTrend(trend);
         } catch (error) {
           console.error('Failed to load jobs:', error);
@@ -170,7 +225,10 @@ export default function Dashboard() {
                     >
                       Overview
                     </Typography>
-                    <QuickStats stats={jobStats} weeklyTrend={weeklyTrend} />
+                    <QuickStats 
+                      stats={filteredStats}
+                      weeklyTrend={weeklyTrend} 
+                    />
                   </Box>
                 )}
 
@@ -191,6 +249,14 @@ export default function Dashboard() {
                   </CardContent>
                 </Card>
                 
+                {/* Jobs Filter */}
+                <JobsFilter
+                  filterState={filterState}
+                  filterOptions={filterOptions}
+                  onFilterChange={filterActions.updateFilter}
+                  jobCount={jobCount}
+                />
+                
                 {/* Jobs List */}
                 <Card>
                   <CardContent sx={{ p: 3 }}>
@@ -202,9 +268,13 @@ export default function Dashboard() {
                         color: onlyJobsTheme.palette.text.primary 
                       }}
                     >
-                      Recent Applications
+                      Job Applications
                     </Typography>
-                    <JobsList />
+                    <JobsList 
+                      jobs={filteredJobs}
+                      searchTerm={filterState.searchTerm}
+                      onSearchChange={filterActions.updateSearchTerm}
+                    />
                   </CardContent>
                 </Card>
               </>

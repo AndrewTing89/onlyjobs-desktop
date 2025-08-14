@@ -179,7 +179,7 @@ class IntegratedEmailProcessor {
         combined.includes('not selected') ||
         combined.includes('decided not to proceed') ||
         combined.includes('other candidates')) {
-      return 'Rejected';
+      return 'Declined';
     }
 
     if (combined.includes('application received') || 

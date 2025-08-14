@@ -45,6 +45,20 @@ async function testUnifiedApproach() {
       }
     },
     {
+      name: 'Adobe Case - Job Code Pattern',
+      input: {
+        subject: 'Adobe Application Confirmation',
+        plaintext: 'We wanted to let you know that we received your application for the R157623 BDR Insights Analyst role',
+        from: 'noreply@adobe.com'
+      },
+      expected: {
+        is_job_related: true,
+        company: 'Adobe',
+        position: 'BDR Insights Analyst',
+        status: 'Applied'
+      }
+    },
+    {
       name: 'Newsletter (Non-Job)',
       input: {
         subject: 'Weekly Job Market Trends',

@@ -25,26 +25,9 @@ import {
   Refresh
 } from '@mui/icons-material';
 import { LoadingSpinner } from './LoadingSpinner';
+import { Job } from '../types/filter.types';
 
 const accent = "#FF7043";
-
-interface Job {
-  id: string;
-  company: string;
-  position: string;
-  status: string;
-  job_type?: string;
-  applied_date: string;
-  location?: string;
-  salary_range?: string;
-  notes?: string;
-  email_id?: string;
-  created_at: string;
-  updated_at: string;
-  account_email?: string;
-  from_address?: string;
-  raw_content?: string;
-}
 
 const statusColors: Record<string, string> = {
   Applied: '#2196F3',
@@ -55,64 +38,95 @@ const statusColors: Record<string, string> = {
 
 // Job type labels are no longer needed since we use status directly
 
-export default function JobsList() {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [loading, setLoading] = useState(true);
+interface JobsListProps {
+  jobs?: Job[];
+  searchTerm?: string;
+  onSearchChange?: (term: string) => void;
+  loading?: boolean;
+  showSearch?: boolean;
+}
+
+export default function JobsList({ 
+  jobs: propJobs, 
+  searchTerm: propSearchTerm = '', 
+  onSearchChange,
+  loading: propLoading = false,
+  showSearch = true 
+}: JobsListProps) {
+  const [jobs, setJobs] = useState<Job[]>(propJobs || []);
+  const [loading, setLoading] = useState(!propJobs && true);
   const [error, setError] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(propSearchTerm);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [syncStatus, setSyncStatus] = useState<any>(null);
 
+  // Update local state when props change
   useEffect(() => {
-    loadJobs();
-    loadSyncStatus();
-    
-    // Listen for individual job additions during sync
-    const handleJobFound = (newJob: Job) => {
-      console.log('New job found during sync:', newJob);
-      setJobs(prevJobs => {
-        // Check if job already exists to avoid duplicates
-        const existingJob = prevJobs.find(job => job.id === newJob.id);
-        if (existingJob) {
-          return prevJobs;
-        }
-        
-        // Insert the new job and maintain proper date ordering (newest first)
-        const updatedJobs = [...prevJobs, newJob];
-        return updatedJobs.sort((a, b) => {
-          // First sort by applied_date (newest first)
-          const dateA = new Date(a.applied_date);
-          const dateB = new Date(b.applied_date);
-          if (dateB.getTime() !== dateA.getTime()) {
-            return dateB.getTime() - dateA.getTime();
-          }
-          // If dates are equal, sort by created_at (newest first)
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-        });
-      });
-    };
-    
-    // Listen for sync completion and reload jobs (as backup)
-    const handleSyncComplete = () => {
-      console.log('Sync completed, reloading jobs from database');
+    if (propJobs) {
+      setJobs(propJobs);
+      setLoading(propLoading);
+    }
+  }, [propJobs, propLoading]);
+
+  useEffect(() => {
+    setSearchTerm(propSearchTerm);
+  }, [propSearchTerm]);
+
+  useEffect(() => {
+    // Only load jobs if not provided as props
+    if (!propJobs) {
       loadJobs();
       loadSyncStatus();
-    };
-    
-    window.electronAPI.on('job-found', handleJobFound);
-    window.electronAPI.onSyncComplete(handleSyncComplete);
-    
-    return () => {
-      // Clean up listeners if they exist
-      if (window.electronAPI.removeListener) {
-        window.electronAPI.removeListener('job-found', handleJobFound);
-        window.electronAPI.removeListener('sync-complete', handleSyncComplete);
-      }
-    };
-  }, []);
+      
+      // Listen for individual job additions during sync
+      const handleJobFound = (newJob: Job) => {
+        console.log('New job found during sync:', newJob);
+        setJobs(prevJobs => {
+          // Check if job already exists to avoid duplicates
+          const existingJob = prevJobs.find(job => job.id === newJob.id);
+          if (existingJob) {
+            return prevJobs;
+          }
+          
+          // Insert the new job and maintain proper date ordering (newest first)
+          const updatedJobs = [...prevJobs, newJob];
+          return updatedJobs.sort((a, b) => {
+            // First sort by applied_date (newest first)
+            const dateA = new Date(a.applied_date);
+            const dateB = new Date(b.applied_date);
+            if (dateB.getTime() !== dateA.getTime()) {
+              return dateB.getTime() - dateA.getTime();
+            }
+            // If dates are equal, sort by created_at (newest first)
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          });
+        });
+      };
+      
+      // Listen for sync completion and reload jobs (as backup)
+      const handleSyncComplete = () => {
+        console.log('Sync completed, reloading jobs from database');
+        loadJobs();
+        loadSyncStatus();
+      };
+      
+      window.electronAPI.on('job-found', handleJobFound);
+      window.electronAPI.onSyncComplete(handleSyncComplete);
+      
+      return () => {
+        // Clean up listeners if they exist
+        if (window.electronAPI.removeListener) {
+          window.electronAPI.removeListener('job-found', handleJobFound);
+          window.electronAPI.removeListener('sync-complete', handleSyncComplete);
+        }
+      };
+    }
+  }, [propJobs]);
 
   const loadJobs = async () => {
+    if (propJobs) return; // Don't load if jobs are provided as props
+    
     try {
       setLoading(true);
       const result = await window.electronAPI.getJobs();
@@ -127,6 +141,8 @@ export default function JobsList() {
   };
 
   const loadSyncStatus = async () => {
+    if (propJobs) return; // Don't load sync status if jobs are provided as props
+    
     try {
       const status = await window.electronAPI.gmail.getSyncStatus();
       setSyncStatus(status);
@@ -173,9 +189,16 @@ export default function JobsList() {
     handleMenuClose();
   };
 
-  // Email viewing removed since we no longer store raw content
+  // Handle search term changes
+  const handleSearchChange = (newSearchTerm: string) => {
+    setSearchTerm(newSearchTerm);
+    if (onSearchChange) {
+      onSearchChange(newSearchTerm);
+    }
+  };
 
-  const filteredJobs = jobs.filter(job => 
+  // Filter jobs based on search term (only if not using external filtering)
+  const filteredJobs = propJobs ? jobs : jobs.filter(job => 
     (job.company || 'Unknown Company').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (job.position || 'Unknown Position').toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -190,32 +213,39 @@ export default function JobsList() {
 
   return (
     <Box>
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-            <Typography variant="h6">Job Applications</Typography>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              {syncStatus && (
-                <Typography variant="body2" color="text.secondary">
-                  {syncStatus.last_sync_time ? 
-                    `Last sync: ${new Date(syncStatus.last_sync_time).toLocaleString()}` : 
-                    'Not synced yet'}
-                  {syncStatus.total_jobs_found && ` • ${syncStatus.total_jobs_found} jobs found`}
-                </Typography>
-              )}
-              <IconButton size="small" onClick={loadJobs} title="Refresh">
-                <Refresh />
-              </IconButton>
+      {!propJobs && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+              <Typography variant="h6">Job Applications</Typography>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                {syncStatus && (
+                  <Typography variant="body2" color="text.secondary">
+                    {syncStatus.last_sync_time ? 
+                      `Last sync: ${new Date(syncStatus.last_sync_time).toLocaleString()}` : 
+                      'Not synced yet'}
+                    {syncStatus.total_jobs_found && ` • ${syncStatus.total_jobs_found} jobs found`}
+                  </Typography>
+                )}
+                <IconButton size="small" onClick={loadJobs} title="Refresh">
+                  <Refresh />
+                </IconButton>
+              </Box>
             </Box>
-          </Box>
-
-          <TextField
-            fullWidth
-            size="small"
-            placeholder="Search jobs..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="form-input-focus"
+          </CardContent>
+        </Card>
+      )}
+      
+      {showSearch && !propJobs && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="Search jobs..."
+              value={searchTerm}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="form-input-focus"
             sx={{ 
               mb: 2,
               '& .MuiOutlinedInput-root': {
@@ -232,16 +262,21 @@ export default function JobsList() {
                 transition: 'color 0.3s ease',
                 color: searchTerm ? 'primary.main' : 'text.secondary',
               },
-            }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Search />
-                </InputAdornment>
-              ),
-            }}
-          />
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Search />
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </CardContent>
+        </Card>
+      )}
 
+      <Card>
+        <CardContent>
           {error && (
             <Alert 
               severity="error" 
@@ -258,7 +293,7 @@ export default function JobsList() {
 
           {filteredJobs.length === 0 ? (
             <Typography variant="body2" color="text.secondary" align="center">
-              No jobs found. Sync your Gmail to discover job applications!
+              {propJobs ? 'No jobs match your current filters.' : 'No jobs found. Sync your Gmail to discover job applications!'}
             </Typography>
           ) : (
             <List sx={{ py: 0 }}>
@@ -416,7 +451,6 @@ export default function JobsList() {
           Delete
         </MenuItem>
       </Menu>
-
     </Box>
   );
 }

@@ -6,7 +6,7 @@ const path = require("path");
 exports.DEFAULT_MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH ?? path.resolve(process.cwd(), "models", "model.gguf");
 exports.LLM_TEMPERATURE = Number(process.env.ONLYJOBS_TEMPERATURE ?? 0.1);
 exports.LLM_MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS ?? 256);
-exports.LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 2048);
+exports.LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 1024);
 exports.GPU_LAYERS = Number(process.env.ONLYJOBS_N_GPU_LAYERS ?? 0);
 // Versioning for tracking model decisions and prompts
 exports.DECISION_VERSION = process.env.ONLYJOBS_DECISION_VERSION ?? "v1.0-prompt-2025-08-08";
