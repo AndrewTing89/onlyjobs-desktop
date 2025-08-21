@@ -112,63 +112,96 @@ function initializeDatabase() {
       const hasAccountEmail = jobsTableInfo.some(col => col.name === 'account_email');
       const hasFromAddress = jobsTableInfo.some(col => col.name === 'from_address');
       
-      if (!hasGmailMessageId || !hasAccountEmail || !hasFromAddress) {
-        console.log('Migrating jobs table to new schema...');
-        
-        // Create new jobs table with correct schema
+      console.log('Jobs table columns check:', {
+        hasGmailMessageId,
+        hasAccountEmail,
+        hasFromAddress,
+        currentColumns: jobsTableInfo.map(col => col.name)
+      });
+      
+      // Add missing columns individually rather than recreating the entire table
+      if (!hasGmailMessageId) {
+        console.log('Adding gmail_message_id column to jobs table...');
+        getDb().exec('ALTER TABLE jobs ADD COLUMN gmail_message_id TEXT');
+        // Update existing records with a default value
+        getDb().exec("UPDATE jobs SET gmail_message_id = 'migrated_' || id WHERE gmail_message_id IS NULL");
+      }
+      
+      if (!hasAccountEmail) {
+        console.log('Adding account_email column to jobs table...');
+        getDb().exec('ALTER TABLE jobs ADD COLUMN account_email TEXT');
+        // Update existing records with a default value
+        getDb().exec("UPDATE jobs SET account_email = 'unknown@migrated.com' WHERE account_email IS NULL");
+      }
+      
+      if (!hasFromAddress) {
+        console.log('Adding from_address column to jobs table...');
+        getDb().exec('ALTER TABLE jobs ADD COLUMN from_address TEXT');
+        // Update existing records with a default value
+        getDb().exec("UPDATE jobs SET from_address = 'migrated' WHERE from_address IS NULL");
+      }
+      
+      // Also check if status values need normalization
+      const statusNormalizationNeeded = getDb().prepare(`
+        SELECT COUNT(*) as count FROM jobs 
+        WHERE status NOT IN ('Applied', 'Interviewed', 'Declined', 'Offer')
+      `).get();
+      
+      if (statusNormalizationNeeded.count > 0) {
+        console.log('Normalizing job status values...');
         getDb().exec(`
-          CREATE TABLE IF NOT EXISTS jobs_new (
-            id TEXT PRIMARY KEY,
+          UPDATE jobs SET status = CASE 
+            WHEN status = 'active' THEN 'Applied'
+            WHEN status = 'applied' THEN 'Applied'
+            WHEN status = 'interviewing' THEN 'Interviewed'
+            WHEN status = 'offered' THEN 'Offer'
+            WHEN status = 'rejected' THEN 'Declined'
+            WHEN status = 'withdrawn' THEN 'Declined'
+            ELSE 'Applied'
+          END
+          WHERE status NOT IN ('Applied', 'Interviewed', 'Declined', 'Offer')
+        `);
+      }
+    }
+    
+    // Check if email_sync table exists and needs migration
+    const emailSyncTableExists = getDb().prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='email_sync'").get();
+    
+    if (emailSyncTableExists) {
+      // Check if email_sync table has the account_email column
+      const emailSyncTableInfo = getDb().prepare("PRAGMA table_info(email_sync)").all();
+      const hasAccountEmail = emailSyncTableInfo.some(col => col.name === 'account_email');
+      
+      if (!hasAccountEmail) {
+        console.log('Migrating email_sync table to new schema...');
+        
+        // Create new email_sync table with correct schema
+        getDb().exec(`
+          CREATE TABLE IF NOT EXISTS email_sync_new (
             gmail_message_id TEXT,
-            company TEXT NOT NULL,
-            position TEXT NOT NULL,
-            status TEXT DEFAULT 'Applied' CHECK(status IN ('Applied', 'Interviewed', 'Declined', 'Offer')),
-            applied_date DATE,
-            location TEXT,
-            salary_range TEXT,
-            notes TEXT,
-            ml_confidence REAL,
-            account_email TEXT,
-            from_address TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            account_email TEXT NOT NULL,
+            processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_job_related BOOLEAN DEFAULT 0,
+            PRIMARY KEY (gmail_message_id, account_email)
           );
         `);
         
-        // Copy only essential data from old table
+        // Copy existing data from old table with default account_email
         getDb().exec(`
-          INSERT INTO jobs_new (id, company, position, status, applied_date, location, salary_range, notes, ml_confidence, created_at, updated_at, gmail_message_id, account_email, from_address)
+          INSERT INTO email_sync_new (gmail_message_id, account_email, processed_at, is_job_related)
           SELECT 
-            id,
-            company,
-            position,
-            CASE 
-              WHEN status = 'active' THEN 'Applied'
-              WHEN status = 'applied' THEN 'Applied'
-              WHEN status = 'interviewing' THEN 'Interviewed'
-              WHEN status = 'offered' THEN 'Offer'
-              WHEN status = 'rejected' THEN 'Declined'
-              WHEN status = 'withdrawn' THEN 'Declined'
-              ELSE 'Applied'
-            END as status,
-            COALESCE(applied_date, date('now')) as applied_date,
-            location,
-            salary_range,
-            notes,
-            ml_confidence,
-            COALESCE(created_at, datetime('now')) as created_at,
-            COALESCE(updated_at, datetime('now')) as updated_at,
-            'migrated_' || id as gmail_message_id,
-            'unknown' as account_email,
-            'migrated' as from_address
-          FROM jobs;
+            gmail_message_id,
+            'migrated@unknown.com' as account_email,
+            processed_at,
+            is_job_related
+          FROM email_sync;
         `);
         
         // Drop old table and rename new one
-        getDb().exec('DROP TABLE jobs');
-        getDb().exec('ALTER TABLE jobs_new RENAME TO jobs');
+        getDb().exec('DROP TABLE email_sync');
+        getDb().exec('ALTER TABLE email_sync_new RENAME TO email_sync');
         
-        console.log('Migration completed: Updated jobs table schema');
+        console.log('Migration completed: Updated email_sync table schema');
       }
     }
     
@@ -260,6 +293,19 @@ function initializeDatabase() {
 // Database operations
 ipcMain.handle('db:get-jobs', async (event, filters = {}) => {
   try {
+    // First verify that the jobs table has all required columns
+    const tableInfo = getDb().prepare("PRAGMA table_info(jobs)").all();
+    const columnNames = tableInfo.map(col => col.name);
+    const requiredColumns = ['id', 'company', 'position', 'status', 'applied_date', 'account_email', 'gmail_message_id', 'from_address'];
+    
+    console.log('Jobs table current columns:', columnNames);
+    
+    const missingColumns = requiredColumns.filter(col => !columnNames.includes(col));
+    if (missingColumns.length > 0) {
+      console.error('Missing required columns in jobs table:', missingColumns);
+      throw new Error(`Missing required columns in jobs table: ${missingColumns.join(', ')}`);
+    }
+    
     let query = `
       SELECT * 
       FROM jobs
@@ -298,7 +344,9 @@ ipcMain.handle('db:get-jobs', async (event, filters = {}) => {
     const results = stmt.all(...params);
     
     console.log(`Found ${results.length} jobs`);
-    console.log('Sample job from database:', results[0]); // Debug first job
+    if (results.length > 0) {
+      console.log('Sample job from database:', results[0]); // Debug first job
+    }
     
     return results;
   } catch (error) {

@@ -120,6 +120,24 @@ function makeCacheKey(subject, plaintext) {
     return crypto_1.createHash("sha256").update(canonical).digest("hex");
 }
 
+/**
+ * Wrap LLM inference with timeout and error handling
+ */
+async function withTimeout(promise, timeoutMs, operation = 'LLM operation') {
+    const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+            reject(new Error(`${operation} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+    });
+    
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } catch (error) {
+        console.error(`❌ ${operation} failed:`, error.message);
+        throw error;
+    }
+}
+
 
 
 /**
@@ -400,14 +418,38 @@ function extractCompanyFromJobBoard(subject, plaintext) {
 async function ensureSession(modelPath) {
     if (loadedSession && loadedModelPath === modelPath)
         return loadedSession;
+    
+    console.log('🔧 Initializing LLM session...');
     const module = await loadLlamaModule();
     const { getLlama, LlamaModel, LlamaContext, LlamaChatSession } = module;
+    
+    console.log('🦙 Loading Llama instance...');
     const llama = await getLlama();
-    loadedModel = await llama.loadModel({ modelPath });
-    loadedContext = await loadedModel.createContext({ contextSize: config_1.LLM_CONTEXT, batchSize: 512 });
+    
+    console.log('📂 Loading model:', modelPath);
+    loadedModel = await llama.loadModel({ 
+        modelPath,
+        gpuLayers: config_1.GPU_LAYERS // Use config setting
+    });
+    
+    console.log('🧠 Creating context with size:', config_1.LLM_CONTEXT);
+    // Use conservative settings to prevent hanging
+    const contextSize = Math.min(config_1.LLM_CONTEXT, 1024); // Cap at 1024 for stability
+    const batchSize = Math.min(512, Math.floor(contextSize / 4)); // Smaller batch relative to context
+    
+    loadedContext = await loadedModel.createContext({ 
+        contextSize: contextSize, 
+        batchSize: batchSize 
+    });
+    
     const sequence = loadedContext.getSequence();
-    loadedSession = new LlamaChatSession({ contextSequence: sequence, systemPrompt: SYSTEM_PROMPT });
+    loadedSession = new LlamaChatSession({ 
+        contextSequence: sequence, 
+        systemPrompt: SYSTEM_PROMPT 
+    });
     loadedModelPath = modelPath;
+    
+    console.log('✅ LLM session initialized successfully');
     return loadedSession;
 }
 async function parseEmailWithLLM(input) {
@@ -471,15 +513,23 @@ async function parseEmailWithLLM(input) {
     ]
         .filter(Boolean)
         .join("\n");
-    const response = await session.prompt(userPrompt, {
-        temperature,
-        maxTokens,
-        responseFormat: {
-            type: "json_schema",
-            schema,
-            schema_id: "OnlyJobsEmailParseSchema",
-        },
-    });
+    // Get timeout from environment variable
+    const timeoutMs = Number(process.env.ONLYJOBS_INFER_TIMEOUT_MS || 30000);
+    console.log(`🕐 Starting LLM inference with ${timeoutMs}ms timeout...`);
+    
+    const response = await withTimeout(
+        session.prompt(userPrompt, {
+            temperature,
+            maxTokens,
+            responseFormat: {
+                type: "json_schema",
+                schema,
+                schema_id: "OnlyJobsEmailParseSchema",
+            },
+        }),
+        timeoutMs,
+        'LLM unified inference'
+    );
     // Parse response with robust JSON extraction
     let parsed = extractJSON(response);
     if (!parsed) {
@@ -638,15 +688,23 @@ async function parseEmailWithTwoStage(input) {
 
         const stage1Input = `Input\nSubject: ${subject}\nBody: ${truncatedBody}\nOutput`;
         
-        const stage1Response = await stage1ChatSession.prompt(stage1Input, {
-            temperature: 0.1, // Lower temperature for classification
-            maxTokens: 50,
-            responseFormat: {
-                type: "json_schema",
-                schema: stage1Schema,
-                schema_id: "Stage1ClassificationSchema"
-            }
-        });
+        // Get timeout from environment variable
+        const timeoutMs = Number(process.env.ONLYJOBS_INFER_TIMEOUT_MS || 30000);
+        console.log(`🕐 Stage 1 inference with ${timeoutMs}ms timeout...`);
+        
+        const stage1Response = await withTimeout(
+            stage1ChatSession.prompt(stage1Input, {
+                temperature: 0.1, // Lower temperature for classification
+                maxTokens: 50,
+                responseFormat: {
+                    type: "json_schema",
+                    schema: stage1Schema,
+                    schema_id: "Stage1ClassificationSchema"
+                }
+            }),
+            timeoutMs,
+            'Stage 1 classification'
+        );
 
         // Parse stage 1 response with robust JSON extraction
         let stage1Result = extractJSON(stage1Response);
@@ -700,15 +758,21 @@ async function parseEmailWithTwoStage(input) {
             `Output`
         ].filter(Boolean).join("\n");
 
-        const stage2Response = await stage2ChatSession.prompt(stage2Input, {
-            temperature: 0.2, // Slightly higher for extraction
-            maxTokens: 200,
-            responseFormat: {
-                type: "json_schema",  
-                schema: stage2Schema,
-                schema_id: "Stage2ParsingSchema"
-            }
-        });
+        console.log(`🕐 Stage 2 inference with ${timeoutMs}ms timeout...`);
+        
+        const stage2Response = await withTimeout(
+            stage2ChatSession.prompt(stage2Input, {
+                temperature: 0.2, // Slightly higher for extraction
+                maxTokens: 200,
+                responseFormat: {
+                    type: "json_schema",  
+                    schema: stage2Schema,
+                    schema_id: "Stage2ParsingSchema"
+                }
+            }),
+            timeoutMs,
+            'Stage 2 parsing'
+        );
 
         // Parse stage 2 response with robust JSON extraction
         let stage2Result = extractJSON(stage2Response);

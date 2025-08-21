@@ -110,6 +110,7 @@
     "files": [
       "build/**/*",
       "electron/**/*",
+      "models/**/*",
       "ml-classifier/src/**/*",
       "ml-classifier/models/**/*",
       "ml-classifier/requirements.txt",

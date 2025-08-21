@@ -6,6 +6,7 @@
  */
 
 const { parseEmailWithLLM, parseEmailWithTwoStage, classifyEmail, parseJobEmail } = require('../llm/llmEngine');
+const { classifyEmailWithRules } = require('../llm/fallback-classifier');
 
 /**
  * @typedef {Object} EmailInput
@@ -78,16 +79,39 @@ async function classifyWithTwoStageLLM(input) {
     } catch (fallbackError) {
       console.error('[Fallback LLM] Also failed:', fallbackError.message);
       
-      // Final fallback - conservative empty result
-      return {
-        is_job_related: false,
-        company: null,
-        position: null,
-        status: null,
-        confidence: 0.0,
-        decisionPath: 'complete_failure_fallback',
-        notes: ['two_stage_failed', 'unified_failed', 'empty_baseline']
-      };
+      // Rule-based fallback when both LLM approaches fail
+      try {
+        console.log('🔄 Falling back to rule-based classifier');
+        
+        const ruleResult = classifyEmailWithRules({
+          subject: input.subject || '',
+          plaintext: input.plaintext || '',
+          fromAddress: input.fromAddress || input.from || ''
+        });
+        
+        return {
+          is_job_related: ruleResult.is_job_related,
+          company: ruleResult.company,
+          position: ruleResult.position,
+          status: ruleResult.status,
+          confidence: ruleResult.confidence,
+          decisionPath: 'rule_based_final_fallback',
+          notes: ['two_stage_failed', 'unified_failed', 'rule_based_used']
+        };
+      } catch (ruleError) {
+        console.error('[Rule-based fallback] Also failed:', ruleError.message);
+        
+        // Absolute final fallback - conservative empty result
+        return {
+          is_job_related: false,
+          company: null,
+          position: null,
+          status: null,
+          confidence: 0.0,
+          decisionPath: 'complete_failure_fallback',
+          notes: ['two_stage_failed', 'unified_failed', 'rule_based_failed', 'empty_baseline']
+        };
+      }
     }
   }
 }
@@ -122,16 +146,39 @@ async function classifyWithUnifiedLLM(input) {
   } catch (error) {
     console.error('[Unified LLM] Classification failed:', error.message);
     
-    // Simple fallback - conservative empty result
-    return {
-      is_job_related: false,
-      company: null,
-      position: null,
-      status: null,
-      confidence: 0.0,
-      decisionPath: 'llm_error_fallback',
-      notes: ['llm_failed', 'empty_baseline']
-    };
+    // Rule-based fallback when unified LLM fails
+    try {
+      console.log('🔄 Falling back to rule-based classifier');
+      
+      const ruleResult = classifyEmailWithRules({
+        subject: input.subject || '',
+        plaintext: input.plaintext || '',
+        fromAddress: input.fromAddress || input.from || ''
+      });
+      
+      return {
+        is_job_related: ruleResult.is_job_related,
+        company: ruleResult.company,
+        position: ruleResult.position,
+        status: ruleResult.status,
+        confidence: ruleResult.confidence,
+        decisionPath: 'rule_based_unified_fallback',
+        notes: ['unified_llm_failed', 'rule_based_used']
+      };
+    } catch (ruleError) {
+      console.error('[Rule-based fallback] Failed:', ruleError.message);
+      
+      // Final fallback - conservative empty result
+      return {
+        is_job_related: false,
+        company: null,
+        position: null,
+        status: null,
+        confidence: 0.0,
+        decisionPath: 'complete_failure_fallback',
+        notes: ['unified_llm_failed', 'rule_based_failed', 'empty_baseline']
+      };
+    }
   }
 }
 

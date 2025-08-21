@@ -1,12 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getDbPath = exports.getElectronUserDataDir = exports.MODEL_NAME = exports.PROMPT_VERSION = exports.DECISION_VERSION = exports.GPU_LAYERS = exports.LLM_CONTEXT = exports.LLM_MAX_TOKENS = exports.LLM_TEMPERATURE = exports.DEFAULT_MODEL_PATH = void 0;
+exports.getDbPath = exports.getElectronUserDataDir = exports.MODEL_NAME = exports.PROMPT_VERSION = exports.DECISION_VERSION = exports.GPU_LAYERS = exports.LLM_CONTEXT = exports.LLM_MAX_TOKENS = exports.LLM_TEMPERATURE = exports.DEFAULT_DOWNLOAD_URL = exports.ONLYJOBS_MODEL_PATH = exports.DEFAULT_MODEL_PATH = void 0;
 const path = require("path");
 // Model configuration
 exports.DEFAULT_MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH ?? path.resolve(process.cwd(), "models", "model.gguf");
+exports.ONLYJOBS_MODEL_PATH = exports.DEFAULT_MODEL_PATH;
+exports.DEFAULT_DOWNLOAD_URL = process.env.ONLYJOBS_DOWNLOAD_URL ?? "https://huggingface.co/hugging-quants/Llama-3.2-3B-Instruct-Q4_K_M-GGUF/resolve/main/llama-3.2-3b-instruct-q4_k_m.gguf";
 exports.LLM_TEMPERATURE = Number(process.env.ONLYJOBS_TEMPERATURE ?? 0.1);
-exports.LLM_MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS ?? 256);
-exports.LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 1024);
+exports.LLM_MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS ?? 128);
+exports.LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 512);
 exports.GPU_LAYERS = Number(process.env.ONLYJOBS_N_GPU_LAYERS ?? 0);
 // Versioning for tracking model decisions and prompts
 exports.DECISION_VERSION = process.env.ONLYJOBS_DECISION_VERSION ?? "v1.0-prompt-2025-08-08";

@@ -178,6 +178,80 @@ export default function Dashboard() {
     }
   }, [currentUser, isElectron]);
 
+  // Real-time job updates for Electron
+  useEffect(() => {
+    if (isElectron && window.electronAPI) {
+      const handleJobFound = (newJobData: any) => {
+        console.log('Dashboard: Real-time job found:', newJobData);
+        
+        // Transform the new job data to match our Job interface
+        const newJob: Job = {
+          id: newJobData.id,
+          company: newJobData.company || 'Unknown Company',
+          position: newJobData.position || 'Unknown Position',
+          status: newJobData.status || 'Applied',
+          job_type: newJobData.job_type,
+          applied_date: newJobData.applied_date || new Date().toISOString(),
+          location: newJobData.location,
+          salary_range: newJobData.salary_range,
+          notes: newJobData.notes,
+          email_id: newJobData.gmail_message_id,
+          created_at: newJobData.created_at || new Date().toISOString(),
+          updated_at: newJobData.updated_at || new Date().toISOString(),
+          account_email: newJobData.account_email,
+          from_address: newJobData.from_address,
+          raw_content: newJobData.raw_content,
+        };
+
+        // Add the new job to state and recalculate analytics
+        setJobs(prevJobs => {
+          // Check if job already exists to avoid duplicates
+          if (prevJobs.some(job => job.id === newJob.id)) {
+            return prevJobs;
+          }
+          
+          const newJobs = [newJob, ...prevJobs];
+          
+          // Recalculate analytics for new jobs list
+          const analyticsJobs = newJobs.map((job) => ({
+            id: job.id,
+            userId: 'electron-user',
+            company: job.company,
+            jobTitle: job.position,
+            location: job.location || 'Unknown Location',
+            status: job.status as JobStatus,
+            appliedDate: new Date(job.applied_date),
+            lastUpdated: new Date(job.updated_at),
+            source: 'gmail' as const,
+            emailId: job.email_id,
+          }));
+          
+          const stats = analyticsService.calculateJobStats(analyticsJobs);
+          setJobStats(stats);
+          
+          const trend = analyticsService.getWeeklyTrend(analyticsJobs);
+          setWeeklyTrend(trend);
+          
+          return newJobs;
+        });
+
+        // Show notification that a new job was found
+        setSnackbar({
+          open: true,
+          message: `New job found: ${newJob.company} - ${newJob.position}`,
+          severity: 'success'
+        });
+      };
+
+      // Register the listener
+      window.electronAPI.on('job-found', handleJobFound);
+
+      // Cleanup listener on unmount
+      return () => {
+        window.electronAPI.removeListener('job-found', handleJobFound);
+      };
+    }
+  }, [isElectron]);
 
   const handleSnackbarClose = () => {
     setSnackbar({ ...snackbar, open: false });
