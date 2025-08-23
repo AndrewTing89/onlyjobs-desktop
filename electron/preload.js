@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isMlReady: () => ipcRenderer.invoke('ml:is-ready'),
   trainModel: (options) => ipcRenderer.invoke('ml:train-model', options),
   initializeMl: () => ipcRenderer.invoke('ml:initialize'),
+  resetCircuitBreaker: () => ipcRenderer.invoke('ml:reset-circuit-breaker'),
+  getCircuitBreakerStatus: () => ipcRenderer.invoke('ml:get-circuit-breaker-status'),
   
   // Authentication operations
   auth: {
@@ -46,6 +48,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSyncStatus: () => ipcRenderer.invoke('gmail:get-sync-status'),
     // Multi-account operations
     getAccounts: () => ipcRenderer.invoke('gmail:get-accounts'),
+    checkAccountAuth: (email) => ipcRenderer.invoke('gmail:check-account-auth', email),
     addAccount: () => ipcRenderer.invoke('gmail:add-account'),
     removeAccount: (email) => ipcRenderer.invoke('gmail:remove-account', email),
     syncAll: (options) => ipcRenderer.invoke('gmail:sync-all', options),

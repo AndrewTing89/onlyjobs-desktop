@@ -196,7 +196,7 @@ class EnhancedLLMEngine {
    */
   buildContextAwarePrompt(subject, plaintext, fromAddress, hint, duplicateAnalysis, context) {
     const cleanedPlaintext = this.cleanEmailContent(plaintext);
-    const maxBodyLength = 1200;
+    const maxBodyLength = 7000; // Much larger with 2048 token context
     const truncatedBody = cleanedPlaintext.length > maxBodyLength 
       ? cleanedPlaintext.substring(0, maxBodyLength) + "... [truncated]"
       : cleanedPlaintext;

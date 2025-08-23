@@ -9,18 +9,247 @@ const { convert } = require('html-to-text');
 const { getClassifierProvider } = require('./classifier');
 const classifier = getClassifierProvider();
 
-// LLM-only classification handler (no ML, no keyword fallback)
+// Rule-based fallback classification for when LLM fails
+function ruleBasedClassification(content) {
+  const contentLower = content.toLowerCase();
+  
+  // Strong job-related signals
+  const jobRelatedPatterns = [
+    /application\s+(received|submitted|confirmation)/i,
+    /thank\s+you\s+for\s+(applying|your\s+application)/i,
+    /we\s+have\s+(received|successfully\s+received)\s+your\s+application/i,
+    /interview\s+(invitation|scheduled?|request)/i,
+    /job\s+offer/i,
+    /congratulations.*offer/i,
+    /position.*filled/i,
+    /regret\s+to\s+inform/i,
+    /unfortunately.*not\s+(selected|moving\s+forward)/i,
+    /decided\s+to\s+pursue\s+other\s+candidates/i,
+    /your\s+candidacy/i
+  ];
+  
+  // Job recommendation/newsletter patterns (should NOT be job-related)
+  const notJobRelatedPatterns = [
+    /job\s+alert\s+matched/i,
+    /talent\s+community/i,
+    /recommended\s+jobs?/i,
+    /new\s+jobs?\s+(on|matching)/i,
+    /weekly\s+(digest|newsletter|job\s+alert)/i,
+    /you\s+will\s+receive\s+these\s+messages/i,
+    /manage\s+your\s+job\s+alerts/i
+  ];
+  
+  // Check for NOT job-related patterns first (higher specificity)
+  for (const pattern of notJobRelatedPatterns) {
+    if (pattern.test(content)) {
+      console.log('🔄 Rule-based classification: NOT job-related (recommendation/newsletter)');
+      return {
+        is_job_related: false,
+        company: null,
+        position: null,
+        status: null,
+        job_type: null,
+        fallback_used: 'rule_based_not_job'
+      };
+    }
+  }
+  
+  // Check for job-related patterns
+  for (const pattern of jobRelatedPatterns) {
+    if (pattern.test(content)) {
+      console.log('🔄 Rule-based classification: job-related detected');
+      
+      // Try to extract basic information
+      const company = extractCompanyFromContent(content);
+      const position = extractPositionFromContent(content);
+      const status = extractStatusFromContent(content);
+      
+      return {
+        is_job_related: true,
+        company,
+        position,
+        status,
+        job_type: status === 'Applied' ? 'application_sent' : 
+                 status === 'Interview' ? 'interview' :
+                 status === 'Declined' ? 'rejection' :
+                 status === 'Offer' ? 'offer' : 'application_sent',
+        fallback_used: 'rule_based_job_related'
+      };
+    }
+  }
+  
+  console.log('🔄 Rule-based classification: uncertain - defaulting to NOT job-related');
+  return {
+    is_job_related: false,
+    company: null,
+    position: null,
+    status: null,
+    job_type: null,
+    fallback_used: 'rule_based_uncertain'
+  };
+}
+
+function extractCompanyFromContent(content) {
+  // Try to extract company from common patterns
+  const patterns = [
+    /(?:application\s+(?:for|to)|interest\s+in|career\s+with)\s+(?:the\s+)?([A-Z][a-zA-Z\s&,.-]+?)(?:\s+Companies?,?\s+Inc\.?|\.|\n|,)/gi,
+    /([A-Z][a-zA-Z\s&,.-]{2,30})\s+(?:recruiting|talent|careers?|hiring)\s+team/gi,
+    /at\s+([A-Z][a-zA-Z\s&,.-]{2,30})(?:\s|\.|\n)/gi
+  ];
+  
+  for (const pattern of patterns) {
+    const matches = content.matchAll(pattern);
+    for (const match of matches) {
+      let company = match[1]?.trim();
+      if (company && company.length > 2 && company.length < 50) {
+        // Clean up common suffixes and normalize
+        company = company
+          .replace(/\s+(Inc|LLC|Corp|Ltd|Company|Companies|Co)\.?$/i, '')
+          .replace(/^The\s+/i, '')
+          .trim();
+        if (company) return company;
+      }
+    }
+  }
+  return null;
+}
+
+function extractPositionFromContent(content) {
+  // Try to extract position from common patterns
+  const patterns = [
+    /(?:application\s+for|applying\s+for|interest\s+in)\s+(?:the\s+)?([A-Z][a-zA-Z\s\-,()]+?)\s+(?:position|role|opening)/gi,
+    /(?:position|role):\s*([A-Z][a-zA-Z\s\-,()]+?)(?:\s*\n|\s*-|\s*\|)/gi,
+    /([A-Z][a-zA-Z\s\-,()]+?)\s+\([A-Z0-9\-_]+\)/gi  // Position with job code in parentheses
+  ];
+  
+  for (const pattern of patterns) {
+    const matches = content.matchAll(pattern);
+    for (const match of matches) {
+      let position = match[1]?.trim();
+      if (position && position.length > 3 && position.length < 100) {
+        // Remove job codes and clean
+        position = position
+          .replace(/\b[A-Z]*\d+[A-Z]*\w*\b/g, '') // Remove alphanumeric codes
+          .replace(/\([^)]*\)/g, '') // Remove parenthetical content
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (position.length > 3) return position;
+      }
+    }
+  }
+  return null;
+}
+
+function extractStatusFromContent(content) {
+  const contentLower = content.toLowerCase();
+  
+  if (/regret|unfortunately|not\s+(selected|moving\s+forward)|pursue\s+other\s+candidates/i.test(content)) {
+    return 'Declined';
+  }
+  if (/interview|schedule|phone\s+screen|technical\s+screen/i.test(content)) {
+    return 'Interview';
+  }
+  if (/offer|compensation|congratulations/i.test(content)) {
+    return 'Offer';
+  }
+  if (/application\s+(received|submitted)|thank\s+you\s+for\s+applying/i.test(content)) {
+    return 'Applied';
+  }
+  
+  return 'Applied'; // Default for job-related emails
+}
+
+// Circuit breaker for LLM operations with better recovery
+let consecutiveFailures = 0;
+const MAX_CONSECUTIVE_FAILURES = 8; // Further increased since LLM is working properly
+const CIRCUIT_BREAKER_TIMEOUT = 60000; // Increased to 60 seconds for better recovery
+let circuitBreakerUntil = 0;
+
+// Function to reset circuit breaker manually
+function resetCircuitBreaker() {
+  console.log('🔄 Manually resetting circuit breaker');
+  consecutiveFailures = 0;
+  circuitBreakerUntil = 0;
+}
+
+// Function to check if circuit breaker should be reset due to age
+function checkCircuitBreakerReset() {
+  if (circuitBreakerUntil > 0 && Date.now() > circuitBreakerUntil) {
+    console.log('⏰ Circuit breaker timeout expired, resetting');
+    consecutiveFailures = 0;
+    circuitBreakerUntil = 0;
+    return true;
+  }
+  return false;
+}
+
+// LLM-only classification handler with improved error handling
 const llmHandler = {
   classifyEmail: async (content) => {
-    console.log('🧠 Using LLM classifier only');
+    // Check if circuit breaker should be reset
+    checkCircuitBreakerReset();
+    
+    // Check circuit breaker
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && Date.now() < circuitBreakerUntil) {
+      console.warn(`🚫 Circuit breaker active (${consecutiveFailures} failures) - using rule-based fallback instead`);
+      
+      // Use rule-based classification when circuit breaker is active
+      try {
+        const fallbackResult = ruleBasedClassification(content);
+        console.log('✅ Circuit breaker fallback successful:', fallbackResult.fallback_used);
+        return fallbackResult;
+      } catch (fallbackError) {
+        console.error('❌ Circuit breaker fallback also failed:', fallbackError.message);
+        return {
+          is_job_related: false,
+          company: null,
+          position: null,
+          status: null,
+          job_type: null,
+          fallback_used: 'circuit_breaker_safe_default'
+        };
+      }
+    }
+    
+    console.log('🚀 Stage 1: Fast job classification');
+    const startTime = Date.now();
+    
     try {
       // Parse content to extract subject and body
       const lines = content.split('\n');
       const subjectLine = lines.find(line => line.toLowerCase().startsWith('subject:'));
       const subject = subjectLine ? subjectLine.substring(8).trim() : '';
       
-      const result = await classifier.parse({ subject, plaintext: content });
+      // Use configuration-driven timeouts
+      const { STAGE1_TIMEOUT, FALLBACK_THRESHOLD } = require('./llm/config');
+      const actualTimeout = STAGE1_TIMEOUT || 8000;
+      const fallbackThreshold = FALLBACK_THRESHOLD || 6000;
+      
+      console.log(`🕐 Stage 1 inference with ${actualTimeout}ms timeout (fallback at ${fallbackThreshold}ms)...`);
+      
+      // AGGRESSIVE timeout wrapper - fail fast and fallback
+      const classificationPromise = classifier.parse({ subject, plaintext: content });
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Stage 1 classification timed out after ${actualTimeout}ms`));
+        }, actualTimeout);
+      });
+      
+      // Add early fallback trigger
+      const earlyFallbackPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Stage 1 early fallback triggered after ${fallbackThreshold}ms`));
+        }, fallbackThreshold);
+      });
+      
+      const result = await Promise.race([classificationPromise, timeoutPromise, earlyFallbackPromise]);
+      
+      const duration = Date.now() - startTime;
+      console.log(`✅ Stage 1 completed in ${duration}ms`);
       console.log('LLM classification result:', result);
+      
+      // Reset failure count on success
+      consecutiveFailures = 0;
       
       // Map status to job_type for backward compatibility
       let jobType = null;
@@ -38,15 +267,48 @@ const llmHandler = {
         job_type: jobType
       };
     } catch (error) {
-      console.error('LLM classification error:', error);
-      // Return non-job-related as safe fallback
-      return {
-        is_job_related: false,
-        company: null,
-        position: null,
-        status: null,
-        job_type: null
-      };
+      const duration = Date.now() - startTime;
+      console.error(`❌ Stage 1 classification failed after ${duration}ms:`, error.message);
+      
+      // Handle different types of errors appropriately
+      if (error.message.includes('node-llama-cpp is not installed') || 
+          error.message.includes('failed to build')) {
+        console.error('🚨 CRITICAL: LLM model not properly installed!');
+        consecutiveFailures += 3; // Heavy penalty for installation issues
+      } else if (error.message.includes('timed out') || error.message.includes('early fallback')) {
+        consecutiveFailures += 1; // Normal penalty for timeouts (reduced from 2)
+        console.warn(`⚡ TIMEOUT DETECTED (failures: ${consecutiveFailures})`);
+      } else {
+        consecutiveFailures++;
+      }
+      
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        console.warn(`🚫 Circuit breaker activated after ${consecutiveFailures} failures - will reset in ${CIRCUIT_BREAKER_TIMEOUT/1000}s`);
+        circuitBreakerUntil = Date.now() + CIRCUIT_BREAKER_TIMEOUT;
+      }
+      
+      // IMMEDIATE rule-based fallback for faster recovery
+      console.log('🔄 LLM failed - IMMEDIATE rule-based classification fallback');
+      try {
+        const fallbackResult = ruleBasedClassification(content);
+        console.log('✅ Rule-based fallback successful (fast recovery):', {
+          is_job_related: fallbackResult.is_job_related,
+          fallback_used: fallbackResult.fallback_used,
+          duration: Date.now() - startTime
+        });
+        return fallbackResult;
+      } catch (fallbackError) {
+        console.error('❌ Rule-based fallback also failed:', fallbackError.message);
+        // Final safe fallback with timeout indication
+        return {
+          is_job_related: false,
+          company: null,
+          position: null,
+          status: null,
+          job_type: null,
+          fallback_used: `timeout_safe_default_${duration}ms`
+        };
+      }
     }
   },
   initialize: async () => {
@@ -779,6 +1041,41 @@ ipcMain.handle('ml:initialize', async () => {
   }
 });
 
+// Circuit breaker reset handler
+ipcMain.handle('ml:reset-circuit-breaker', async () => {
+  try {
+    resetCircuitBreaker();
+    return { 
+      success: true, 
+      message: 'Circuit breaker has been reset successfully',
+      failures: consecutiveFailures,
+      blocked_until: circuitBreakerUntil
+    };
+  } catch (error) {
+    console.error('Error resetting circuit breaker:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Circuit breaker status handler
+ipcMain.handle('ml:get-circuit-breaker-status', async () => {
+  try {
+    checkCircuitBreakerReset(); // Check if it should auto-reset
+    
+    return {
+      success: true,
+      active: consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && Date.now() < circuitBreakerUntil,
+      failures: consecutiveFailures,
+      max_failures: MAX_CONSECUTIVE_FAILURES,
+      blocked_until: circuitBreakerUntil,
+      blocked_for_ms: Math.max(0, circuitBreakerUntil - Date.now())
+    };
+  } catch (error) {
+    console.error('Error getting circuit breaker status:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 // Initialize auth flow
 const authFlow = new ElectronAuthFlow();
 
@@ -1311,7 +1608,17 @@ ipcMain.handle('oauth-completed', async (event, data) => {
 ipcMain.handle('gmail:get-accounts', async () => {
   try {
     const accounts = gmailMultiAuth.getAllAccounts();
-    return { success: true, accounts };
+    
+    // Enhance each account with authentication status
+    const enhancedAccounts = accounts.map(account => {
+      const authStatus = gmailMultiAuth.getAccountAuthStatus(account.email);
+      return {
+        ...account,
+        authStatus
+      };
+    });
+    
+    return { success: true, accounts: enhancedAccounts };
   } catch (error) {
     console.error('Error getting Gmail accounts:', error);
     throw error;
@@ -1354,6 +1661,17 @@ ipcMain.handle('gmail:remove-account', async (event, email) => {
   }
 });
 
+// Check specific account authentication status
+ipcMain.handle('gmail:check-account-auth', async (event, email) => {
+  try {
+    const authStatus = gmailMultiAuth.getAccountAuthStatus(email);
+    return { success: true, authStatus };
+  } catch (error) {
+    console.error('Error checking account authentication:', error);
+    throw error;
+  }
+});
+
 // Multi-account sync
 ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
   try {
@@ -1363,13 +1681,22 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     if (accounts.length === 0) {
       return {
         success: false,
-        message: 'No Gmail accounts connected'
+        message: 'No Gmail accounts connected. Please add a Gmail account in Settings first.'
       };
     }
-    
-    console.log(`Starting sync for ${accounts.length} accounts...`);
+
+    // Check if any accounts have valid authentication
+    const activeAccounts = accounts.filter(account => account.is_active);
+    if (activeAccounts.length === 0) {
+      return {
+        success: false,
+        message: 'All Gmail accounts have expired authentication. Please re-connect your accounts in Settings.'
+      };
+    }
+
+    console.log(`🔄 Starting sync for ${activeAccounts.length} active accounts (${accounts.length} total)...`);
     const { daysToSync = 90, maxEmails = 500 } = options;
-    console.log(`Sync options - daysToSync: ${daysToSync}, maxEmails: ${maxEmails}`);
+    console.log(`📧 Sync options - daysToSync: ${daysToSync}, maxEmails: ${maxEmails}`);
     
     let totalEmailsFetched = 0;
     let totalEmailsClassified = 0;
@@ -1384,18 +1711,52 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     `);
     updateStatus.run();
     
-    // Sync each account
-    for (let i = 0; i < accounts.length; i++) {
-      const account = accounts[i];
+    // Reset circuit breaker at start of sync if it's been long enough
+    checkCircuitBreakerReset();
+    
+    // Sync each account (only process active accounts)
+    const accountsToProcess = accounts.filter(account => account.is_active);
+    let authenticatedAccountsProcessed = 0;
+    let failedAccounts = [];
+    
+    for (let i = 0; i < accountsToProcess.length; i++) {
+      const account = accountsToProcess[i];
       
       mainWindow.webContents.send('sync-progress', {
-        current: i,
-        total: accounts.length,
-        status: `Fetching emails from ${account.email}...`,
+        current: i + 1,
+        total: accountsToProcess.length,
+        status: `Checking authentication for ${account.email}...`,
         account: account.email
       });
       
       try {
+        // First, validate authentication status
+        const authStatus = gmailMultiAuth.getAccountAuthStatus(account.email);
+        if (!authStatus.authenticated) {
+          console.warn(`⚠️ Account ${account.email} not authenticated: ${authStatus.reason}`);
+          failedAccounts.push({
+            email: account.email,
+            error: authStatus.reason,
+            requiresReauth: true
+          });
+          
+          mainWindow.webContents.send('sync-progress', {
+            current: i + 1,
+            total: accountsToProcess.length,
+            status: `${account.email}: Authentication expired - skipping`,
+            account: account.email,
+            error: true
+          });
+          continue;
+        }
+
+        mainWindow.webContents.send('sync-progress', {
+          current: i + 1,
+          total: accountsToProcess.length,
+          status: `Fetching emails from ${account.email}...`,
+          account: account.email
+        });
+        
         // Fetch emails from this account
         const fetchResult = await gmailMultiAuth.fetchEmailsFromAccount(account.email, {
           maxResults: maxEmails,
@@ -1403,8 +1764,11 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
         });
         
         if (!fetchResult.messages || fetchResult.messages.length === 0) {
+          console.log(`📭 No emails found for ${account.email}`);
           continue;
         }
+        
+        authenticatedAccountsProcessed++;
         
         // Process each email directly
         for (const email of fetchResult.messages) {
@@ -1515,11 +1879,45 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
           }
         }
       } catch (error) {
-        console.error(`Error syncing account ${account.email}:`, error);
+        console.error(`❌ Error syncing account ${account.email}:`, error);
+        
+        // Determine if this is an authentication error
+        const isAuthError = error.message && (
+          error.message.includes('Authentication expired') ||
+          error.message.includes('invalid_grant') ||
+          error.message.includes('Token has been expired') ||
+          error.message.includes('re-connect this account')
+        );
+        
+        failedAccounts.push({
+          email: account.email,
+          error: error.message,
+          requiresReauth: isAuthError
+        });
+        
+        // Send error details to frontend
+        mainWindow.webContents.send('sync-progress', {
+          current: i + 1,
+          total: accountsToProcess.length,
+          status: isAuthError ? 
+            `${account.email}: Authentication required - please re-connect` :
+            `Error with ${account.email}: ${error.message}`,
+          account: account.email,
+          error: true,
+          requiresReauth: isAuthError
+        });
+        
+        if (isAuthError) {
+          console.warn(`🚫 Account ${account.email} requires re-authentication`);
+        }
       }
     }
     
-    console.log(`Processed ${totalEmailsFetched} emails, found ${totalJobsFound} jobs from ${accounts.length} accounts`);
+    console.log(`✅ Sync completed: processed ${totalEmailsFetched} emails, found ${totalJobsFound} jobs from ${authenticatedAccountsProcessed} accounts`);
+    if (failedAccounts.length > 0) {
+      console.warn(`⚠️ ${failedAccounts.length} accounts failed:`, failedAccounts.map(a => `${a.email}: ${a.error}`));
+    }
+    
     totalEmailsClassified = totalEmailsFetched; // All processed emails are classified
     
     // Update final sync status
@@ -1533,11 +1931,23 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     `);
     finalUpdate.run(totalEmailsFetched, totalEmailsClassified, totalJobsFound);
     
+    // Create detailed summary message
+    let summaryMessage = `Processed ${totalEmailsFetched} emails, found ${totalJobsFound} jobs from ${authenticatedAccountsProcessed} accounts`;
+    if (failedAccounts.length > 0) {
+      const authFailures = failedAccounts.filter(a => a.requiresReauth).length;
+      if (authFailures > 0) {
+        summaryMessage += `. ${authFailures} account(s) need re-authentication in Settings.`;
+      }
+    }
+    
     mainWindow.webContents.send('sync-complete', {
       emailsFetched: totalEmailsFetched,
       emailsClassified: totalEmailsClassified,
       jobsFound: totalJobsFound,
-      accounts: accounts.length
+      accounts: accounts.length,
+      authenticatedAccounts: authenticatedAccountsProcessed,
+      failedAccounts,
+      message: summaryMessage
     });
     
     return {
@@ -1545,7 +1955,10 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       emailsFetched: totalEmailsFetched,
       emailsClassified: totalEmailsClassified,
       jobsFound: totalJobsFound,
-      accounts: accounts.length
+      accounts: accounts.length,
+      authenticatedAccounts: authenticatedAccountsProcessed,
+      failedAccounts,
+      message: summaryMessage
     };
   } catch (error) {
     console.error('Multi-account sync error:', error);

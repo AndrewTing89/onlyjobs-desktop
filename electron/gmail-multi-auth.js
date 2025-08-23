@@ -174,8 +174,50 @@ class GmailMultiAuth extends EventEmitter {
       const stmt = this.db.prepare('UPDATE gmail_accounts SET is_active = 0 WHERE email = ?');
       stmt.run(email);
       this.oauthClients.delete(email);
+      console.log(`🗑️ Account ${email} removed successfully`);
     } catch (error) {
       console.error('GmailMultiAuth: Error removing account:', error);
+    }
+  }
+
+  // Get account authentication status
+  getAccountAuthStatus(email) {
+    try {
+      const account = this.getAccount(email);
+      if (!account) {
+        return { authenticated: false, reason: 'Account not found' };
+      }
+
+      if (!account.is_active) {
+        return { authenticated: false, reason: 'Account marked as inactive due to expired tokens' };
+      }
+
+      if (!account.access_token || !account.refresh_token) {
+        return { authenticated: false, reason: 'Missing authentication tokens' };
+      }
+
+      // Check token expiry
+      const now = Date.now();
+      const expiryTime = account.token_expiry ? new Date(account.token_expiry).getTime() : 0;
+      const isExpired = expiryTime > 0 && (expiryTime - now) < 0; // Already expired
+
+      if (isExpired) {
+        return { 
+          authenticated: false, 
+          reason: 'Access token expired',
+          canRefresh: true,
+          expiresAt: account.token_expiry 
+        };
+      }
+
+      return { 
+        authenticated: true, 
+        expiresAt: account.token_expiry,
+        timeUntilExpiry: Math.max(0, expiryTime - now)
+      };
+    } catch (error) {
+      console.error('Error checking auth status:', error);
+      return { authenticated: false, reason: `Error: ${error.message}` };
     }
   }
   
@@ -346,29 +388,100 @@ class GmailMultiAuth extends EventEmitter {
     }
   }
   
+  // Validate tokens before API calls
+  async validateAndRefreshTokens(email) {
+    const account = this.getAccount(email);
+    if (!account) {
+      throw new Error(`Account not found: ${email}`);
+    }
+
+    // Check if account is marked as inactive (expired tokens)
+    if (!account.is_active) {
+      throw new Error(`Account ${email} has expired authentication. Please re-connect in Settings.`);
+    }
+
+    // Check if we have required tokens
+    if (!account.access_token || !account.refresh_token) {
+      console.error(`❌ Missing tokens for ${email}`);
+      // Mark as inactive and throw error
+      const deactivateStmt = this.db.prepare(`
+        UPDATE gmail_accounts 
+        SET is_active = 0, access_token = NULL, refresh_token = NULL
+        WHERE email = ?
+      `);
+      deactivateStmt.run(email);
+      throw new Error(`Account ${email} is missing authentication tokens. Please re-connect in Settings.`);
+    }
+
+    // Check if access token is expired (with 5 minute buffer)
+    const now = Date.now();
+    const expiryTime = account.token_expiry ? new Date(account.token_expiry).getTime() : 0;
+    const isExpired = expiryTime > 0 && (expiryTime - now) < 300000; // 5 minutes buffer
+
+    if (isExpired || !account.token_expiry) {
+      console.log(`🔄 Access token for ${email} expired or missing expiry, refreshing...`);
+      
+      try {
+        const oauth2Client = this.getOAuthClient(email);
+        const { credentials } = await oauth2Client.refreshAccessToken();
+        
+        // Update tokens in database with new expiry
+        const updateStmt = this.db.prepare(`
+          UPDATE gmail_accounts 
+          SET access_token = ?, token_expiry = ?, is_active = 1
+          WHERE email = ?
+        `);
+        updateStmt.run(credentials.access_token, credentials.expiry_date, email);
+        
+        // Update the OAuth client with fresh tokens
+        oauth2Client.setCredentials(credentials);
+        this.oauthClients.set(email, oauth2Client);
+        
+        console.log(`✅ Successfully refreshed tokens for ${email}`);
+        return oauth2Client;
+        
+      } catch (error) {
+        console.error(`❌ Failed to refresh tokens for ${email}:`, error);
+        
+        // Handle specific OAuth errors that indicate expired refresh tokens
+        if (error.message && (
+          error.message.includes('invalid_grant') ||
+          error.message.includes('Token has been expired or revoked') ||
+          error.message.includes('Request had invalid authentication credentials') ||
+          error.code === 400
+        )) {
+          console.error(`🚫 Refresh token expired for ${email} - full re-authentication required`);
+          
+          // Clear all tokens and mark account as inactive
+          const deactivateStmt = this.db.prepare(`
+            UPDATE gmail_accounts 
+            SET is_active = 0, access_token = NULL, refresh_token = NULL, token_expiry = NULL
+            WHERE email = ?
+          `);
+          deactivateStmt.run(email);
+          
+          // Clear from memory
+          this.oauthClients.delete(email);
+          
+          throw new Error(`Authentication expired for ${email}. Please re-connect this account in Settings.`);
+        }
+        
+        // For other errors, rethrow with context
+        throw new Error(`Token refresh failed for ${email}: ${error.message}`);
+      }
+    }
+
+    // Tokens are valid, return existing client
+    return this.getOAuthClient(email);
+  }
+
   // Fetch emails from specific account
   async fetchEmailsFromAccount(email, options = {}) {
     const { maxResults = 50, query = '', pageToken = null } = options;
     
     try {
-      const oauth2Client = this.getOAuthClient(email);
-      
-      // Check if tokens need refresh
-      const account = this.getAccount(email);
-      if (account && account.refresh_token) {
-        try {
-          const { credentials } = await oauth2Client.refreshAccessToken();
-          // Update tokens in database
-          const updateStmt = this.db.prepare(`
-            UPDATE gmail_accounts 
-            SET access_token = ?, token_expiry = ?
-            WHERE email = ?
-          `);
-          updateStmt.run(credentials.access_token, credentials.expiry_date, email);
-        } catch (error) {
-          console.error(`Failed to refresh token for ${email}:`, error);
-        }
-      }
+      // Validate and refresh tokens BEFORE attempting API calls
+      const oauth2Client = await this.validateAndRefreshTokens(email);
       
       const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
       

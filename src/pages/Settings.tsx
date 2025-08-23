@@ -34,6 +34,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useAuth as useElectronAuth } from "../contexts/ElectronAuthContext";
 import { GmailConnection } from "../components/GmailConnection";
 import { SyncStatus } from "../components/SyncStatus";
+import { SystemDiagnostics } from "../components/SystemDiagnostics";
 
 const useAuthContext = window.electronAPI ? useElectronAuth : useAuth;
 
@@ -291,6 +292,15 @@ export default function Settings() {
                       {fetchingToken ? "Getting Token..." : "Get Token"}
                     </Button>
                   </Box>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* System Diagnostics Section - Electron Only */}
+            {isElectron && (
+              <Card sx={{ borderRadius: 3, boxShadow: 2, mb: 3, border: "1px solid", borderColor: "info.light" }}>
+                <CardContent sx={{ p: 0 }}>
+                  <SystemDiagnostics />
                 </CardContent>
               </Card>
             )}

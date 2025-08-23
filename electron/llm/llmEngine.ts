@@ -21,6 +21,11 @@ let unifiedContext: any | null = null; // LlamaContext
 let loadedModel: any | null = null;   // LlamaModel
 let loadedModelPath: string | null = null;
 
+// Session use counters to track when to reset
+let stage1UseCount = 0;
+let stage2UseCount = 0;
+const MAX_SESSION_USES = 1; // Always create fresh sessions to avoid context issues completely
+
 async function loadLlamaModule() {
   if (llamaModule) return llamaModule;
   
@@ -67,125 +72,38 @@ const classificationSchema = {
   additionalProperties: false,
 };
 
-// Stage 1: Ultra-fast job classification prompt (optimized for speed with manual record awareness)
-const STAGE1_CLASSIFICATION_PROMPT = `Job email classifier for mixed automatic/manual record system. Output ONLY JSON: {"is_job_related":boolean,"manual_record_risk":"none"|"low"|"medium"|"high"}
+// Stage 1: Ultra-compact classification prompt for small context
+const STAGE1_CLASSIFICATION_PROMPT = `Job classifier. Output JSON: {"is_job_related":boolean,"manual_record_risk":"none"|"low"|"medium"|"high"}
 
-Job-related emails:
-- Application confirmations/receipts
-- Interview scheduling
-- Job offers/rejections  
-- ATS notifications
-- Recruiting outreach
-- Application status updates
-
-Not job-related:
-- Newsletters/marketing
-- Social media notifications
-- Personal emails
-- General business correspondence
-
-Manual record risk assessment:
-- "high": Generic confirmations users often manually create first
-- "medium": Specific company/role combinations users might track manually
-- "low": System-generated emails unlikely manually duplicated
-- "none": Clearly automated emails with unique identifiers
+Job-related: Application confirmations, interviews, offers, rejections from companies
+NOT job-related: Job alerts, recommendations, talent communities, newsletters
 
 Examples:
-"Application received" → {"is_job_related":true,"manual_record_risk":"medium"}
-"Interview invitation for Software Engineer at Google" → {"is_job_related":true,"manual_record_risk":"low"}
-"Job offer" → {"is_job_related":true,"manual_record_risk":"low"}
-"Thank you for your interest" → {"is_job_related":true,"manual_record_risk":"high"}
-"Weekly newsletter" → {"is_job_related":false,"manual_record_risk":"none"}
+"Application received" → {"is_job_related":true,"manual_record_risk":"low"}
+"Your Job Alert matched" → {"is_job_related":false,"manual_record_risk":"none"}
+"Interview invitation" → {"is_job_related":true,"manual_record_risk":"low"}
 
-Output ONLY the JSON.`;
+Output ONLY JSON.`;
 
-// Stage 2: Detailed parsing prompt (optimized for accuracy with manual record conflict awareness)
-const STAGE2_PARSING_PROMPT = `Expert job email parser for mixed automatic/manual record system. Extract company, position, and status from job-related emails.
+// Stage 2: Optimized parsing prompt for small context
+const STAGE2_PARSING_PROMPT = `Parse job email. Output JSON: {"company":string|null,"position":string|null,"status":"Applied"|"Interview"|"Declined"|"Offer"|null}
 
-Output JSON schema:
-{
-  "company": string | null,
-  "position": string | null,
-  "status": "Applied" | "Interview" | "Declined" | "Offer" | null,
-  "confidence": number,
-  "processing_context": {
-    "email_indicators": string[],
-    "extraction_method": "direct_parsing"|"pattern_matching"|"fuzzy_inference",
-    "data_quality": "high"|"medium"|"low",
-    "potential_duplicates": boolean
-  }
-}
+Company: Extract hiring organization (NOT job boards)
+- Job boards: "Position, CompanyName - Location" → extract CompanyName  
+- Regular: Look for actual employer name, not Indeed/LinkedIn/ZipRecruiter
 
-**Company Extraction Rules:**
-- Extract official company name from email body/subject/from address
-- Handle ATS patterns:
-  * @myworkday.com → look for "at [Company]" or company mention in body
-  * @greenhouse.io, @lever.co, @bamboohr.com → extract from body content
-  * @smartrecruiters.com, @icims.com → check subject/body for company name
-  * @brassring.com, @taleo.net → look for company in email signature/body
-- Clean names: "Google Inc." → "Google", "Acme Corp" → "Acme", "Netflix, Inc." → "Netflix"
-- Extract from sender domain: careers@salesforce.com → "Salesforce", noreply@kiwico.com → "KiwiCo"
-- Return null if truly unclear
+Position: Clean job title
+- Remove job codes: R123456, JR156260, (REQ-123)
+- Keep: Sr., Senior, Principal, Lead, Manager
 
-**Position Extraction Rules (Check Subject First, Then Body):**
-- **Subject line patterns**: "Jr. Analyst, People Data (Animation)" → "Jr. Analyst, People Data (Animation)"
-- **Clean job titles**: Remove codes ("R123 Data Analyst" → "Data Analyst")
-- **Remove internal refs**: "SWE-2024-Q1" → "Software Engineer", "REQ-12345 Marketing Data Analyst" → "Marketing Data Analyst"
-- **Application patterns with job codes**: 
-  * "application for the R157623 BDR Insights Analyst role" → "BDR Insights Analyst"
-  * "application for the REQ123 Marketing Manager position" → "Marketing Manager"
-  * "applied to the C2024-001 Senior Developer role" → "Senior Developer"
-- **Job code patterns to remove**: R######, REQ######, C####-###, [LETTER][NUMBERS], [LETTERS]-[NUMBERS]
-- **Preserve qualifiers**: "Jr.", "Sr.", "Senior", "Principal", "Lead" 
-- **Handle punctuation**: "Analyst / Sr. Analyst, Global GTM Strategy" → "Analyst / Sr. Analyst, Global GTM Strategy"
-- **Extract from subject when body is vague**: Look for role in "Application for [ROLE]", "Thank you for applying for [ROLE]"
-- **Common mappings**: "SWE" → "Software Engineer", "PM" → "Product Manager"
-- Return null if position truly not mentioned
+Status: Applied|Interview|Declined|Offer based on content
 
-**Status Detection (CRITICAL: Rejection signals override everything):**
-- **Declined**: "regret", "unfortunately", "not selected", "not moving forward", "decided not to proceed", "other candidates", "pursue other candidates", "chosen other candidates", "selected another candidate", "will not proceed", "will not be moving forward", "not be proceeding"
-- **Offer**: "offer", "job offer", "compensation", "package", "congratulations", "pleased to offer", "extending an offer"
-- **Interview**: "interview", "schedule", "phone screen", "technical screen", "availability", "next step", "assessment", "would like to schedule"
-- **Applied**: "application received", "thank you for applying", "submitted", "under review", "application for", "have officially applied", "will review your application"
+Examples:
+"Indeed Application: Data Analyst" + "Application submitted, Data Analyst, Microsoft - Seattle" → {"company":"Microsoft","position":"Data Analyst","status":"Applied"}
+"Application received for Engineer at Google" → {"company":"Google","position":"Engineer","status":"Applied"}
+"Interview for Product Manager" → {"company":null,"position":"Product Manager","status":"Interview"}
 
-**Critical Parsing Rules:**
-1. ALWAYS check subject line for position if body is generic
-2. Rejection language ALWAYS = "Declined" status regardless of other content
-3. If both application confirmation AND rejection appear, use "Declined"
-4. Extract exact position from subject/body without over-cleaning
-5. Use null for truly ambiguous cases
-
-**Examples from real failing cases:**
-
-Subject: "Thank you for your interest in the Jr. Analyst, People Data (Animation) role here at Netflix"
-Body: "Regrettably, we have decided to move forward with other candidates"
-→ {"company":"Netflix","position":"Jr. Analyst, People Data (Animation)","status":"Declined"}
-
-Subject: "Thank you for applying for Marketing Data Analyst job with TEKsystems"  
-Body: "Thank you for applying for Marketing Data Analyst job with TEKsystems. We're thrilled you'd like to join us. Our recruiters will review your skills"
-→ {"company":"TEKsystems","position":"Marketing Data Analyst","status":"Applied"}
-
-Subject: "You have officially applied for the Analyst / Sr. Analyst, Global GTM Strategy opening at Salesforce"
-Body: "A member of our recruiting team will review your application"
-→ {"company":"Salesforce","position":"Analyst / Sr. Analyst, Global GTM Strategy","status":"Applied"}
-
-Subject: "Your application to Karbon"
-Body: "Thank you for your interest in working with us. We've received your application and our team will review"
-→ {"company":"Karbon","position":null,"status":"Applied"}
-
-Subject: "Adobe Application Received"
-Body: "We have received your application for a position at Adobe. Our recruiting team will review your qualifications"
-→ {"company":"Adobe","position":null,"status":"Applied"}
-
-Subject: "Your application for Marketing Analyst at Marsh"
-Body: "Thank you for applying to Marketing Analyst position. We will review your application"
-→ {"company":"Marsh","position":"Marketing Analyst","status":"Applied"}
-
-Subject: "Adobe Application Confirmation"
-Body: "We wanted to let you know that we received your application for the R157623 BDR Insights Analyst role"
-→ {"company":"Adobe","position":"BDR Insights Analyst","status":"Applied"}
-
-NEVER use "unknown" or "rejected" - use null or "Declined". Output ONLY JSON.`;
+Output ONLY JSON.`;
 
 // Separate caches for different stages
 const classificationCache = new Map<string, ClassificationResult>();
@@ -210,41 +128,57 @@ async function ensureModel(modelPath: string) {
 
 // Stage 1: Fast classification session (small context, optimized for speed)
 async function ensureStage1Session(modelPath: string) {
-  if (stage1Session && loadedModelPath === modelPath) return stage1Session;
-
   const model = await ensureModel(modelPath);
   const module = await loadLlamaModule();
   const { LlamaContext, LlamaChatSession } = module;
   
-  stage1Context = await model.createContext({ 
-    contextSize: 1024, // Smaller context for speed
-    batchSize: 256 
-  });
-  const sequence = stage1Context.getSequence();
-  stage1Session = new LlamaChatSession({ 
-    contextSequence: sequence, 
-    systemPrompt: STAGE1_CLASSIFICATION_PROMPT 
-  });
+  // Create context only if needed
+  if (!stage1Context || loadedModelPath !== modelPath) {
+    stage1Context = await model.createContext({ 
+      contextSize: LLM_CONTEXT, // Use full context
+      batchSize: 512 
+    });
+  }
+  
+  // Reuse session but reset if it gets too long to avoid context overflow
+  if (!stage1Session || loadedModelPath !== modelPath || stage1UseCount >= MAX_SESSION_USES) {
+    const sequence = stage1Context.getSequence();
+    stage1Session = new LlamaChatSession({ 
+      contextSequence: sequence, 
+      systemPrompt: STAGE1_CLASSIFICATION_PROMPT 
+    });
+    stage1UseCount = 0;
+  }
+  
+  stage1UseCount++;
   return stage1Session;
 }
 
 // Stage 2: Detailed parsing session (full context, optimized for accuracy)
 async function ensureStage2Session(modelPath: string) {
-  if (stage2Session && loadedModelPath === modelPath) return stage2Session;
-
   const model = await ensureModel(modelPath);
   const module = await loadLlamaModule();
   const { LlamaContext, LlamaChatSession } = module;
   
-  stage2Context = await model.createContext({ 
-    contextSize: LLM_CONTEXT, // Full context for accuracy
-    batchSize: 512 
-  });
-  const sequence = stage2Context.getSequence();
-  stage2Session = new LlamaChatSession({ 
-    contextSequence: sequence, 
-    systemPrompt: STAGE2_PARSING_PROMPT 
-  });
+  // Create context only if needed
+  if (!stage2Context || loadedModelPath !== modelPath) {
+    stage2Context = await model.createContext({ 
+      contextSize: LLM_CONTEXT, // Full context for accuracy
+      batchSize: 512 
+    });
+  }
+  
+  // Reuse session but reset if it gets too long to avoid context overflow
+  if (!stage2Session || loadedModelPath !== modelPath || stage2UseCount >= MAX_SESSION_USES) {
+    const sequence = stage2Context.getSequence();
+    stage2Session = new LlamaChatSession({ 
+      contextSequence: sequence, 
+      systemPrompt: STAGE2_PARSING_PROMPT 
+    });
+    stage2UseCount = 0;
+  }
+  
+  stage2UseCount++;
   return stage2Session;
 }
 
@@ -287,6 +221,24 @@ function normalizeAndValidateResult(
   }
   if (parsed.position && /^(unknown|n\/a|null|undefined|unclear)$/i.test(parsed.position)) {
     parsed.position = null;
+  }
+
+  // Enhanced position validation - catch corrupted extractions
+  if (parsed.position) {
+    // Remove any remaining job codes that slipped through
+    parsed.position = parsed.position
+      .replace(/\b[A-Z]*\d+[A-Z]*\w*\b/g, '') // Remove alphanumeric codes
+      .replace(/\([^)]*\d[^)]*\)/g, '') // Remove parenthetical content with numbers
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .trim();
+    
+    // Validate the cleaned position isn't corrupted
+    if (parsed.position.length < 3 || 
+        /^[A-Z]\d+/.test(parsed.position) || // Starts with code pattern
+        /\d{3,}/.test(parsed.position) || // Contains long number sequences
+        /^[^a-zA-Z]*$/.test(parsed.position)) { // Only special chars/numbers
+      parsed.position = null;
+    }
   }
 
   // Additional ATS domain mapping if company is still null
@@ -396,8 +348,8 @@ export async function classifyEmail(input: {
 
   const session = await ensureStage1Session(modelPath);
 
-  // Minimal content for speed - prioritize subject and first part of body
-  const maxContentLength = 800; // Much smaller for classification
+  // Allow much larger emails for classification with 2048 token context
+  const maxContentLength = 6000; // Increased for full email processing
   let emailContent = plaintext;
   
   if (plaintext.length > maxContentLength) {
@@ -465,8 +417,8 @@ export async function parseJobEmail(input: {
 
   const session = await ensureStage2Session(modelPath);
 
-  // Full content processing for accuracy
-  const maxContentLength = 3000; // Larger for detailed parsing
+  // Full content processing for accuracy with 2048 token context
+  const maxContentLength = 7000; // Much larger for full email processing
   let emailContent = plaintext;
   
   if (plaintext.length > maxContentLength) {
@@ -597,8 +549,8 @@ export async function parseEmailWithLLM(input: {
 
   const session = await ensureUnifiedSession(modelPath);
 
-  // Smart content truncation - prioritize important parts
-  const maxContentLength = 2500; // Increased limit since we're doing everything in one step
+  // Smart content truncation with 2048 token context - prioritize important parts
+  const maxContentLength = 7000; // Much larger for unified processing
   let emailContent = plaintext;
   
   if (plaintext.length > maxContentLength) {

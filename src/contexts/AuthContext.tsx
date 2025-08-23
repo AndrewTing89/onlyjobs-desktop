@@ -457,14 +457,28 @@ const connectGmail = async () => {
   const onGmailConnected = async (user: User) => {
     try {
       const uid = user.uid;
-      console.log('🔄 Triggering Gmail backfill for user:', uid);
+      console.log('🔄 Triggering Gmail initial sync for user:', uid);
       
-      // Trigger backfill to fetch up to 200 historical emails
-      await gmailFetchService.triggerBackfill(uid);
-      console.log('✅ Gmail backfill completed successfully');
+      // Check if we're in Electron
+      const isElectron = window.electronAPI !== undefined;
+      
+      if (isElectron) {
+        // In Electron, use the local Electron API for Gmail sync
+        console.log('🖥️  Using Electron Gmail initial sync');
+        const result = await window.electronAPI.gmail.syncAll({
+          daysToSync: 90,
+          maxEmails: 200  // Initial sync with fewer emails
+        });
+        console.log('✅ Electron Gmail initial sync completed successfully:', result);
+      } else {
+        // In web mode, use the cloud function
+        console.log('🌐 Using web-based Gmail backfill');
+        await gmailFetchService.triggerBackfill(uid);
+        console.log('✅ Web Gmail backfill completed successfully');
+      }
       
     } catch (error) {
-      console.error('❌ Gmail backfill failed:', error);
+      console.error('❌ Gmail initial sync failed:', error);
       throw error;
     }
   };
@@ -472,14 +486,28 @@ const connectGmail = async () => {
   const syncIncremental = async (user: User) => {
     try {
       const uid = user.uid;
-      console.log('🔄 Triggering Gmail backfill sync for user:', uid);
+      console.log('🔄 Triggering Gmail sync for user:', uid);
       
-      // Fetch emails with backfill=true (up to 500 emails)
-      await gmailFetchService.triggerBackfill(uid);
-      console.log('✅ Gmail backfill sync completed successfully');
+      // Check if we're in Electron
+      const isElectron = window.electronAPI !== undefined;
+      
+      if (isElectron) {
+        // In Electron, use the local Electron API for Gmail sync
+        console.log('🖥️  Using Electron Gmail sync');
+        const result = await window.electronAPI.gmail.syncAll({
+          daysToSync: 90,
+          maxEmails: 500
+        });
+        console.log('✅ Electron Gmail sync completed successfully:', result);
+      } else {
+        // In web mode, use the cloud function
+        console.log('🌐 Using web-based Gmail sync');
+        await gmailFetchService.triggerBackfill(uid);
+        console.log('✅ Web Gmail sync completed successfully');
+      }
       
     } catch (error) {
-      console.error('❌ Gmail backfill sync failed:', error);
+      console.error('❌ Gmail sync failed:', error);
       throw error;
     }
   };

@@ -26,6 +26,8 @@ interface ElectronAPI {
   isMlReady: () => Promise<any>;
   trainModel: (options?: any) => Promise<any>;
   initializeMl: () => Promise<any>;
+  resetCircuitBreaker: () => Promise<{ success: boolean; message: string; failures: number; blocked_until: number }>;
+  getCircuitBreakerStatus: () => Promise<{ success: boolean; active: boolean; failures: number; max_failures: number; blocked_until: number; blocked_for_ms: number }>;
   
   // Authentication operations
   auth: {
