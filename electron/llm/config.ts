@@ -11,10 +11,10 @@ export const LLM_MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS ?? 96); // 
 export const STAGE1_MAX_TOKENS = Number(process.env.ONLYJOBS_STAGE1_MAX_TOKENS ?? 48); // Increased for JSON schema compliance (was 32)
 export const STAGE1_TEMPERATURE = Number(process.env.ONLYJOBS_STAGE1_TEMP ?? 0.0); // No randomness for speed
 
-// Stage-specific context sizes for optimal performance
-export const LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 1024); // Reduced from 2048
-export const STAGE1_CONTEXT = Number(process.env.ONLYJOBS_STAGE1_CTX ?? 1024); // Increased for prompt compatibility
-export const STAGE2_CONTEXT = Number(process.env.ONLYJOBS_STAGE2_CTX ?? 1024); // Reduced from 2048
+// EMERGENCY: Ultra-minimal context sizes for 3B model
+export const LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 512); // EMERGENCY: Reduced from 1024 to 512
+export const STAGE1_CONTEXT = Number(process.env.ONLYJOBS_STAGE1_CTX ?? 512); // EMERGENCY: 512 for classification only
+export const STAGE2_CONTEXT = Number(process.env.ONLYJOBS_STAGE2_CTX ?? 1024); // EMERGENCY: Keep 1024 for parsing
 
 // Optimized timeout configuration for better performance
 export const STAGE1_TIMEOUT = Number(process.env.ONLYJOBS_STAGE1_TIMEOUT ?? 3000); // 3 second max for Stage 1 (was 8000)

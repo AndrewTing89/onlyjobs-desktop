@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { DEFAULT_MODEL_PATH, LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_CONTEXT, GPU_LAYERS } from "./config";
+import { DEFAULT_MODEL_PATH, LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_CONTEXT, GPU_LAYERS, STAGE1_CONTEXT, STAGE2_CONTEXT, STAGE1_TIMEOUT, STAGE2_TIMEOUT, STAGE1_MAX_TOKENS } from "./config";
 import { getStatusHint } from "./rules";
 
 // Import performance monitoring
@@ -83,37 +83,21 @@ const classificationSchema = {
 };
 
 // Stage 1: Ultra-strict classification prompt optimized for Llama-3.2-3B
-const STAGE1_CLASSIFICATION_PROMPT = `You must respond with ONLY a JSON object. No text before or after.
+const STAGE1_CLASSIFICATION_PROMPT = `JSON only. Classify emails.
 
-Classify if this email is about a job APPLICATION STATUS (true) or job recommendations/alerts (false).
+true = job application responses  
+false = job ads, alerts
 
-TRUE = Application confirmations, interview invites, rejections, offers
-FALSE = Job alerts, newsletters, recommendations, job postings
-
-Respond with exactly this format:
-{"is_job_related":true,"manual_record_risk":"low"}
-or
-{"is_job_related":false,"manual_record_risk":"none"}`;
+Format: {"is_job_related":true,"manual_record_risk":"low"}`;
 
 // Stage 2: Ultra-strict parsing prompt optimized for Llama-3.2-3B
-const STAGE2_PARSING_PROMPT = `You must respond with ONLY a JSON object. No text before or after.
+const STAGE2_PARSING_PROMPT = `JSON only. Extract job details.
 
-Extract: company name (hiring org, not job boards), position title, status.
+Company = employer name, not job boards
+Position = full job title with codes  
+Status = Applied/Interview/Declined/Offer
 
-Rules:
-- Company: Real employer, not Indeed/LinkedIn/Workday domains
-- Position: Include ALL job codes (keep "Data Analyst - JR123" complete)  
-- Status: Applied/Interview/Declined/Offer based on email content
-
-Examples:
-Email about "Data Analyst - JR123" at Microsoft:
-{"company":"Microsoft","position":"Data Analyst - JR123","status":"Applied"}
-
-Email from Workday about rejection:
-{"company":"Elevance Health","position":"Health Consultant - JR156260","status":"Declined"}
-
-Respond with exactly this format:
-{"company":"Name","position":"Title","status":"Applied"}`;
+Format: {"company":"CompanyName","position":"JobTitle","status":"Applied"}`;
 
 // Separate caches for different stages
 const classificationCache = new Map<string, ClassificationResult>();
@@ -240,8 +224,8 @@ async function ensureStage1Session(modelPath: string) {
       }
     }
     stage1Context = await model.createContext({ 
-      contextSize: LLM_CONTEXT, // Use full context
-      batchSize: 512 
+      contextSize: STAGE1_CONTEXT, // EMERGENCY: Use Stage 1 specific context (512)
+      batchSize: 256 
     });
     stage1SessionHealthy = true;
   }
@@ -255,11 +239,15 @@ async function ensureStage1Session(modelPath: string) {
   if (needsReset) {
     if (stage1Session) {
       try {
-        stage1Session.dispose();
+        // EMERGENCY FIX: Check if session is already disposed before disposing
+        if (stage1Session._context && !stage1Session._context.isDisposed) {
+          stage1Session.dispose();
+        }
       } catch (e) {
         console.warn('Stage 1 session disposal warning:', e.message);
         stage1SessionHealthy = false;
       }
+      stage1Session = null; // EMERGENCY FIX: Clear reference
     }
     
     try {
@@ -300,7 +288,7 @@ async function ensureStage2Session(modelPath: string) {
       }
     }
     stage2Context = await model.createContext({ 
-      contextSize: LLM_CONTEXT, // Full context for accuracy
+      contextSize: STAGE2_CONTEXT, // EMERGENCY: Use Stage 2 specific context (1024)
       batchSize: 512 
     });
     stage2SessionHealthy = true;
@@ -315,11 +303,15 @@ async function ensureStage2Session(modelPath: string) {
   if (needsReset) {
     if (stage2Session) {
       try {
-        stage2Session.dispose();
+        // EMERGENCY FIX: Check if session is already disposed before disposing
+        if (stage2Session._context && !stage2Session._context.isDisposed) {
+          stage2Session.dispose();
+        }
       } catch (e) {
         console.warn('Stage 2 session disposal warning:', e.message);
         stage2SessionHealthy = false;
       }
+      stage2Session = null; // EMERGENCY FIX: Clear reference
     }
     
     try {
@@ -353,7 +345,7 @@ async function ensureUnifiedSession(modelPath: string) {
   const { LlamaContext, LlamaChatSession } = module;
   
   unifiedContext = await model.createContext({ 
-    contextSize: LLM_CONTEXT, 
+    contextSize: LLM_CONTEXT, // Legacy unified context 
     batchSize: 512 
   });
   const sequence = unifiedContext.getSequence();

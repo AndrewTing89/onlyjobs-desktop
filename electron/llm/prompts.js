@@ -6,39 +6,16 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.userPrompt = exports.SYSTEM_PROMPT = void 0;
 
-exports.SYSTEM_PROMPT = `
-Extract job application status data.
+// EMERGENCY: Ultra-minimal prompts for 3B model - maximum 20 words for Stage 1
+exports.SYSTEM_PROMPT = `Is this email about a job application? Reply true/false only.`;
 
-TRUE = application confirmations, rejections, interviews, offers for jobs you applied to
-FALSE = job ads, recommendations, newsletters
-
-Company: hiring organization (not job boards)
-Position: full job title with codes  
-Status: Applied/Interview/Declined/Offer
-
-JSON only: {"is_job_related":boolean,"company":string,"position":string,"status":"Applied"}
-`.trim();
-
-const FEWSHOTS = `
-Subject: Application Confirmation
-Body: We received your application for R123 Data Analyst.
-{"is_job_related": true, "company": "Adobe", "position": "R123 Data Analyst", "status": "Applied"}
-
-Subject: Your application  
-Body: We regret to inform you we decided to pursue other candidates.
-{"is_job_related": true, "company": "Netflix", "position": null, "status": "Declined"}
-`.trim();
+// EMERGENCY: Remove few-shots to save tokens for 3B model
+const FEWSHOTS = ``;
 
 function userPrompt(subject, plaintext) {
-  return `
-${FEWSHOTS}
+  // EMERGENCY: Ultra-minimal prompt for 3B model classification
+  return `${subject} ${plaintext}
 
-NOW CLASSIFY THIS EMAIL.
-Subject: ${subject}
-Body:
-${plaintext}
-
-Return ONLY the JSON object:
-`.trim();
+Is this about a job application response? true or false:`;
 }
 exports.userPrompt = userPrompt;

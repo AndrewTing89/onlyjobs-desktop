@@ -220,10 +220,12 @@ const llmHandler = {
       const subjectLine = lines.find(line => line.toLowerCase().startsWith('subject:'));
       const subject = subjectLine ? subjectLine.substring(8).trim() : '';
       
-      // Use configuration-driven timeouts
+      // EMERGENCY: Force configuration-driven timeouts without fallback
       const { STAGE1_TIMEOUT, FALLBACK_THRESHOLD } = require('./llm/config');
-      const actualTimeout = STAGE1_TIMEOUT || 8000;
-      const fallbackThreshold = FALLBACK_THRESHOLD || 6000;
+      const actualTimeout = STAGE1_TIMEOUT;  // EMERGENCY: Remove fallback causing 8000ms
+      const fallbackThreshold = FALLBACK_THRESHOLD;
+      
+      console.log(`🔍 STAGE1_TIMEOUT DEBUG: actualTimeout=${actualTimeout}ms, config.STAGE1_TIMEOUT=${STAGE1_TIMEOUT}`);
       
       console.log(`🕐 Stage 1 inference with ${actualTimeout}ms timeout (fallback at ${fallbackThreshold}ms)...`);
       
