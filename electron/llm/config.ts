@@ -5,10 +5,10 @@ export const DEFAULT_MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH ?? path.resolv
 export const ONLYJOBS_MODEL_PATH = DEFAULT_MODEL_PATH;
 export const DEFAULT_DOWNLOAD_URL = process.env.ONLYJOBS_DOWNLOAD_URL ?? "https://huggingface.co/hugging-quants/Llama-3.2-3B-Instruct-Q8_0-GGUF/resolve/main/llama-3.2-3b-instruct-q8_0.gguf";
 export const LLM_TEMPERATURE = Number(process.env.ONLYJOBS_TEMPERATURE ?? 0.0); // Lower for faster inference
-export const LLM_MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS ?? 128); // Reduced for speed
+export const LLM_MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS ?? 96); // Reduced for speed (was 128)
 
 // Ultra-fast Stage 1 configuration
-export const STAGE1_MAX_TOKENS = Number(process.env.ONLYJOBS_STAGE1_MAX_TOKENS ?? 32); // Minimal for classification
+export const STAGE1_MAX_TOKENS = Number(process.env.ONLYJOBS_STAGE1_MAX_TOKENS ?? 48); // Increased for JSON schema compliance (was 32)
 export const STAGE1_TEMPERATURE = Number(process.env.ONLYJOBS_STAGE1_TEMP ?? 0.0); // No randomness for speed
 
 // Stage-specific context sizes for optimal performance
@@ -16,11 +16,11 @@ export const LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 1024); // Reduced 
 export const STAGE1_CONTEXT = Number(process.env.ONLYJOBS_STAGE1_CTX ?? 1024); // Increased for prompt compatibility
 export const STAGE2_CONTEXT = Number(process.env.ONLYJOBS_STAGE2_CTX ?? 1024); // Reduced from 2048
 
-// Aggressive timeout configuration for production reliability
-export const STAGE1_TIMEOUT = Number(process.env.ONLYJOBS_STAGE1_TIMEOUT ?? 8000); // 8 second max for Stage 1
-export const STAGE2_TIMEOUT = Number(process.env.ONLYJOBS_STAGE2_TIMEOUT ?? 12000); // 12 second max for Stage 2
-export const IPC_TIMEOUT = Number(process.env.ONLYJOBS_IPC_TIMEOUT ?? 10000); // 10 second IPC wrapper
-export const FALLBACK_THRESHOLD = Number(process.env.ONLYJOBS_FALLBACK_MS ?? 6000); // Fallback after 6s
+// Optimized timeout configuration for better performance
+export const STAGE1_TIMEOUT = Number(process.env.ONLYJOBS_STAGE1_TIMEOUT ?? 3000); // 3 second max for Stage 1 (was 8000)
+export const STAGE2_TIMEOUT = Number(process.env.ONLYJOBS_STAGE2_TIMEOUT ?? 6000); // 6 second max for Stage 2 (was 12000)
+export const IPC_TIMEOUT = Number(process.env.ONLYJOBS_IPC_TIMEOUT ?? 8000); // 8 second IPC wrapper (was 10000)
+export const FALLBACK_THRESHOLD = Number(process.env.ONLYJOBS_FALLBACK_MS ?? 2500); // Fallback after 2.5s (was 6000)
 
 export const GPU_LAYERS = Number(process.env.ONLYJOBS_N_GPU_LAYERS ?? 0);
 

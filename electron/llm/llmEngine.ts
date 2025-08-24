@@ -2,6 +2,12 @@ import crypto from "crypto";
 import { DEFAULT_MODEL_PATH, LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_CONTEXT, GPU_LAYERS } from "./config";
 import { getStatusHint } from "./rules";
 
+// Import performance monitoring
+const { performanceMonitor } = require('./performance-monitor.js');
+
+// Start auto-reporting (every 10 minutes in production)
+performanceMonitor.startAutoReporting(10);
+
 // We import lazily since node-llama-cpp is heavy
 let llamaModule: any | null = null;
 
@@ -24,7 +30,11 @@ let loadedModelPath: string | null = null;
 // Session use counters to track when to reset
 let stage1UseCount = 0;
 let stage2UseCount = 0;
-const MAX_SESSION_USES = 1; // Always create fresh sessions to avoid context issues completely
+const MAX_SESSION_USES = 10; // Reuse sessions up to 10 times for efficiency (was 1)
+
+// Session health tracking to detect disposal issues
+let stage1SessionHealthy = true;
+let stage2SessionHealthy = true;
 
 async function loadLlamaModule() {
   if (llamaModule) return llamaModule;
@@ -72,38 +82,38 @@ const classificationSchema = {
   additionalProperties: false,
 };
 
-// Stage 1: Ultra-compact classification prompt for small context
-const STAGE1_CLASSIFICATION_PROMPT = `Job classifier. Output JSON: {"is_job_related":boolean,"manual_record_risk":"none"|"low"|"medium"|"high"}
+// Stage 1: Ultra-strict classification prompt optimized for Llama-3.2-3B
+const STAGE1_CLASSIFICATION_PROMPT = `You must respond with ONLY a JSON object. No text before or after.
 
-Job-related: Application confirmations, interviews, offers, rejections from companies
-NOT job-related: Job alerts, recommendations, talent communities, newsletters
+Classify if this email is about a job APPLICATION STATUS (true) or job recommendations/alerts (false).
 
-Examples:
-"Application received" → {"is_job_related":true,"manual_record_risk":"low"}
-"Your Job Alert matched" → {"is_job_related":false,"manual_record_risk":"none"}
-"Interview invitation" → {"is_job_related":true,"manual_record_risk":"low"}
+TRUE = Application confirmations, interview invites, rejections, offers
+FALSE = Job alerts, newsletters, recommendations, job postings
 
-Output ONLY JSON.`;
+Respond with exactly this format:
+{"is_job_related":true,"manual_record_risk":"low"}
+or
+{"is_job_related":false,"manual_record_risk":"none"}`;
 
-// Stage 2: Optimized parsing prompt for small context
-const STAGE2_PARSING_PROMPT = `Parse job email. Output JSON: {"company":string|null,"position":string|null,"status":"Applied"|"Interview"|"Declined"|"Offer"|null}
+// Stage 2: Ultra-strict parsing prompt optimized for Llama-3.2-3B
+const STAGE2_PARSING_PROMPT = `You must respond with ONLY a JSON object. No text before or after.
 
-Company: Extract hiring organization (NOT job boards)
-- Job boards: "Position, CompanyName - Location" → extract CompanyName  
-- Regular: Look for actual employer name, not Indeed/LinkedIn/ZipRecruiter
+Extract: company name (hiring org, not job boards), position title, status.
 
-Position: Clean job title
-- Remove job codes: R123456, JR156260, (REQ-123)
-- Keep: Sr., Senior, Principal, Lead, Manager
-
-Status: Applied|Interview|Declined|Offer based on content
+Rules:
+- Company: Real employer, not Indeed/LinkedIn/Workday domains
+- Position: Include ALL job codes (keep "Data Analyst - JR123" complete)  
+- Status: Applied/Interview/Declined/Offer based on email content
 
 Examples:
-"Indeed Application: Data Analyst" + "Application submitted, Data Analyst, Microsoft - Seattle" → {"company":"Microsoft","position":"Data Analyst","status":"Applied"}
-"Application received for Engineer at Google" → {"company":"Google","position":"Engineer","status":"Applied"}
-"Interview for Product Manager" → {"company":null,"position":"Product Manager","status":"Interview"}
+Email about "Data Analyst - JR123" at Microsoft:
+{"company":"Microsoft","position":"Data Analyst - JR123","status":"Applied"}
 
-Output ONLY JSON.`;
+Email from Workday about rejection:
+{"company":"Elevance Health","position":"Health Consultant - JR156260","status":"Declined"}
+
+Respond with exactly this format:
+{"company":"Name","position":"Title","status":"Applied"}`;
 
 // Separate caches for different stages
 const classificationCache = new Map<string, ClassificationResult>();
@@ -113,6 +123,94 @@ const unifiedCache = new Map<string, ParseResult>();
 function makeCacheKey(subject: string, plaintext: string): string {
   const canonical = subject + "\n" + plaintext.slice(0, 1000);
   return crypto.createHash("sha256").update(canonical).digest("hex");
+}
+
+// Robust LLM response cleaning for JSON extraction
+function cleanLLMResponse(response: string): string {
+  if (!response || typeof response !== 'string') {
+    throw new Error('Invalid response: not a string');
+  }
+
+  // Remove common LLM prefixes and suffixes
+  let cleaned = response
+    .replace(/^assistant\s*\n?/i, '') // Remove "assistant" prefix
+    .replace(/^```json\s*\n?/i, '') // Remove markdown json block start
+    .replace(/\n?```\s*$/i, '') // Remove markdown json block end
+    .replace(/^Here's the JSON:?\s*\n?/i, '') // Remove explanation prefixes
+    .replace(/^The JSON response is:?\s*\n?/i, '') // Remove explanation prefixes
+    .replace(/^JSON:?\s*\n?/i, '') // Remove "JSON:" prefix
+    .trim();
+
+  // Find the JSON object - look for first { and last }
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  }
+
+  return cleaned;
+}
+
+// Regex-based JSON extraction fallback
+function extractJSONFromText(text: string): any | null {
+  if (!text) return null;
+
+  // Multiple extraction strategies
+  const patterns = [
+    // Standard JSON object
+    /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g,
+    // JSON with nested quotes
+    /\{(?:[^{}]|"[^"]*")*\}/g,
+  ];
+
+  for (const pattern of patterns) {
+    const matches = text.match(pattern);
+    if (matches) {
+      for (const match of matches) {
+        try {
+          const parsed = JSON.parse(match);
+          if (typeof parsed === 'object' && parsed !== null) {
+            return parsed;
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+  }
+
+  // Last resort: extract key-value pairs with regex
+  const keyValueExtraction: any = {};
+  
+  // Extract boolean fields
+  const booleanMatch = text.match(/"?is_job_related"?\s*:\s*(true|false)/i);
+  if (booleanMatch) {
+    keyValueExtraction.is_job_related = booleanMatch[1].toLowerCase() === 'true';
+  }
+
+  // Extract string fields
+  const companyMatch = text.match(/"?company"?\s*:\s*"([^"]+)"/i);
+  if (companyMatch) {
+    keyValueExtraction.company = companyMatch[1];
+  }
+
+  const positionMatch = text.match(/"?position"?\s*:\s*"([^"]+)"/i);
+  if (positionMatch) {
+    keyValueExtraction.position = positionMatch[1];
+  }
+
+  const statusMatch = text.match(/"?status"?\s*:\s*"(Applied|Interview|Declined|Offer)"/i);
+  if (statusMatch) {
+    keyValueExtraction.status = statusMatch[1];
+  }
+
+  // Return if we found anything useful
+  if (Object.keys(keyValueExtraction).length > 0) {
+    return keyValueExtraction;
+  }
+
+  return null;
 }
 
 async function ensureModel(modelPath: string) {
@@ -133,21 +231,53 @@ async function ensureStage1Session(modelPath: string) {
   const { LlamaContext, LlamaChatSession } = module;
   
   // Create context only if needed
-  if (!stage1Context || loadedModelPath !== modelPath) {
+  if (!stage1Context || loadedModelPath !== modelPath || !stage1SessionHealthy) {
+    if (stage1Context) {
+      try {
+        stage1Context.dispose();
+      } catch (e) {
+        console.warn('Stage 1 context disposal warning:', e.message);
+      }
+    }
     stage1Context = await model.createContext({ 
       contextSize: LLM_CONTEXT, // Use full context
       batchSize: 512 
     });
+    stage1SessionHealthy = true;
   }
   
-  // Reuse session but reset if it gets too long to avoid context overflow
-  if (!stage1Session || loadedModelPath !== modelPath || stage1UseCount >= MAX_SESSION_USES) {
-    const sequence = stage1Context.getSequence();
-    stage1Session = new LlamaChatSession({ 
-      contextSequence: sequence, 
-      systemPrompt: STAGE1_CLASSIFICATION_PROMPT 
-    });
-    stage1UseCount = 0;
+  // Check session health and recreate if needed
+  const needsReset = !stage1Session || 
+                     loadedModelPath !== modelPath || 
+                     stage1UseCount >= MAX_SESSION_USES ||
+                     !stage1SessionHealthy;
+  
+  if (needsReset) {
+    if (stage1Session) {
+      try {
+        stage1Session.dispose();
+      } catch (e) {
+        console.warn('Stage 1 session disposal warning:', e.message);
+        stage1SessionHealthy = false;
+      }
+    }
+    
+    try {
+      const sequence = stage1Context.getSequence();
+      stage1Session = new LlamaChatSession({ 
+        contextSequence: sequence, 
+        systemPrompt: STAGE1_CLASSIFICATION_PROMPT 
+      });
+      stage1UseCount = 0;
+      stage1SessionHealthy = true;
+      performanceMonitor.recordSessionEvent('creation', 1);
+    } catch (e) {
+      console.error('Stage 1 session creation failed:', e);
+      stage1SessionHealthy = false;
+      throw e;
+    }
+  } else {
+    performanceMonitor.recordSessionEvent('reuse', 1);
   }
   
   stage1UseCount++;
@@ -161,21 +291,53 @@ async function ensureStage2Session(modelPath: string) {
   const { LlamaContext, LlamaChatSession } = module;
   
   // Create context only if needed
-  if (!stage2Context || loadedModelPath !== modelPath) {
+  if (!stage2Context || loadedModelPath !== modelPath || !stage2SessionHealthy) {
+    if (stage2Context) {
+      try {
+        stage2Context.dispose();
+      } catch (e) {
+        console.warn('Stage 2 context disposal warning:', e.message);
+      }
+    }
     stage2Context = await model.createContext({ 
       contextSize: LLM_CONTEXT, // Full context for accuracy
       batchSize: 512 
     });
+    stage2SessionHealthy = true;
   }
   
-  // Reuse session but reset if it gets too long to avoid context overflow
-  if (!stage2Session || loadedModelPath !== modelPath || stage2UseCount >= MAX_SESSION_USES) {
-    const sequence = stage2Context.getSequence();
-    stage2Session = new LlamaChatSession({ 
-      contextSequence: sequence, 
-      systemPrompt: STAGE2_PARSING_PROMPT 
-    });
-    stage2UseCount = 0;
+  // Check session health and recreate if needed
+  const needsReset = !stage2Session || 
+                     loadedModelPath !== modelPath || 
+                     stage2UseCount >= MAX_SESSION_USES ||
+                     !stage2SessionHealthy;
+  
+  if (needsReset) {
+    if (stage2Session) {
+      try {
+        stage2Session.dispose();
+      } catch (e) {
+        console.warn('Stage 2 session disposal warning:', e.message);
+        stage2SessionHealthy = false;
+      }
+    }
+    
+    try {
+      const sequence = stage2Context.getSequence();
+      stage2Session = new LlamaChatSession({ 
+        contextSequence: sequence, 
+        systemPrompt: STAGE2_PARSING_PROMPT 
+      });
+      stage2UseCount = 0;
+      stage2SessionHealthy = true;
+      performanceMonitor.recordSessionEvent('creation', 2);
+    } catch (e) {
+      console.error('Stage 2 session creation failed:', e);
+      stage2SessionHealthy = false;
+      throw e;
+    }
+  } else {
+    performanceMonitor.recordSessionEvent('reuse', 2);
   }
   
   stage2UseCount++;
@@ -333,20 +495,36 @@ export async function classifyEmail(input: {
   temperature?: number;
   maxTokens?: number;
 }): Promise<ClassificationResult> {
+  const startTime = Date.now();
+  
   const subject = input.subject ?? "";
   const plaintext = input.plaintext ?? "";
   const from = input.from ?? "";
   const modelPath = input.modelPath ?? DEFAULT_MODEL_PATH;
   const temperature = input.temperature ?? 0.0; // Lower temperature for classification consistency
-  const maxTokens = input.maxTokens ?? 32; // Very small for binary output
+  const maxTokens = input.maxTokens ?? 48; // Optimized for JSON schema compliance
 
   // Ultra-fast caching for classification
   const cacheContent = `${from}\n${subject}\n${plaintext.slice(0, 500)}`; // Smaller cache key
   const key = crypto.createHash("sha256").update(cacheContent).digest("hex");
   const cached = classificationCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    const duration = Date.now() - startTime;
+    performanceMonitor.recordStage1(duration, true);
+    return cached;
+  }
 
-  const session = await ensureStage1Session(modelPath);
+  let session;
+  try {
+    session = await ensureStage1Session(modelPath);
+  } catch (e) {
+    console.error('Stage 1 session creation failed, marking as unhealthy:', e);
+    stage1SessionHealthy = false;
+    const duration = Date.now() - startTime;
+    performanceMonitor.recordStage1(duration, false, e);
+    performanceMonitor.recordSessionEvent('creation_error', 1);
+    throw new Error(`Stage 1 session initialization failed: ${e.message}`);
+  }
 
   // Allow much larger emails for classification with 2048 token context
   const maxContentLength = 6000; // Increased for full email processing
@@ -365,25 +543,51 @@ export async function classifyEmail(input: {
     .filter(Boolean)
     .join("\n");
 
-  const response = await session.prompt(userPrompt, {
-    temperature,
-    maxTokens,
-    responseFormat: {
-      type: "json_schema",
-      schema: classificationSchema,
-      schema_id: "FastClassificationSchema",
-    },
-  });
-
-  // Parse response
-  let parsed: ClassificationResult;
+  let response;
   try {
-    parsed = JSON.parse(response) as ClassificationResult;
-  } catch (err) {
-    console.error('Stage 1 classification parsing failed:', err, 'Response:', response);
-    parsed = { is_job_related: false };
+    response = await session.prompt(userPrompt, {
+      temperature,
+      maxTokens,
+      responseFormat: {
+        type: "json_schema",
+        schema: classificationSchema,
+        schema_id: "FastClassificationSchema",
+      },
+    });
+  } catch (e) {
+    // Mark session as unhealthy if inference fails
+    if (e.message.includes('disposed') || e.message.includes('invalid')) {
+      console.error('Stage 1 session became unhealthy during inference:', e.message);
+      stage1SessionHealthy = false;
+      performanceMonitor.recordSessionEvent('disposal_error', 1);
+    }
+    const duration = Date.now() - startTime;
+    performanceMonitor.recordStage1(duration, false, e);
+    throw e;
   }
 
+  // Parse response with robust cleaning
+  let parsed: ClassificationResult;
+  try {
+    const cleanedResponse = cleanLLMResponse(response);
+    parsed = JSON.parse(cleanedResponse) as ClassificationResult;
+  } catch (err) {
+    console.error('Stage 1 classification parsing failed:', err, 'Raw Response:', response);
+    // Try regex fallback extraction
+    const fallbackResult = extractJSONFromText(response);
+    if (fallbackResult && typeof fallbackResult.is_job_related === 'boolean') {
+      parsed = fallbackResult as ClassificationResult;
+      console.log('✅ Stage 1 fallback extraction succeeded');
+    } else {
+      console.error('❌ Stage 1 fallback extraction failed, using default');
+      parsed = { is_job_related: false };
+    }
+  }
+
+  const duration = Date.now() - startTime;
+  const success = parsed.is_job_related !== undefined;
+  performanceMonitor.recordStage1(duration, success, success ? null : new Error('JSON parsing failed'));
+  
   classificationCache.set(key, parsed);
   return parsed;
 }
@@ -398,6 +602,8 @@ export async function parseJobEmail(input: {
   temperature?: number;
   maxTokens?: number;
 }): Promise<Omit<ParseResult, 'is_job_related'>> {
+  const startTime = Date.now();
+  
   const subject = input.subject ?? "";
   const plaintext = input.plaintext ?? "";
   const from = input.from ?? "";
@@ -411,11 +617,23 @@ export async function parseJobEmail(input: {
   const key = crypto.createHash("sha256").update(cacheContent).digest("hex");
   const cached = parseCache.get(key);
   if (cached) {
+    const duration = Date.now() - startTime;
+    performanceMonitor.recordStage2(duration, true);
     const { is_job_related, ...result } = cached;
     return result;
   }
 
-  const session = await ensureStage2Session(modelPath);
+  let session;
+  try {
+    session = await ensureStage2Session(modelPath);
+  } catch (e) {
+    console.error('Stage 2 session creation failed, marking as unhealthy:', e);
+    stage2SessionHealthy = false;
+    const duration = Date.now() - startTime;
+    performanceMonitor.recordStage2(duration, false, e);
+    performanceMonitor.recordSessionEvent('creation_error', 2);
+    throw new Error(`Stage 2 session initialization failed: ${e.message}`);
+  }
 
   // Full content processing for accuracy with 2048 token context
   const maxContentLength = 7000; // Much larger for full email processing
@@ -439,38 +657,68 @@ export async function parseJobEmail(input: {
     .filter(Boolean)
     .join("\n");
 
-  const response = await session.prompt(userPrompt, {
-    temperature,
-    maxTokens,
-    responseFormat: {
-      type: "json_schema",
-      schema: {
-        type: "object",
-        properties: {
-          company: { type: ["string", "null"] },
-          position: { type: ["string", "null"] },
-          status: { type: ["string", "null"], enum: ["Applied", "Interview", "Declined", "Offer", null] },
+  let response;
+  try {
+    response = await session.prompt(userPrompt, {
+      temperature,
+      maxTokens,
+      responseFormat: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: {
+            company: { type: ["string", "null"] },
+            position: { type: ["string", "null"] },
+            status: { type: ["string", "null"], enum: ["Applied", "Interview", "Declined", "Offer", null] },
+          },
+          required: ["company", "position", "status"],
+          additionalProperties: false,
         },
-        required: ["company", "position", "status"],
-        additionalProperties: false,
+        schema_id: "DetailedParsingSchema",
       },
-      schema_id: "DetailedParsingSchema",
-    },
-  });
+    });
+  } catch (e) {
+    // Mark session as unhealthy if inference fails
+    if (e.message.includes('disposed') || e.message.includes('invalid')) {
+      console.error('Stage 2 session became unhealthy during inference:', e.message);
+      stage2SessionHealthy = false;
+      performanceMonitor.recordSessionEvent('disposal_error', 2);
+    }
+    const duration = Date.now() - startTime;
+    performanceMonitor.recordStage2(duration, false, e);
+    throw e;
+  }
 
-  // Parse and validate response
+  // Parse and validate response with robust cleaning
   let parsed: Omit<ParseResult, 'is_job_related'>;
   try {
-    parsed = JSON.parse(response) as Omit<ParseResult, 'is_job_related'>;
+    const cleanedResponse = cleanLLMResponse(response);
+    parsed = JSON.parse(cleanedResponse) as Omit<ParseResult, 'is_job_related'>;
   } catch (err) {
-    console.error('Stage 2 parsing failed:', err, 'Response:', response);
-    parsed = { company: null, position: null, status: null };
+    console.error('Stage 2 parsing failed:', err, 'Raw Response:', response);
+    // Try regex fallback extraction
+    const fallbackResult = extractJSONFromText(response);
+    if (fallbackResult && (fallbackResult.company !== undefined || fallbackResult.position !== undefined)) {
+      parsed = {
+        company: fallbackResult.company || null,
+        position: fallbackResult.position || null,
+        status: fallbackResult.status || null
+      };
+      console.log('✅ Stage 2 fallback extraction succeeded');
+    } else {
+      console.error('❌ Stage 2 fallback extraction failed, using default');
+      parsed = { company: null, position: null, status: null };
+    }
   }
 
   // Apply post-processing normalization and validation for accuracy
   const fullResult: ParseResult = { is_job_related: true, ...parsed };
   const normalized = normalizeAndValidateResult(fullResult, { subject, from, plaintext: emailContent });
   const finalResult = { company: normalized.company, position: normalized.position, status: normalized.status };
+  
+  const duration = Date.now() - startTime;
+  const success = parsed.company !== undefined || parsed.position !== undefined;
+  performanceMonitor.recordStage2(duration, success, success ? null : new Error('JSON parsing failed'));
   
   parseCache.set(key, { is_job_related: true, ...finalResult });
   return finalResult;
@@ -493,7 +741,7 @@ export async function parseEmailWithTwoStage(input: {
     from: input.from,
     modelPath: input.modelPath,
     temperature: 0.0, // Force consistency for classification
-    maxTokens: 32,
+    maxTokens: 48, // Optimized for JSON schema compliance
   });
 
   // If not job-related, return early (major performance win)
@@ -581,13 +829,27 @@ export async function parseEmailWithLLM(input: {
     },
   });
 
-  // Parse and validate response
+  // Parse and validate response with robust cleaning
   let parsed: ParseResult;
   try {
-    parsed = JSON.parse(response) as ParseResult;
+    const cleanedResponse = cleanLLMResponse(response);
+    parsed = JSON.parse(cleanedResponse) as ParseResult;
   } catch (err) {
-    console.error('LLM response parsing failed:', err, 'Response:', response);
-    parsed = { is_job_related: false, company: null, position: null, status: null };
+    console.error('Unified LLM response parsing failed:', err, 'Raw Response:', response);
+    // Try regex fallback extraction
+    const fallbackResult = extractJSONFromText(response);
+    if (fallbackResult && typeof fallbackResult.is_job_related === 'boolean') {
+      parsed = {
+        is_job_related: fallbackResult.is_job_related,
+        company: fallbackResult.company || null,
+        position: fallbackResult.position || null,
+        status: fallbackResult.status || null
+      };
+      console.log('✅ Unified fallback extraction succeeded');
+    } else {
+      console.error('❌ Unified fallback extraction failed, using default');
+      parsed = { is_job_related: false, company: null, position: null, status: null };
+    }
   }
 
   // Apply post-processing normalization and validation
