@@ -12,10 +12,12 @@ const Settings = lazy(() => import('./pages/Settings'));
 const AnalyticsDashboard = lazy(() => import('./pages/AnalyticsDashboard'));
 const PromptEditor = lazy(() => import('./pages/PromptEditor'));
 const ModelTestingPage = lazy(() => import('./pages/ModelTestingPage'));
+const ModelDashboard = lazy(() => import('./pages/ModelDashboard'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TestIPC = lazy(() => import('./pages/TestIPC'));
 const NotFound = lazy(() => import('./pages/NotFound'));
+const About = lazy(() => import('./pages/About'));
 
 const accent = "#FF7043";
 
@@ -103,7 +105,9 @@ function ElectronApp() {
                 <Route path="/analytics" element={<AnalyticsDashboard />} />
                 <Route path="/prompt-editor" element={<PromptEditor />} />
                 <Route path="/model-testing" element={<ModelTestingPage />} />
+                <Route path="/model-testing/:modelId" element={<ModelDashboard />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/about" element={<About />} />
                 
                 {/* Utility routes */}
                 <Route path="/terms" element={<TermsOfService />} />

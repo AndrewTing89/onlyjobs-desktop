@@ -16,6 +16,7 @@ import {
   Analytics,
   Psychology,
   Science,
+  Info,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '@mui/material/styles';
@@ -38,6 +39,7 @@ const sidebarItems: SidebarItem[] = [
   { text: 'AI Prompt', icon: <Psychology />, path: '/prompt-editor', active: false },
   { text: 'Model Testing', icon: <Science />, path: '/model-testing', active: false },
   { text: 'Settings', icon: <Settings />, path: '/settings', active: false },
+  { text: 'About', icon: <Info />, path: '/about', active: false },
 ];
 
 const SIDEBAR_WIDTH = 240;

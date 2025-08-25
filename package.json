@@ -80,6 +80,7 @@
     "framer-motion": "^12.23.1",
     "googleapis": "^154.1.0",
     "html-to-text": "^9.0.5",
+    "ml-random-forest": "^2.1.0",
     "node-llama-cpp": "^3.12.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

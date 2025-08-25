@@ -30,13 +30,80 @@ interface ElectronAPI {
     lastChecked: string;
   }>;
   
-  // ML Model operations
+  // ML Model operations (legacy)
   getMlStatus: () => Promise<any>;
   isMlReady: () => Promise<any>;
   trainModel: (options?: any) => Promise<any>;
   initializeMl: () => Promise<any>;
   
-  // Prompt management
+  // ML Classifier operations (Random Forest)
+  ml: {
+    getStats: () => Promise<{
+      success: boolean;
+      stats: {
+        trained: boolean;
+        totalSamples: number;
+        jobSamples: number;
+        nonJobSamples: number;
+        accuracy: number;
+        lastTrained: string | null;
+        vocabularySize: number;
+        modelSize: string;
+      };
+      error?: string;
+    }>;
+    retrain: () => Promise<{
+      success: boolean;
+      stats?: any;
+      message?: string;
+      error?: string;
+    }>;
+    submitFeedback: (feedback: {
+      emailId: string;
+      isJobRelated: boolean;
+      company?: string;
+      position?: string;
+      confidence?: number;
+      correctedType?: string;
+      correctedCompany?: string;
+      correctedPosition?: string;
+    }) => Promise<{ success: boolean; error?: string }>;
+  };
+  
+  // Email Review Queue operations
+  review: {
+    getPending: (options?: {
+      confidence_max?: number;
+      reviewed?: boolean;
+      limit?: number;
+    }) => Promise<{
+      success: boolean;
+      reviews?: any[];
+      error?: string;
+    }>;
+    getStats: () => Promise<{
+      success: boolean;
+      stats?: {
+        total: number;
+        pending: number;
+        reviewed: number;
+        expiringSoon: number;
+        byConfidence: Array<{ level: string; count: number }>;
+      };
+      error?: string;
+    }>;
+    markJobRelated: (reviewId: string) => Promise<{ success: boolean; error?: string }>;
+    confirmNotJob: (reviewId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+  
+  // Prompt management (new API)
+  prompt: {
+    get: () => Promise<string>;
+    save: (prompt: string) => Promise<{ success: boolean }>;
+    reset: () => Promise<void>;
+  };
+  
+  // Prompt management (legacy API)
   getPrompt: () => Promise<{ 
     success: boolean; 
     prompt: string; 

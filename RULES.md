@@ -1,5 +1,45 @@
 # CRITICAL PROJECT RULES - MUST FOLLOW
 
+## 📦 MUI COMPONENT USAGE - IMPORTANT
+
+### Grid Component (MUI v7.2.0)
+**ALWAYS use the standard Grid component, NOT Grid2**
+
+#### CORRECT Import:
+```javascript
+import Grid from '@mui/material/Grid';
+```
+
+#### INCORRECT Imports (Will Fail):
+```javascript
+import Grid2 from '@mui/material/Grid2';  // ❌ Grid2 doesn't exist at this path in v7
+import { Grid2 } from '@mui/material';    // ❌ Not exported from main
+```
+
+#### Why This Matters:
+- MUI v7.2.0 uses the standard Grid component at `@mui/material/Grid`
+- Grid2 was a v5.9+ experimental component that has been merged back
+- The Grid component in v7 includes all Grid2 improvements
+- There is no separate Grid2 module in our MUI v7.2.0 installation
+
+#### Correct Grid Usage in MUI v7:
+```javascript
+<Grid container spacing={2}>
+  <Grid size={6}>  // Takes 6/12 columns
+    Content
+  </Grid>
+  <Grid size={{ xs: 12, md: 6 }}>  // Responsive: 12 on mobile, 6 on desktop
+    Content
+  </Grid>
+</Grid>
+```
+
+#### Grid Props in v7:
+- Use `size` prop for column sizing (not xs, sm, md as individual props)
+- NO `item` prop needed (Grid v7 doesn't use it)
+- Use `container` prop for grid containers
+- For responsive: `size={{ xs: 12, sm: 6, md: 4 }}`
+
 ## 🚫 NEVER USE FIREBASE - PERMANENT BAN
 **This is a DESKTOP-ONLY Electron application. Firebase must NEVER be used.**
 

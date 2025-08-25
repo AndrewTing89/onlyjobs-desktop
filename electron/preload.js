@@ -21,13 +21,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // LLM Health Check
   checkLLMHealth: () => ipcRenderer.invoke('llm:health-check'),
   
-  // ML Model operations
+  // ML Model operations (legacy)
   getMlStatus: () => ipcRenderer.invoke('ml:get-status'),
   isMlReady: () => ipcRenderer.invoke('ml:is-ready'),
   trainModel: (options) => ipcRenderer.invoke('ml:train-model', options),
   initializeMl: () => ipcRenderer.invoke('ml:initialize'),
   
+  // ML Classifier operations (Random Forest)
+  ml: {
+    getStats: () => ipcRenderer.invoke('ml:get-stats'),
+    retrain: () => ipcRenderer.invoke('ml:retrain'),
+    submitFeedback: (feedback) => ipcRenderer.invoke('ml:submit-feedback', feedback),
+  },
+  
+  // Email Review Queue operations
+  review: {
+    getPending: (options) => ipcRenderer.invoke('review:get-pending', options),
+    getStats: () => ipcRenderer.invoke('review:get-stats'),
+    markJobRelated: (reviewId) => ipcRenderer.invoke('review:mark-job-related', reviewId),
+    confirmNotJob: (reviewId) => ipcRenderer.invoke('review:confirm-not-job', reviewId),
+  },
+  
   // Prompt management
+  prompt: {
+    get: () => ipcRenderer.invoke('prompt:get'),
+    save: (prompt) => ipcRenderer.invoke('prompt:save', prompt),
+    reset: () => ipcRenderer.invoke('prompt:reset'),
+  },
   getPrompt: () => ipcRenderer.invoke('prompt:get'),
   setPrompt: (prompt) => ipcRenderer.invoke('prompt:set', prompt),
   resetPrompt: () => ipcRenderer.invoke('prompt:reset'),

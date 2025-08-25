@@ -28,6 +28,7 @@ import { onlyJobsTheme } from '../theme';
 import Sidebar from '../components/layout/Sidebar';
 import TopBar from '../components/layout/TopBar';
 import { LLMHealthCard } from '../components/LLMHealthCard';
+import { MLStatsCard } from '../components/MLStatsCard';
 
 // Import auth contexts
 import { useAuth } from "../contexts/ElectronAuthContext";
@@ -212,6 +213,13 @@ export default function Settings() {
             )}
 
 
+
+            {/* ML Classifier Section - Electron Only */}
+            {isElectron && (
+              <Box sx={{ mb: 3 }}>
+                <MLStatsCard />
+              </Box>
+            )}
 
             {/* Database Management Section - Electron Only */}
             {isElectron && (

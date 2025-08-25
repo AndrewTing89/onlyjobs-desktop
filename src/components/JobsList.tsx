@@ -23,10 +23,12 @@ import {
   Email,
   Search,
   Refresh,
-  Visibility
+  Visibility,
+  Feedback
 } from '@mui/icons-material';
 import { LoadingSpinner } from './LoadingSpinner';
 import { EmailViewer } from './EmailViewer';
+import EmailClassificationFeedback from './EmailClassificationFeedback';
 
 const accent = "#FF7043";
 
@@ -67,6 +69,8 @@ export default function JobsList() {
   const [syncStatus, setSyncStatus] = useState<any>(null);
   const [emailViewerOpen, setEmailViewerOpen] = useState(false);
   const [viewingJob, setViewingJob] = useState<Job | null>(null);
+  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
+  const [feedbackJob, setFeedbackJob] = useState<Job | null>(null);
 
   useEffect(() => {
     loadJobs();
@@ -179,6 +183,43 @@ export default function JobsList() {
     }
     
     handleMenuClose();
+  };
+
+  const handleFeedbackClick = (job: Job) => {
+    setFeedbackJob(job);
+    setFeedbackDialogOpen(true);
+  };
+
+  const handleFeedbackSubmit = async (corrected: any) => {
+    try {
+      // Submit feedback to ML model
+      await window.electronAPI.ml.submitFeedback({
+        emailId: corrected.emailId,
+        isJobRelated: corrected.isJobRelated,
+        correctedType: corrected.correctedType,
+        correctedCompany: corrected.correctedCompany,
+        correctedPosition: corrected.correctedPosition
+      });
+
+      // Update the job in the UI if needed
+      if (corrected.isJobRelated && feedbackJob) {
+        setJobs(jobs.map(j => 
+          j.id === feedbackJob.id 
+            ? { 
+                ...j, 
+                company: corrected.correctedCompany || j.company,
+                position: corrected.correctedPosition || j.position
+              } 
+            : j
+        ));
+      }
+
+      // Close the dialog
+      setFeedbackDialogOpen(false);
+      setFeedbackJob(null);
+    } catch (error) {
+      console.error('Error submitting feedback:', error);
+    }
   };
 
   // Email viewing removed since we no longer store raw content
@@ -365,7 +406,10 @@ export default function JobsList() {
                   <ListItemSecondaryAction>
                     <Box sx={{ display: 'flex', gap: 0.5 }}>
                       <IconButton
-                        onClick={() => handleViewEmail(job)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleViewEmail(job);
+                        }}
                         size="small"
                         title="View Email"
                         sx={{
@@ -379,8 +423,28 @@ export default function JobsList() {
                         <Visibility />
                       </IconButton>
                       <IconButton
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleFeedbackClick(job);
+                        }}
+                        size="small"
+                        title="Provide Feedback"
+                        sx={{
+                          color: 'secondary.main',
+                          '&:hover': {
+                            backgroundColor: 'secondary.main',
+                            color: 'white',
+                          }
+                        }}
+                      >
+                        <Feedback />
+                      </IconButton>
+                      <IconButton
                         edge="end"
-                        onClick={(e) => handleMenuOpen(e, job)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleMenuOpen(e, job);
+                        }}
                       >
                         <MoreVert />
                       </IconButton>
@@ -433,6 +497,24 @@ export default function JobsList() {
           }}
           jobId={viewingJob.id}
           jobTitle={`${viewingJob.company} - ${viewingJob.position}`}
+        />
+      )}
+
+      {feedbackJob && (
+        <EmailClassificationFeedback
+          open={feedbackDialogOpen}
+          onClose={() => {
+            setFeedbackDialogOpen(false);
+            setFeedbackJob(null);
+          }}
+          onSubmit={handleFeedbackSubmit}
+          emailId={feedbackJob.email_id || ''}
+          currentClassification={{
+            isJobRelated: true,
+            company: feedbackJob.company || '',
+            position: feedbackJob.position || '',
+            jobType: feedbackJob.status || 'Applied'
+          }}
         />
       )}
 
