@@ -71,6 +71,15 @@ interface EmailData {
   body: string;
   date: string;
   threadId?: string;
+  source?: 'gmail' | 'review';
+  reviewId?: string;
+  confidence?: number;
+  classification?: {
+    is_job_related: boolean;
+    company: string | null;
+    position: string | null;
+    status: string | null;
+  };
 }
 
 interface ClassificationResult {
@@ -539,6 +548,14 @@ export const ModelComparison: React.FC = () => {
                 />
               </Box>
             </Box>
+            
+            {/* Show stats if we have review emails */}
+            {emails.some(e => e.source === 'review') && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Showing {emails.filter(e => e.source === 'gmail').length} Gmail emails and{' '}
+                {emails.filter(e => e.source === 'review').length} uncertain emails from review queue
+              </Alert>
+            )}
 
             {loadingEmails ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
@@ -564,6 +581,13 @@ export const ModelComparison: React.FC = () => {
                               {isTested && (
                                 <Chip label="Tested" size="small" color="success" />
                               )}
+                              {email.source === 'review' && (
+                                <Chip 
+                                  label={`Review Queue - ${Math.round((email.confidence || 0) * 100)}% confidence`} 
+                                  size="small" 
+                                  color="warning"
+                                />
+                              )}
                             </Box>
                           }
                           secondary={
@@ -574,6 +598,13 @@ export const ModelComparison: React.FC = () => {
                               <Typography variant="caption" component="span" sx={{ display: 'block' }}>
                                 Date: {new Date(email.date).toLocaleDateString()}
                               </Typography>
+                              {email.classification && (
+                                <Typography variant="caption" component="span" sx={{ display: 'block', mt: 0.5 }}>
+                                  Previous: {email.classification.is_job_related ? '✅ Job' : '❌ Not Job'} 
+                                  {email.classification.company && ` - ${email.classification.company}`}
+                                  {email.classification.position && ` - ${email.classification.position}`}
+                                </Typography>
+                              )}
                               <Typography 
                                 variant="body2" 
                                 component="span" 

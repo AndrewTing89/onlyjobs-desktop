@@ -2349,32 +2349,82 @@ ipcMain.handle('models:get-recent-emails', async () => {
       query: `in:inbox after:${dateString}`
     });
     
-    if (!fetchResult.messages || fetchResult.messages.length === 0) {
-      return { success: true, emails: [] };
+    const gmailEmails = [];
+    if (fetchResult.messages && fetchResult.messages.length > 0) {
+      // Extract email data for UI display
+      fetchResult.messages.forEach(message => {
+        const headers = message.payload?.headers || [];
+        const subject = headers.find(h => h.name === 'Subject')?.value || '(No subject)';
+        const from = headers.find(h => h.name === 'From')?.value || '';
+        const date = headers.find(h => h.name === 'Date')?.value || '';
+        
+        // Extract body
+        const emailContent = _extractEmailContent(message);
+        
+        gmailEmails.push({
+          id: message.id,
+          subject: subject,
+          from: from,
+          body: emailContent,
+          date: date,
+          threadId: message.threadId,
+          source: 'gmail'
+        });
+      });
     }
     
-    // Extract email data for UI display
-    const emails = fetchResult.messages.map(message => {
-      const headers = message.payload?.headers || [];
-      const subject = headers.find(h => h.name === 'Subject')?.value || '(No subject)';
-      const from = headers.find(h => h.name === 'From')?.value || '';
-      const date = headers.find(h => h.name === 'Date')?.value || '';
-      
-      // Extract body
-      const emailContent = _extractEmailContent(message);
-      
-      return {
-        id: message.id,
-        subject: subject,
-        from: from,
-        body: emailContent,
-        date: date,
-        threadId: message.threadId
-      };
-    });
+    // Also fetch emails from review queue for testing
+    const db = getDb();
+    const reviewEmails = db.prepare(`
+      SELECT 
+        id,
+        gmail_message_id,
+        subject,
+        from_email,
+        body_text,
+        received_date,
+        confidence_score,
+        is_job_related,
+        company,
+        position,
+        status
+      FROM email_review 
+      WHERE manually_reviewed = 0
+        AND expires_at > datetime('now')
+      ORDER BY confidence_score ASC
+      LIMIT 50
+    `).all();
     
-    console.log(`Fetched ${emails.length} emails for testing`);
-    return { success: true, emails };
+    // Format review emails to match Gmail email structure
+    const formattedReviewEmails = reviewEmails.map(email => ({
+      id: email.gmail_message_id,
+      subject: email.subject,
+      from: email.from_email,
+      body: email.body_text,
+      date: email.received_date,
+      source: 'review',
+      reviewId: email.id,
+      confidence: email.confidence_score,
+      classification: {
+        is_job_related: email.is_job_related,
+        company: email.company,
+        position: email.position,
+        status: email.status
+      }
+    }));
+    
+    // Combine both sources
+    const allEmails = [...gmailEmails, ...formattedReviewEmails];
+    
+    console.log(`Fetched ${gmailEmails.length} Gmail emails and ${formattedReviewEmails.length} review emails for testing`);
+    return { 
+      success: true, 
+      emails: allEmails,
+      stats: {
+        gmail: gmailEmails.length,
+        review: formattedReviewEmails.length
+      }
+    };
     
   } catch (error) {
     console.error('Error getting recent emails:', error);
