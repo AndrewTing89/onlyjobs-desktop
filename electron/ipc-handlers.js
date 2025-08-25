@@ -1770,18 +1770,37 @@ ipcMain.handle('db:clear-all-records', async () => {
   try {
     console.log('🗑️ Clearing all database records...');
     
+    // Get the database instance first
+    const db = getDb();
+    console.log('📊 Database instance obtained');
+    
+    // Check current counts before clearing
+    const beforeCounts = {
+      emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
+      jobs: db.prepare('SELECT COUNT(*) as count FROM jobs').get().count,
+      gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count
+    };
+    console.log('📊 Current record counts:', beforeCounts);
+    
     // Use a transaction to ensure all operations succeed or fail together
-    const clearAll = getDb().transaction(() => {
+    const clearAll = db.transaction(() => {
       // Clear all tables in the correct order (respecting foreign key constraints if any)
-      const clearEmailSync = getDb().prepare('DELETE FROM email_sync');
-      const clearJobs = getDb().prepare('DELETE FROM jobs');
-      const clearGmailAccounts = getDb().prepare('DELETE FROM gmail_accounts');
-      const resetSyncStatus = getDb().prepare('UPDATE sync_status SET last_fetch_time = NULL, last_classify_time = NULL, last_sync_status = NULL, total_emails_fetched = 0, total_emails_classified = 0, total_jobs_found = 0 WHERE id = 1');
+      const clearEmailSync = db.prepare('DELETE FROM email_sync');
+      const clearJobs = db.prepare('DELETE FROM jobs');
+      const clearGmailAccounts = db.prepare('DELETE FROM gmail_accounts');
+      const resetSyncStatus = db.prepare('UPDATE sync_status SET last_fetch_time = NULL, last_classify_time = NULL, last_sync_status = NULL, total_emails_fetched = 0, total_emails_classified = 0, total_jobs_found = 0 WHERE id = 1');
       
       const emailSyncResult = clearEmailSync.run();
+      console.log(`Deleted ${emailSyncResult.changes} email_sync records`);
+      
       const jobsResult = clearJobs.run();
+      console.log(`Deleted ${jobsResult.changes} jobs records`);
+      
       const gmailAccountsResult = clearGmailAccounts.run();
+      console.log(`Deleted ${gmailAccountsResult.changes} gmail_accounts records`);
+      
       resetSyncStatus.run();
+      console.log('Reset sync status');
       
       return {
         emailSyncDeleted: emailSyncResult.changes,
@@ -1792,15 +1811,24 @@ ipcMain.handle('db:clear-all-records', async () => {
     
     const result = clearAll();
     
+    // Verify the deletion
+    const afterCounts = {
+      emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
+      jobs: db.prepare('SELECT COUNT(*) as count FROM jobs').get().count,
+      gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count
+    };
+    console.log('📊 After clearing - record counts:', afterCounts);
+    
     console.log('✅ Database cleared successfully:', result);
     
     return {
       success: true,
-      message: 'All database records have been cleared successfully',
+      message: `All database records have been cleared successfully. Deleted: ${result.emailSyncDeleted} email sync records, ${result.jobsDeleted} jobs, ${result.gmailAccountsDeleted} accounts`,
       details: result
     };
   } catch (error) {
     console.error('❌ Error clearing database:', error);
+    console.error('Error stack:', error.stack);
     throw error;
   }
 });
@@ -1809,12 +1837,24 @@ ipcMain.handle('db:clear-email-sync', async () => {
   try {
     console.log('🗑️ Clearing email sync history...');
     
-    const stmt = getDb().prepare('DELETE FROM email_sync');
+    const db = getDb();
+    
+    // Check current count before clearing
+    const beforeCount = db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count;
+    console.log(`📊 Current email_sync records: ${beforeCount}`);
+    
+    const stmt = db.prepare('DELETE FROM email_sync');
     const result = stmt.run();
+    console.log(`Deleted ${result.changes} email_sync records`);
     
     // Reset sync status counters
-    const resetStmt = getDb().prepare('UPDATE sync_status SET total_emails_fetched = 0, total_emails_classified = 0, last_sync_status = NULL WHERE id = 1');
+    const resetStmt = db.prepare('UPDATE sync_status SET total_emails_fetched = 0, total_emails_classified = 0, last_sync_status = NULL WHERE id = 1');
     resetStmt.run();
+    console.log('Reset sync status counters');
+    
+    // Verify the deletion
+    const afterCount = db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count;
+    console.log(`📊 After clearing - email_sync records: ${afterCount}`);
     
     console.log(`✅ Cleared ${result.changes} email sync records`);
     
@@ -1825,6 +1865,7 @@ ipcMain.handle('db:clear-email-sync', async () => {
     };
   } catch (error) {
     console.error('❌ Error clearing email sync history:', error);
+    console.error('Error stack:', error.stack);
     throw error;
   }
 });
