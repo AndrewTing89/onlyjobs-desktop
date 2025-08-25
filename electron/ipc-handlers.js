@@ -24,6 +24,26 @@ const llmHandler = {
       const result = await classifier.parse({ subject, plaintext: content });
       console.log('LLM classification result:', result);
       
+      // Calculate confidence score based on result completeness and certainty
+      let confidence = 0.5; // Base confidence
+      
+      if (result.is_job_related) {
+        // Start with higher base for job-related
+        confidence = 0.7;
+        
+        // Increase confidence if we have complete information
+        if (result.company && result.company !== 'Unknown') confidence += 0.1;
+        if (result.position && result.position !== 'Unknown Position') confidence += 0.1;
+        if (result.status) confidence += 0.05;
+        
+        // Cap at 0.95 for job-related
+        confidence = Math.min(confidence, 0.95);
+      } else {
+        // For non-job emails, confidence depends on how clearly it's not job-related
+        // If the model returned it quickly with no job markers, it's likely confident
+        confidence = 0.8; // Most non-job emails are clearly not job-related
+      }
+      
       // Map status to job_type for backward compatibility
       let jobType = null;
       if (result.is_job_related && result.status) {
@@ -37,17 +57,19 @@ const llmHandler = {
       
       return {
         ...result,
-        job_type: jobType
+        job_type: jobType,
+        confidence: confidence
       };
     } catch (error) {
       console.error('LLM classification error:', error);
-      // Return non-job-related as safe fallback
+      // Return non-job-related as safe fallback with low confidence
       return {
         is_job_related: false,
         company: null,
         position: null,
         status: null,
-        job_type: null
+        job_type: null,
+        confidence: 0.3 // Low confidence on error
       };
     }
   },
@@ -292,12 +314,47 @@ function initializeDatabase() {
       error_message TEXT
     );
 
+    -- Email review table for uncertain classifications
+    CREATE TABLE IF NOT EXISTS email_review (
+      id TEXT PRIMARY KEY,
+      gmail_message_id TEXT NOT NULL,
+      account_email TEXT NOT NULL,
+      subject TEXT,
+      from_email TEXT,
+      body_text TEXT,
+      received_date DATETIME,
+      
+      -- Classification results
+      is_job_related BOOLEAN,
+      company TEXT,
+      position TEXT,
+      status TEXT,
+      confidence_score REAL,
+      classification_model TEXT,
+      classification_reason TEXT,
+      
+      -- Review status
+      manually_reviewed BOOLEAN DEFAULT 0,
+      confirmed_classification BOOLEAN,
+      review_notes TEXT,
+      
+      -- Auto-deletion
+      retention_days INTEGER DEFAULT 7,
+      expires_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      
+      UNIQUE(gmail_message_id, account_email)
+    );
+
     -- Indexes for performance
     CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_gmail_id ON jobs(gmail_message_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_account ON jobs(account_email);
     CREATE INDEX IF NOT EXISTS idx_email_sync_account ON email_sync(account_email);
+    CREATE INDEX IF NOT EXISTS idx_review_expires ON email_review(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_review_confidence ON email_review(confidence_score);
+    CREATE INDEX IF NOT EXISTS idx_review_reviewed ON email_review(manually_reviewed);
 
     -- Initialize sync status if not exists
     INSERT OR IGNORE INTO sync_status (id) VALUES (1);
@@ -305,7 +362,111 @@ function initializeDatabase() {
   
   // Re-enable foreign keys
   getDb().pragma('foreign_keys = ON');
+  
+  // Add confidence_score to jobs table if it doesn't exist
+  try {
+    const jobsTableInfo = getDb().prepare("PRAGMA table_info(jobs)").all();
+    const hasConfidenceScore = jobsTableInfo.some(col => col.name === 'confidence_score');
+    
+    if (!hasConfidenceScore && jobsTableInfo.length > 0) {
+      console.log('Adding confidence_score column to jobs table...');
+      getDb().exec('ALTER TABLE jobs ADD COLUMN confidence_score REAL DEFAULT 0.8');
+      getDb().exec('ALTER TABLE jobs ADD COLUMN classification_model TEXT');
+    }
+  } catch (e) {
+    console.log('Confidence score columns may already exist:', e.message);
+  }
 }
+
+// Helper function to calculate retention days based on confidence
+function calculateRetentionDays(confidence, preClassification) {
+  // Don't store obvious non-job emails
+  if (preClassification === 'not_job' && confidence > 0.8) return 0;
+  
+  // Longer retention for uncertain classifications
+  if (confidence < 0.5) return 30;  // Very uncertain - keep for 30 days
+  if (confidence < 0.7) return 14;  // Moderately uncertain - keep for 14 days
+  return 7;  // High confidence but still worth review - keep for 7 days
+}
+
+// Helper function to store email for review
+async function storeEmailForReview(email, classification, confidence, retentionDays, accountEmail) {
+  if (retentionDays === 0) return; // Don't store if retention is 0
+  
+  const db = getDb();
+  const reviewId = `review_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + retentionDays);
+  
+  const headers = email.payload?.headers || [];
+  const subject = headers.find(h => h.name === 'Subject')?.value || '';
+  const from = headers.find(h => h.name === 'From')?.value || '';
+  const date = headers.find(h => h.name === 'Date')?.value || '';
+  const emailContent = _extractEmailContent(email);
+  
+  try {
+    const stmt = db.prepare(`
+      INSERT OR REPLACE INTO email_review (
+        id, gmail_message_id, account_email, subject, from_email, body_text,
+        received_date, is_job_related, company, position, status,
+        confidence_score, classification_model, retention_days, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    stmt.run(
+      reviewId,
+      email.id,
+      accountEmail,
+      subject,
+      from,
+      emailContent,
+      date,
+      classification.is_job_related ? 1 : 0,
+      classification.company,
+      classification.position,
+      classification.status,
+      confidence,
+      'default-llm', // You can update this based on actual model used
+      retentionDays,
+      expiresAt.toISOString()
+    );
+    
+    console.log(`📋 Stored email for review: ${subject.substring(0, 50)} (confidence: ${confidence.toFixed(2)}, retention: ${retentionDays} days)`);
+  } catch (error) {
+    console.error('Error storing email for review:', error);
+  }
+}
+
+// Cleanup job for expired reviews - runs on app startup and periodically
+async function cleanupExpiredReviews() {
+  try {
+    const db = getDb();
+    const result = db.prepare(`
+      DELETE FROM email_review 
+      WHERE expires_at < datetime('now')
+        AND manually_reviewed = 0
+    `).run();
+    
+    if (result.changes > 0) {
+      console.log(`🧹 Cleaned up ${result.changes} expired review emails`);
+    }
+    
+    return result.changes;
+  } catch (error) {
+    console.error('Error cleaning up expired reviews:', error);
+    return 0;
+  }
+}
+
+// Run cleanup on startup
+setTimeout(() => {
+  cleanupExpiredReviews();
+}, 5000); // Run 5 seconds after startup
+
+// Run cleanup periodically (every 24 hours)
+setInterval(() => {
+  cleanupExpiredReviews();
+}, 24 * 60 * 60 * 1000);
 
 // Database operations
 ipcMain.handle('db:get-jobs', async (event, filters = {}) => {
@@ -465,6 +626,133 @@ ipcMain.handle('db:delete-job', async (event, id) => {
   } catch (error) {
     console.error('Error deleting job:', error);
     throw error;
+  }
+});
+
+// Email Review Management Handlers
+ipcMain.handle('review:get-pending', async (event, filters = {}) => {
+  try {
+    const { limit = 50, confidence_max = 1.0, reviewed = false } = filters;
+    
+    let query = `
+      SELECT * FROM email_review 
+      WHERE manually_reviewed = ?
+        AND confidence_score <= ?
+        AND expires_at > datetime('now')
+      ORDER BY confidence_score ASC, created_at DESC
+      LIMIT ?
+    `;
+    
+    const stmt = getDb().prepare(query);
+    const reviews = stmt.all(reviewed ? 1 : 0, confidence_max, limit);
+    
+    return {
+      success: true,
+      reviews,
+      total: getDb().prepare('SELECT COUNT(*) as count FROM email_review WHERE manually_reviewed = 0').get().count
+    };
+  } catch (error) {
+    console.error('Error getting pending reviews:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('review:mark-job-related', async (event, reviewId) => {
+  try {
+    const db = getDb();
+    
+    // Get the review email
+    const review = db.prepare('SELECT * FROM email_review WHERE id = ?').get(reviewId);
+    if (!review) {
+      throw new Error('Review not found');
+    }
+    
+    // Create job entry
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const jobStmt = db.prepare(`
+      INSERT INTO jobs (
+        id, gmail_message_id, company, position, status, 
+        applied_date, account_email, from_address, notes,
+        confidence_score, classification_model
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    jobStmt.run(
+      jobId,
+      review.gmail_message_id,
+      review.company || 'Unknown',
+      review.position || 'Unknown Position',
+      review.status || 'Applied',
+      review.received_date,
+      review.account_email,
+      review.from_email,
+      'Manually marked as job-related from review queue',
+      1.0, // Full confidence since manually confirmed
+      'manual_review'
+    );
+    
+    // Update email_sync table
+    db.prepare(`
+      UPDATE email_sync 
+      SET is_job_related = 1 
+      WHERE gmail_message_id = ? AND account_email = ?
+    `).run(review.gmail_message_id, review.account_email);
+    
+    // Delete from review table
+    db.prepare('DELETE FROM email_review WHERE id = ?').run(reviewId);
+    
+    return { success: true, jobId };
+  } catch (error) {
+    console.error('Error marking as job-related:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('review:confirm-not-job', async (event, reviewId) => {
+  try {
+    // Simply delete from review table (already marked as not job in email_sync)
+    const stmt = getDb().prepare('DELETE FROM email_review WHERE id = ?');
+    const result = stmt.run(reviewId);
+    
+    return { success: true, deleted: result.changes > 0 };
+  } catch (error) {
+    console.error('Error confirming not-job:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('review:get-stats', async () => {
+  try {
+    const db = getDb();
+    
+    const stats = {
+      total: db.prepare('SELECT COUNT(*) as count FROM email_review').get().count,
+      pending: db.prepare('SELECT COUNT(*) as count FROM email_review WHERE manually_reviewed = 0').get().count,
+      reviewed: db.prepare('SELECT COUNT(*) as count FROM email_review WHERE manually_reviewed = 1').get().count,
+      expiringSoon: db.prepare(`
+        SELECT COUNT(*) as count FROM email_review 
+        WHERE expires_at < datetime('now', '+2 days')
+          AND manually_reviewed = 0
+      `).get().count,
+      byConfidence: db.prepare(`
+        SELECT 
+          CASE 
+            WHEN confidence_score < 0.5 THEN 'very_low'
+            WHEN confidence_score < 0.6 THEN 'low'
+            WHEN confidence_score < 0.7 THEN 'medium'
+            ELSE 'high'
+          END as level,
+          COUNT(*) as count
+        FROM email_review
+        WHERE manually_reviewed = 0
+        GROUP BY level
+      `).all()
+    };
+    
+    return { success: true, stats };
+  } catch (error) {
+    console.error('Error getting review stats:', error);
+    return { success: false, error: error.message };
   }
 });
 
@@ -1454,6 +1742,14 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
             
             // Classify with LLM (for 'definitely_job' and 'uncertain' emails)
             const classification = await llmHandler.classifyEmail(emailContent);
+            const confidence = classification.confidence || 0.5;
+            
+            // Calculate retention days for review storage
+            const retentionDays = calculateRetentionDays(confidence, preClassification);
+            
+            // Decide where to store based on confidence and classification
+            const shouldStoreAsJob = classification.is_job_related && confidence >= 0.6;
+            const shouldStoreForReview = !shouldStoreAsJob && retentionDays > 0;
             
             // Send classification result update
             if (classification.is_job_related) {
@@ -1467,7 +1763,20 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
                   total: fetchResult.messages.length
                 },
                 phase: 'saving',
-                details: `✅ Job found: ${classification.company || 'Unknown Company'} - ${classification.position || 'Unknown Position'}`
+                details: `✅ Job found: ${classification.company || 'Unknown Company'} - ${classification.position || 'Unknown Position'} (confidence: ${(confidence * 100).toFixed(0)}%)`
+              });
+            } else if (shouldStoreForReview) {
+              mainWindow.webContents.send('sync-progress', {
+                current: i,
+                total: accounts.length,
+                status: `Storing uncertain email for review`,
+                account: account.email,
+                emailProgress: {
+                  current: emailIndex,
+                  total: fetchResult.messages.length
+                },
+                phase: 'review',
+                details: `📋 Low confidence (${(confidence * 100).toFixed(0)}%), storing for review`
               });
             }
             
@@ -1481,8 +1790,15 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
             
             totalEmailsFetched++;
             
-            // If job-related, create or update job entry
-            if (classification.is_job_related) {
+            // Store for review if uncertain
+            if (shouldStoreForReview) {
+              await storeEmailForReview(email, classification, confidence, retentionDays, account.email);
+              totalEmailsClassified++;
+              continue; // Don't store in jobs table
+            }
+            
+            // If high-confidence job-related, create or update job entry
+            if (shouldStoreAsJob) {
               // Create similarity key for deduplication
               const company = classification.company || 'Unknown';
               const position = classification.position || 'Unknown Position';
