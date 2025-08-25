@@ -29,7 +29,7 @@ An AI-powered job application tracking desktop app that automatically syncs with
 
 The app uses a local LLM for accurate email classification with JSON schema validation. All processing happens locally for privacy and speed.
 
-- **Default Model**: Llama-3.2-3B-Instruct Q4_K_M (efficient, good accuracy)
+- **Default Model**: Llama-3.2-3B-Instruct Q8_0 (high quality, good accuracy)
 - **Model Path**: `./models/model.gguf`
 - **Always On**: Pure LLM-only classification (no ML confidence scores or legacy fallbacks)
 - **Real-time Processing**: Jobs appear instantly in UI as emails are classified during sync
@@ -90,7 +90,7 @@ npm install
 # Install LLM native dependencies (required for classification)
 npm run llm:deps
 
-# Download the Llama Q4_K_M model (~2.0GB - this may take several minutes)
+# Download the Llama Q8_0 model (~2.0GB - this may take several minutes)
 npm run llm:download
 ```
 
