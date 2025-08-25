@@ -6,6 +6,7 @@
 const EmailMatcher = require('./email-matcher');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { preClassifyEmail } = require('./email-rules');
 
 class IntegratedEmailProcessor {
   constructor(gmailAuth, mlHandler) {
@@ -28,6 +29,7 @@ class IntegratedEmailProcessor {
       processed: 0,
       newJobs: 0,
       updatedJobs: 0,
+      filtered: 0,
       errors: []
     };
 
@@ -35,6 +37,23 @@ class IntegratedEmailProcessor {
       try {
         // Extract email data
         const emailData = this.extractEmailData(message);
+        
+        // Pre-filter emails to avoid unnecessary LLM calls
+        const preClassification = preClassifyEmail({
+          from: emailData.from,
+          subject: emailData.subject,
+          body: emailData.content
+        });
+        
+        // Skip emails that are definitely not job-related
+        if (preClassification === 'not_job') {
+          results.filtered++;
+          console.log(`⚡ Pre-filtered non-job email: ${emailData.subject.substring(0, 50)}`);
+          continue;
+        }
+        
+        // For 'definitely_job' emails, we still run through LLM for extraction
+        // For 'uncertain' emails, let LLM decide
         
         // Classify email with enhanced header context
         const emailHeaders = this.extractHeaders(message);

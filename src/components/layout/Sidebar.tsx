@@ -15,6 +15,7 @@ import {
   Settings,
   Analytics,
   Psychology,
+  Science,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '@mui/material/styles';
@@ -35,6 +36,7 @@ const sidebarItems: SidebarItem[] = [
   { text: 'Dashboard', icon: <Home />, path: '/', active: true },
   { text: 'Analytics', icon: <Analytics />, path: '/analytics', active: false },
   { text: 'AI Prompt', icon: <Psychology />, path: '/prompt-editor', active: false },
+  { text: 'Model Testing', icon: <Science />, path: '/model-testing', active: false },
   { text: 'Settings', icon: <Settings />, path: '/settings', active: false },
 ];
 

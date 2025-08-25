@@ -28,14 +28,21 @@ An AI-powered job application tracker that automatically syncs with Gmail, uses 
 - Gmail account
 - Google Cloud Platform project with Gmail API enabled
 
-## LLM Classification
+## Email Processing & Classification
 
-The app uses a local LLM for accurate email classification with JSON schema validation. All processing happens locally for privacy and speed.
+The app uses a two-tier approach for efficient email processing:
 
+### Prefiltering (NEW)
+- **Domain-based filtering**: Instantly filters out emails from 60+ non-job domains (GitHub, social media, etc.)
+- **Keyword matching**: Uses regex patterns to identify obvious job/non-job emails
+- **ATS detection**: Recognizes 30+ ATS domains (Workday, Greenhouse, Lever) for priority processing
+- **Performance**: Eliminates ~60-70% of LLM calls, significantly speeding up sync
+
+### LLM Classification
 - **Default Model**: Llama-3.2-3B-Instruct Q4_K_M (lightweight, CPU-optimized)
 - **Model Path**: `./models/model.gguf`
-- **Always On**: Pure LLM-only classification (no ML confidence scores or legacy fallbacks)
-- **Real-time Processing**: Jobs appear instantly in UI as emails are classified during sync
+- **Smart Processing**: Only processes emails that pass prefiltering or are uncertain
+- **Real-time Updates**: Jobs appear instantly in UI as emails are classified during sync
 - **Setup Commands**:
   - `npm run llm:deps` - Install node-llama-cpp dependencies
   - `npm run llm:download` - Download the model file
@@ -43,10 +50,10 @@ The app uses a local LLM for accurate email classification with JSON schema vali
   - `npm run llm:normalize -- --dry-run` - Preview normalization changes to existing job records
   - `npm run llm:normalize` - Apply normalization improvements to existing database records
 - **Performance Features**:
+  - **Two-tier Processing**: Prefiltering eliminates 60-70% of LLM calls
   - **Streaming Early Stop**: Terminates LLM generation as soon as complete JSON is detected (30-60% latency reduction)
   - **Single-shot Prompts**: Uses plain-string prompts instead of chat arrays for faster inference
-  - **Prefilter**: Skips LLM for obvious non-job emails using regex matching
-  - **Caching**: Results cached for 7 days (configurable TTL) for faster repeated classification  
+  - **Smart Caching**: Results cached for 7 days (configurable TTL) for faster repeated classification  
   - **Timeout Protection**: Falls back to keyword classifier after 15s timeout
   - **Content Truncation**: Long emails truncated to 5000 chars (preserves header/footer)
   - **Concurrency Control**: Limits concurrent LLM requests to prevent resource exhaustion

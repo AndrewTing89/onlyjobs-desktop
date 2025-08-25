@@ -55,9 +55,10 @@ npm run rebuild:native    # Rebuild all native modules (better-sqlite3 & node-ll
 ### Key Electron Components
 1. **IPC Handlers** (`electron/ipc-handlers.js`): Real-time event-based communication
 2. **Gmail Integration** (`electron/gmail-multi-auth.js`): Multi-account OAuth and email fetching
-3. **Email Processor** (`electron/integrated-email-processor.js`): Unified processing pipeline
-4. **LLM Engine** (`electron/llm/llmEngine.ts`): Streaming inference with early-stop optimization
-5. **Classifier Factory** (`electron/classifier/providerFactory.js`): Pure LLM provider
+3. **Email Processor** (`electron/integrated-email-processor.js`): Unified processing pipeline with prefiltering
+4. **Email Rules** (`electron/email-rules.js`): Domain and keyword-based prefiltering
+5. **LLM Engine** (`electron/llm/llmEngine.ts`): Streaming inference with early-stop optimization
+6. **Classifier Factory** (`electron/classifier/providerFactory.js`): Pure LLM provider
 
 ### Frontend Architecture
 - **Components** (`src/components/`): Reusable UI components
@@ -76,12 +77,27 @@ npm run rebuild:native    # Rebuild all native modules (better-sqlite3 & node-ll
 - `electron/.env`: Electron main process OAuth credentials
 - Both must have matching Google OAuth credentials
 
-### LLM Classification Flow
-1. Email received → Prefilter check (regex)
-2. Cache lookup (7-day TTL default)
-3. LLM inference with streaming early-stop
-4. JSON schema validation and normalization
-5. Database storage with deduplication
+### Email Processing Flow (2-Tier System)
+
+#### Stage 1: Prefiltering (`electron/email-rules.js`)
+- **Domain-based filtering**: Checks against 60+ non-job domains and 30+ ATS domains
+- **Keyword matching**: Regex patterns for job-related keywords
+- **Returns**: `'not_job'` (skip), `'definitely_job'` (process), or `'uncertain'` (needs LLM)
+- **Performance**: Eliminates ~60-70% of LLM calls using pure JavaScript
+
+#### Stage 2: LLM Classification (if needed)
+1. Cache lookup (7-day TTL default, SQLite-based)
+2. LLM inference with streaming early-stop
+3. JSON schema validation and normalization
+4. Database storage with deduplication
+
+#### Complete Flow
+```
+Email arrives → Prefilter check →
+  ├─ "not_job" → Mark as filtered, skip LLM
+  ├─ "definitely_job" → Run LLM for extraction
+  └─ "uncertain" → Run LLM for classification
+```
 
 ### Database Schema
 - `jobs`: Classified job applications
@@ -147,6 +163,8 @@ npm run llm:evaluate      # Systematic evaluation with fixtures
 - Database: SQLite files in platform userData directory
 
 ### Performance Optimization
-- LLM: Adjust `ONLYJOBS_N_GPU_LAYERS` for GPU acceleration
-- Cache: Configure `ONLYJOBS_CACHE_TTL_HOURS` for result caching
-- Sync: Adjust email fetch limits via Settings UI (1-1000 per account)
+- **Prefiltering**: Automatically filters ~60-70% of emails before LLM
+- **LLM**: Adjust `ONLYJOBS_N_GPU_LAYERS` for GPU acceleration
+- **Cache**: Configure `ONLYJOBS_CACHE_TTL_HOURS` for result caching
+- **Sync**: Adjust email fetch limits via Settings UI (1-1000 per account)
+- **Monitoring**: Check console logs for "⚡ Pre-filtered" messages to see filtering in action

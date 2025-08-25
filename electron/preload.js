@@ -64,6 +64,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     classify: (options) => ipcRenderer.invoke('emails:classify', options),
   },
   
+  // Model testing operations
+  models: {
+    getAllModels: () => ipcRenderer.invoke('models:get-all'),
+    downloadModel: (modelId) => ipcRenderer.invoke('models:download', modelId),
+    deleteModel: (modelId) => ipcRenderer.invoke('models:delete', modelId),
+    runComparison: (data) => ipcRenderer.invoke('models:run-comparison', data),
+    getDefaultPrompts: () => ipcRenderer.invoke('models:get-default-prompts'),
+    getRecentEmails: () => ipcRenderer.invoke('models:get-recent-emails'),
+    getTestHistory: () => ipcRenderer.invoke('models:get-test-history'),
+  },
+  
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (settings) => ipcRenderer.invoke('settings:update', settings),

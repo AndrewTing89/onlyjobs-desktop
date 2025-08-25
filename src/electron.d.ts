@@ -94,6 +94,84 @@ interface ElectronAPI {
     classify: (options?: { batchSize?: number; maxToProcess?: number }) => Promise<any>;
   };
   
+  // Model testing operations
+  models: {
+    getAllModels: () => Promise<{ 
+      success: boolean; 
+      models: Array<{
+        id: string;
+        name: string;
+        filename: string;
+        size: number;
+        description: string;
+      }>;
+      statuses: Record<string, {
+        status: 'ready' | 'downloading' | 'not_installed' | 'corrupt';
+        progress?: number;
+        downloadedSize?: number;
+        totalSize?: number;
+        size?: number;
+        path?: string;
+      }>;
+    }>;
+    downloadModel: (modelId: string) => Promise<{ success: boolean; result?: any; error?: string }>;
+    deleteModel: (modelId: string) => Promise<{ success: boolean; deleted: boolean; error?: string }>;
+    runComparison: (data: { subject: string; body: string; customPrompt?: string }) => Promise<{ 
+      success: boolean;
+      subject: string;
+      results: Array<{
+        modelId: string;
+        result: {
+          is_job_related: boolean;
+          company: string | null;
+          position: string | null;
+          status: string | null;
+          error?: string;
+        };
+        processingTime: number;
+        rawResponse: string | null;
+        error?: string;
+      }>;
+      timestamp: string;
+      error?: string;
+    }>;
+    getDefaultPrompts: () => Promise<{ 
+      success: boolean;
+      prompts: Record<string, string>;
+      error?: string;
+    }>;
+    getRecentEmails: () => Promise<{
+      success: boolean;
+      emails: Array<{
+        id: string;
+        subject: string;
+        from: string;
+        body: string;
+        date: string;
+      }>;
+      error?: string;
+    }>;
+    getTestHistory: () => Promise<{ 
+      success: boolean;
+      history: Array<{
+        subject: string;
+        results: Array<{
+          modelId: string;
+          result: {
+            is_job_related: boolean;
+            company: string | null;
+            position: string | null;
+            status: string | null;
+            error?: string;
+          };
+          processingTime: number;
+          rawResponse: string | null;
+        }>;
+        timestamp: string;
+      }>;
+    }>;
+  };
+  
   // Settings
   getSettings: () => Promise<any>;
   updateSettings: (settings: any) => Promise<any>;

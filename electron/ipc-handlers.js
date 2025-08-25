@@ -69,6 +69,7 @@ const llmHandler = {
 // const GmailAuth = require('./gmail-auth'); // Removed - using multi-account only
 const GmailMultiAuth = require('./gmail-multi-auth');
 const IntegratedEmailProcessor = require('./integrated-email-processor');
+const { preClassifyEmail } = require('./email-rules');
 
 console.log('Loading IPC handlers...');
 
@@ -1301,6 +1302,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     let totalEmailsClassified = 0;
     let totalJobsFound = 0;
     let totalEmailsSkipped = 0;
+    let totalEmailsPrefiltered = 0;
     
     // Update sync status
     const updateStatus = getDb().prepare(`
@@ -1412,6 +1414,30 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
             const from = headers.find(h => h.name === 'From')?.value || '';
             const emailContent = _extractEmailContent(email);
             
+            // Pre-filter emails to avoid unnecessary LLM calls
+            const preClassification = preClassifyEmail({
+              from: from,
+              subject: subject,
+              body: emailContent
+            });
+            
+            // Skip emails that are definitely not job-related
+            if (preClassification === 'not_job') {
+              totalEmailsPrefiltered++;
+              console.log(`⚡ Pre-filtered non-job email: ${subject.substring(0, 50)}`);
+              
+              // Update sync record to mark as not job-related
+              const updateSyncStmt = getDb().prepare(`
+                UPDATE email_sync 
+                SET is_job_related = 0
+                WHERE gmail_message_id = ? AND account_email = ?
+              `);
+              updateSyncStmt.run(email.id, account.email);
+              
+              totalEmailsFetched++;
+              continue;
+            }
+            
             // Send classification start update
             mainWindow.webContents.send('sync-progress', {
               current: i,
@@ -1426,7 +1452,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
               details: `Using AI to check if this is job-related: "${subject.substring(0, 40)}..."`
             });
             
-            // Classify with LLM
+            // Classify with LLM (for 'definitely_job' and 'uncertain' emails)
             const classification = await llmHandler.classifyEmail(emailContent);
             
             // Send classification result update
@@ -1620,7 +1646,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       }
     }
     
-    console.log(`Processed ${totalEmailsFetched} emails, found ${totalJobsFound} jobs from ${accounts.length} accounts`);
+    console.log(`Processed ${totalEmailsFetched} emails (${totalEmailsPrefiltered} pre-filtered), found ${totalJobsFound} jobs from ${accounts.length} accounts`);
     totalEmailsClassified = totalEmailsFetched; // All processed emails are classified
     
     // Update final sync status
@@ -1660,6 +1686,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       emailsClassified: totalEmailsClassified,
       jobsFound: totalJobsFound,
       emailsSkipped: totalEmailsSkipped,
+      emailsPrefiltered: totalEmailsPrefiltered,
       accounts: accounts.length
     });
     
@@ -1669,6 +1696,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       emailsClassified: totalEmailsClassified,
       jobsFound: totalJobsFound,
       emailsSkipped: totalEmailsSkipped,
+      emailsPrefiltered: totalEmailsPrefiltered,
       accounts: accounts.length
     };
   } catch (error) {
@@ -1835,6 +1863,257 @@ ipcMain.handle('prompt:test', async (event, { prompt, email }) => {
 // Get token info for a text
 ipcMain.handle('prompt:token-info', async (event, text) => {
   return await promptManager.getTokenInfo(text);
+});
+
+// Model testing handlers
+const ModelManager = require('./model-manager');
+const modelManager = new ModelManager();
+const { classifyWithAllModels } = require('./llm/multi-model-engine');
+
+// Get all models and their statuses
+ipcMain.handle('models:get-all', async () => {
+  try {
+    const models = modelManager.getAllModels();
+    const statuses = await modelManager.getAllModelStatuses();
+    return { 
+      success: true, 
+      models, 
+      statuses 
+    };
+  } catch (error) {
+    console.error('Error getting models:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Download a model
+ipcMain.handle('models:download', async (event, modelId) => {
+  try {
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    
+    const result = await modelManager.downloadModel(modelId, (progress) => {
+      // Send progress updates to renderer
+      if (mainWindow) {
+        mainWindow.webContents.send('model-download-progress', progress);
+      }
+    });
+    
+    // Send completion event
+    if (mainWindow) {
+      mainWindow.webContents.send('model-download-complete', { modelId, ...result });
+    }
+    
+    return { success: true, result };
+  } catch (error) {
+    console.error(`Error downloading model ${modelId}:`, error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Delete a model
+ipcMain.handle('models:delete', async (event, modelId) => {
+  try {
+    const deleted = await modelManager.deleteModel(modelId);
+    return { success: true, deleted };
+  } catch (error) {
+    console.error(`Error deleting model ${modelId}:`, error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Run comparison across models
+ipcMain.handle('models:run-comparison', async (event, { subject, body, customPrompt }) => {
+  try {
+    // Get all ready models
+    const statuses = await modelManager.getAllModelStatuses();
+    const readyModels = [];
+    
+    for (const [modelId, status] of Object.entries(statuses)) {
+      if (status.status === 'ready') {
+        readyModels.push({
+          modelId,
+          modelPath: status.path
+        });
+      }
+    }
+    
+    if (readyModels.length === 0) {
+      throw new Error('No models are ready for comparison');
+    }
+    
+    console.log(`Running comparison with ${readyModels.length} models`);
+    
+    // Run classification with all ready models
+    const options = {};
+    if (customPrompt) {
+      options.customPrompt = customPrompt;
+      console.log('Using custom prompt for comparison');
+    }
+    
+    const results = await classifyWithAllModels(readyModels, subject, body, options);
+    
+    // Store results in database
+    const testId = `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const db = getDb();
+    
+    // Ensure test results table exists
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS model_test_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        test_id TEXT,
+        model_name TEXT,
+        email_subject TEXT,
+        email_body TEXT,
+        classification_result TEXT,
+        processing_time_ms INTEGER,
+        raw_response TEXT,
+        tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    // Store each result
+    const stmt = db.prepare(`
+      INSERT INTO model_test_results (test_id, model_name, email_subject, email_body, classification_result, processing_time_ms, raw_response)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    for (const result of results.results) {
+      stmt.run(
+        testId,
+        result.modelId,
+        subject,
+        body,
+        JSON.stringify(result.result),
+        result.processingTime,
+        result.rawResponse
+      );
+    }
+    
+    return { success: true, ...results };
+  } catch (error) {
+    console.error('Error running comparison:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Get default prompts for models
+ipcMain.handle('models:get-default-prompts', async () => {
+  try {
+    const { getAllDefaultPrompts } = require('./llm/multi-model-engine');
+    const prompts = getAllDefaultPrompts();
+    return { success: true, prompts };
+  } catch (error) {
+    console.error('Error getting default prompts:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Get recent emails directly from Gmail for testing
+ipcMain.handle('models:get-recent-emails', async () => {
+  try {
+    const gmailMultiAuth = getGmailMultiAuth();
+    const accounts = gmailMultiAuth.getAllAccounts();
+    
+    if (accounts.length === 0) {
+      return { success: false, error: 'No Gmail accounts connected', emails: [] };
+    }
+    
+    // Fetch from the first connected account (or could aggregate from all)
+    const account = accounts[0];
+    console.log(`Fetching test emails from ${account.email}...`);
+    
+    // Calculate date for 60 days ago
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const dateString = sixtyDaysAgo.toISOString().split('T')[0];
+    
+    // Fetch emails from Gmail
+    const fetchResult = await gmailMultiAuth.fetchEmailsFromAccount(account.email, {
+      maxResults: 100, // Get more emails for testing
+      query: `in:inbox after:${dateString}`
+    });
+    
+    if (!fetchResult.messages || fetchResult.messages.length === 0) {
+      return { success: true, emails: [] };
+    }
+    
+    // Extract email data for UI display
+    const emails = fetchResult.messages.map(message => {
+      const headers = message.payload?.headers || [];
+      const subject = headers.find(h => h.name === 'Subject')?.value || '(No subject)';
+      const from = headers.find(h => h.name === 'From')?.value || '';
+      const date = headers.find(h => h.name === 'Date')?.value || '';
+      
+      // Extract body
+      const emailContent = _extractEmailContent(message);
+      
+      return {
+        id: message.id,
+        subject: subject,
+        from: from,
+        body: emailContent,
+        date: date,
+        threadId: message.threadId
+      };
+    });
+    
+    console.log(`Fetched ${emails.length} emails for testing`);
+    return { success: true, emails };
+    
+  } catch (error) {
+    console.error('Error getting recent emails:', error);
+    return { success: false, error: error.message, emails: [] };
+  }
+});
+
+// Get test history
+ipcMain.handle('models:get-test-history', async () => {
+  try {
+    const db = getDb();
+    
+    // Check if table exists
+    const tableExists = db.prepare(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name='model_test_results'
+    `).get();
+    
+    if (!tableExists) {
+      return { success: true, history: [] };
+    }
+    
+    // Get last 10 unique tests
+    const tests = db.prepare(`
+      SELECT DISTINCT test_id, email_subject, tested_at
+      FROM model_test_results
+      ORDER BY tested_at DESC
+      LIMIT 10
+    `).all();
+    
+    const history = [];
+    for (const test of tests) {
+      const results = db.prepare(`
+        SELECT model_name as modelId, classification_result, processing_time_ms as processingTime, raw_response as rawResponse
+        FROM model_test_results
+        WHERE test_id = ?
+      `).all(test.test_id);
+      
+      history.push({
+        subject: test.email_subject,
+        results: results.map(r => ({
+          modelId: r.modelId,
+          result: JSON.parse(r.classification_result),
+          processingTime: r.processingTime,
+          rawResponse: r.rawResponse
+        })),
+        timestamp: test.tested_at
+      });
+    }
+    
+    return { success: true, history };
+  } catch (error) {
+    console.error('Error getting test history:', error);
+    return { success: false, error: error.message, history: [] };
+  }
 });
 
 // Cleanup on app quit
