@@ -89,19 +89,48 @@ async function ensureSession(modelPath) {
         return loadedSession;
     }
     
-    // If only the prompt changed, we can reuse the model and context
+    // If only the prompt changed, we need to recreate everything
+    // The old approach of reusing context was causing "No sequences left" errors
     if (loadedModel && loadedContext && loadedModelPath === modelPath && currentSystemPrompt !== systemPrompt) {
-        console.log('LLM: Prompt changed, recreating session with new prompt...');
-        const sequence = loadedContext.getSequence();
+        console.log('LLM: Prompt changed, recreating entire session...');
+        
+        // Dispose of old resources
+        if (loadedSession) {
+            try {
+                // Clean up old session if possible
+                loadedSession = null;
+            } catch (e) {
+                console.error('Error disposing old session:', e);
+            }
+        }
+        
+        if (loadedContext) {
+            try {
+                loadedContext.dispose();
+                loadedContext = null;
+            } catch (e) {
+                console.error('Error disposing old context:', e);
+            }
+        }
+        
+        // Recreate context and session with new prompt
         const module = await loadLlamaModule();
-        const { LlamaChatSession } = module;
+        const { LlamaContext, LlamaChatSession } = module;
+        
+        loadedContext = await loadedModel.createContext({ 
+            contextSize: config_1.LLM_CONTEXT, 
+            batchSize: 512 
+        });
+        
+        const sequence = loadedContext.getSequence();
         loadedSession = new LlamaChatSession({ 
             contextSequence: sequence, 
             systemPrompt: systemPrompt
         });
+        
         currentSystemPrompt = systemPrompt;
         loadedModelPath = modelPath;
-        console.log('LLM: Session recreated with updated prompt');
+        console.log('LLM: Session fully recreated with updated prompt');
         return loadedSession;
     }
     
@@ -192,18 +221,31 @@ async function parseEmailWithLLM(input) {
         },
     });
     
-    console.log('LLM: Raw response:', response);
+    console.log('LLM: Raw response:', response.substring(0, 200));
     
-    // node-llama-cpp with responseFormat json_schema guarantees valid JSON matching schema
-    // but we still defensively parse and coerce nulls instead of 'unknown'
+    // node-llama-cpp with responseFormat json_schema should guarantee valid JSON
+    // but sometimes it can still return plain text if something goes wrong
     let parsed;
     try {
+        // Check if response looks like JSON
+        if (!response || (!response.trim().startsWith('{') && !response.trim().startsWith('['))) {
+            console.error('LLM: Response is not JSON, got:', response.substring(0, 100));
+            throw new Error('Response is not JSON format');
+        }
+        
         parsed = JSON.parse(response);
         console.log('LLM: Parsed result:', parsed);
+        
+        // Validate the parsed result has required fields
+        if (typeof parsed.is_job_related !== 'boolean') {
+            console.error('LLM: Invalid response structure, missing is_job_related');
+            throw new Error('Invalid response structure');
+        }
     }
     catch (err) {
         console.error('LLM: Failed to parse response:', err);
-        // Should not happen with json_schema, but ensure hard fallback
+        console.error('LLM: Full response was:', response);
+        // Return a proper fallback
         parsed = { is_job_related: false, company: null, position: null, status: null };
     }
     // Enforce rules: if not job-related, everything else null
