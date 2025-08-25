@@ -34,12 +34,17 @@ electron/.env
 electron-builder.yml
 release/
 
-# Firebase
+# Firebase - NEVER USE (See RULES.md)
 .firebase/
 .firebaserc
+firebase.json
 firebase-debug.log
 firestore-debug.log
 firebase-admin-key.json
+*firebase*
+*Firebase*
+src/config/firebase*
+src/contexts/AuthContext.tsx
 
 # Python
 __pycache__/

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Button, CircularProgress } from '@mui/material';
 import { Sync } from '@mui/icons-material';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/ElectronAuthContext';
 
 const accent = '#FF7043';
 
@@ -14,7 +14,7 @@ export const SyncNowButton: React.FC<SyncNowButtonProps> = ({
   onSyncComplete,
   onSyncError
 }) => {
-  const { currentUser, syncIncremental } = useAuth();
+  const { currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
 
   const handleClick = async () => {
@@ -23,10 +23,24 @@ export const SyncNowButton: React.FC<SyncNowButtonProps> = ({
       return;
     }
 
+    // In Electron app, sync is handled through IPC
+    if (!window.electronAPI) {
+      onSyncError?.('Sync not available in this environment');
+      return;
+    }
+
     setLoading(true);
     try {
-      await syncIncremental(currentUser);
-      onSyncComplete?.();
+      // Call the Electron IPC handler for syncing all Gmail accounts
+      const result = await window.electronAPI.gmail.syncAll();
+      if (result && result.success) {
+        onSyncComplete?.();
+      } else if (result && result.error) {
+        throw new Error(result.error);
+      } else {
+        // If syncAll returns data directly, consider it successful
+        onSyncComplete?.();
+      }
     } catch (error) {
       console.error('Sync Now failed:', error);
       const errorMessage = error instanceof Error ? error.message : 'Sync failed';

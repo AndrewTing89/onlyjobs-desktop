@@ -1,7 +1,7 @@
 // ProtectedRoute.tsx
 import React, { useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/ElectronAuthContext';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -14,7 +14,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   requireEmailVerification = false,
   redirectTo = '/'
 }) => {
-  const { currentUser, loading, isEmailVerified } = useAuth();
+  const { currentUser, loading } = useAuth();
   const location = useLocation();
 
   useEffect(() => {
@@ -23,10 +23,9 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
       console.log('Protected route access:', {
         path: location.pathname,
         authenticated: !!currentUser,
-        emailVerified: isEmailVerified,
       });
     }
-  }, [currentUser, loading, location, isEmailVerified]);
+  }, [currentUser, loading, location]);
 
   // Show loading state
   if (loading) {
@@ -41,10 +40,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return <Navigate to={redirectTo} state={{ from: location }} replace />;
   }
 
-  // Check email verification if required
-  if (requireEmailVerification && !isEmailVerified) {
-    return <Navigate to="/verify-email" replace />;
-  }
+  // Email verification not needed for Electron app
 
   // Authenticated - render children
   return <>{children}</>;

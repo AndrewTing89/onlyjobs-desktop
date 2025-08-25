@@ -16,7 +16,6 @@ import {
 } from "@mui/material";
 import { 
   DeleteForever,
-  Code,
   Storage,
   Clear,
   History
@@ -30,13 +29,8 @@ import Sidebar from '../components/layout/Sidebar';
 import TopBar from '../components/layout/TopBar';
 
 // Import auth contexts
-import { useAuth } from "../contexts/AuthContext";
-import { useAuth as useElectronAuth } from "../contexts/ElectronAuthContext";
-import { GmailConnection } from "../components/GmailConnection";
-import { SyncStatus } from "../components/SyncStatus";
+import { useAuth } from "../contexts/ElectronAuthContext";
 import { PromptEditor } from "../components/PromptEditor";
-
-const useAuthContext = window.electronAPI ? useElectronAuth : useAuth;
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -44,19 +38,11 @@ export default function Settings() {
   const isElectron = !!window.electronAPI;
   
   // Use appropriate auth context
-  const authData = useAuthContext() as any;
-  const currentUser = authData.currentUser;
-  const logout = isElectron ? authData.signOut : authData.logout;
-  
-  // Web-specific auth functions
-  const getIdToken = !isElectron ? authData.getIdToken : null;
-  const isGmailConnected = !isElectron ? authData.isGmailConnected : false;
-  const checkGmailConnection = !isElectron ? authData.checkGmailConnection : null;
+  const { currentUser, signOut } = useAuth();
   
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [fetchingToken, setFetchingToken] = useState(false);
   const [clearAllDialogOpen, setClearAllDialogOpen] = useState(false);
   const [clearEmailSyncDialogOpen, setClearEmailSyncDialogOpen] = useState(false);
   const [clearingAllRecords, setClearingAllRecords] = useState(false);
@@ -65,7 +51,7 @@ export default function Settings() {
   // Handle logout
   const handleLogout = async () => {
     try {
-      await logout();
+      await signOut();
       navigate('/');
     } catch (error) {
       console.error('Logout failed:', error);
@@ -73,18 +59,6 @@ export default function Settings() {
   };
 
 
-  const handleGmailConnectionChange = async (connected: boolean) => {
-    if (!checkGmailConnection) return;
-    
-    // Refresh Gmail connection status from backend
-    await checkGmailConnection();
-    
-    if (connected) {
-      setMessage("Gmail connected successfully! Your emails will now be processed for job application tracking.");
-    } else {
-      setMessage("Gmail disconnected successfully!");
-    }
-  };
 
   const handleDeleteAccount = () => {
     setDeleteDialogOpen(true);
@@ -94,44 +68,13 @@ export default function Settings() {
     // This would call a backend endpoint to delete user data in real implementation
     setDeleteDialogOpen(false);
     try {
-      await logout();
+      await signOut();
       navigate("/");
     } catch (err) {
       setError("Failed to delete account. Please try again.");
     }
   };
 
-  const handleGetFirebaseToken = async () => {
-    if (isElectron) {
-      setError("Firebase token generation is not available in the desktop version");
-      return;
-    }
-
-    if (!currentUser || !getIdToken) {
-      setError("No user logged in");
-      return;
-    }
-
-    try {
-      setFetchingToken(true);
-      setError("");
-      setMessage("");
-      
-      const token = await getIdToken();
-      if (token) {
-        console.log("=== Firebase ID Token for Backend Testing ===");
-        console.log(token);
-        console.log("=== Copy the token above to test backend endpoints ===");
-        setMessage("Firebase ID token logged to console! Check the browser console and copy the token for backend testing.");
-      } else {
-        setError("Failed to get Firebase ID token");
-      }
-    } catch (err) {
-      setError("Error getting Firebase ID token: " + (err instanceof Error ? err.message : 'Unknown error'));
-    } finally {
-      setFetchingToken(false);
-    }
-  };
 
   // Database management handlers
   const handleClearAllRecords = () => {
@@ -212,7 +155,7 @@ export default function Settings() {
           <Box sx={{ p: 3, pb: 0 }}>
             <TopBar 
               currentUser={{
-                displayName: currentUser?.name || currentUser?.displayName || 'User',
+                displayName: currentUser?.name || 'User',
                 email: currentUser?.email || 'user@example.com'
               }} 
               onLogout={handleLogout}
@@ -236,65 +179,6 @@ export default function Settings() {
             )}
 
 
-            {/* Gmail Integration Section - Web Only */}
-            {!isElectron && (
-              <>
-                <Box sx={{ mb: 3 }}>
-                  <GmailConnection
-                    isConnected={isGmailConnected}
-                    onConnectionChange={handleGmailConnectionChange}
-                    onGlobalRefresh={checkGmailConnection!}
-                  />
-                </Box>
-
-                {/* Sync Status Section */}
-                {isGmailConnected && (
-                  <Box sx={{ mb: 3 }}>
-                    <SyncStatus isConnected={isGmailConnected} />
-                  </Box>
-                )}
-              </>
-            )}
-
-
-            {/* Developer Tools Section - Web Only */}
-            {!isElectron && (
-              <Card sx={{ borderRadius: 3, boxShadow: 2, mb: 3, border: "1px solid", borderColor: "info.light" }}>
-                <CardContent sx={{ p: 4 }}>
-                  <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
-                    <Code sx={{ color: onlyJobsTheme.palette.primary.main, mr: 2 }} />
-                    <Typography variant="h3" sx={{ fontWeight: 600 }}>
-                      Developer Tools
-                    </Typography>
-                  </Box>
-
-                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <Box>
-                      <Typography variant="body1" sx={{ mb: 1, fontWeight: 500 }}>
-                        Get Firebase ID Token
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Logs your current Firebase ID token to the console for backend testing and debugging.
-                      </Typography>
-                    </Box>
-                    <Button
-                      variant="outlined"
-                      onClick={handleGetFirebaseToken}
-                      disabled={fetchingToken || !currentUser}
-                      startIcon={fetchingToken ? <CircularProgress size={20} /> : <Code />}
-                      sx={{
-                        borderRadius: 2,
-                        px: 3,
-                        py: 1,
-                        textTransform: "none",
-                      }}
-                    >
-                      {fetchingToken ? "Getting Token..." : "Get Token"}
-                    </Button>
-                  </Box>
-                </CardContent>
-              </Card>
-            )}
 
             {/* LLM Prompt Editor - Electron Only */}
             {isElectron && (

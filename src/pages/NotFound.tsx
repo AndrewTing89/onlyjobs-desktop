@@ -8,7 +8,7 @@ import {
 } from "@mui/material";
 import { SearchOff, Home, Dashboard } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../contexts/ElectronAuthContext";
 
 const accent = "#FF7043";
 const white = "#fff";

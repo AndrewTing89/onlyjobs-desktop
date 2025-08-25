@@ -25,11 +25,8 @@ import JobsList from "../components/JobsList";
 import QuickStats from "../components/analytics/QuickStats";
 import analyticsService, { JobStats } from "../services/analytics.service";
 
-// Import the appropriate auth context based on environment
-import { useAuth as useFirebaseAuth } from "../contexts/AuthContext";
-import { useAuth as useElectronAuth } from "../contexts/ElectronAuthContext";
-
-const useAuth = window.electronAPI ? useElectronAuth : useFirebaseAuth;
+// Import auth context
+import { useAuth } from "../contexts/ElectronAuthContext";
 
 export default function Dashboard() {
   const isElectron = !!window.electronAPI;

@@ -4,106 +4,149 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OnlyJobs is an AI-powered job application tracking desktop application built with Electron, React, and TypeScript. It automatically syncs with Gmail, uses local ML models to classify job applications, and provides real-time analytics.
+OnlyJobs is an AI-powered job application tracking desktop application built with Electron, React, and TypeScript. It automatically syncs with Gmail, uses local LLM models to classify job applications, and provides real-time analytics.
 
 ## Common Development Commands
 
 ### Development
 ```bash
-npm install                 # Install dependencies
+npm install                 # Install dependencies (use --legacy-peer-deps if needed)
 npm start                   # Start React dev server on http://localhost:3000
 npm run electron-dev       # Start Electron in development mode (run in separate terminal)
-npm run build              # Production build
-npm test                   # Run tests
+npm run dev:all           # Run both React and Electron concurrently
+npm test                   # Run Jest tests
 ```
 
-### Building Distributable
+### Building & Packaging
 ```bash
-npm run electron-dist      # Build and package Electron app
-npm run dist              # Build without publishing
+npm run build              # Production build of React app
+npm run dist              # Build Electron app without publishing
+npm run dist:mac-arm      # Build for macOS ARM64
+npm run dist:mac-intel    # Build for macOS x64
+npm run dist:win          # Build for Windows
+```
+
+### LLM Setup & Testing
+```bash
+npm run llm:deps          # Install node-llama-cpp dependencies
+npm run llm:download      # Download the Llama model
+npm run llm:test          # Test LLM classification (runs under Electron)
+npm run llm:evaluate      # Run systematic evaluation against fixtures
+npm run llm:normalize     # Apply normalization to existing database records
+```
+
+### Native Module Management
+```bash
+npm run diagnose:native   # Diagnose native module loading issues
+npm run rebuild:llm       # Rebuild LLM native modules for Electron
+npm run rebuild:llm:clean # Clean rebuild from source if standard rebuild fails
+npm run rebuild:native    # Rebuild all native modules (better-sqlite3 & node-llama-cpp)
 ```
 
 ## High-Level Architecture
 
-### Desktop Application Architecture
-- **Electron Main Process**: Handles OAuth flows, Gmail API, ML classification
-- **React Frontend**: Single Page Application with TypeScript
-- **Authentication**: Hybrid approach:
-  - AppAuth-JS for Gmail OAuth 2.0 flow (to access Gmail API)
-  - Firebase Auth for user authentication (login/signup)
-- **Local ML Classifier**: Python-based email classification running locally
-- **Data Storage**: Local SQLite database (via better-sqlite3)
+### Desktop Application Stack
+- **Electron Main Process** (`electron/main.js`): Manages app lifecycle, windows, and IPC
+- **React Frontend** (`src/`): TypeScript-based SPA with Material-UI v7
+- **Local LLM Engine** (`electron/llm/`): node-llama-cpp for email classification
+- **Database**: SQLite via better-sqlite3 (stored in userData directory)
+- **Authentication**: Dual approach - AppAuth-JS for Gmail OAuth, Firebase for user auth
 
-### Key Components
-1. **Electron Main Process** (`electron/main.js`):
-   - Manages app lifecycle and windows
-   - Handles IPC communication with renderer
-   - Manages OAuth flows via AppAuth-JS
+### Key Electron Components
+1. **IPC Handlers** (`electron/ipc-handlers.js`): Real-time event-based communication
+2. **Gmail Integration** (`electron/gmail-multi-auth.js`): Multi-account OAuth and email fetching
+3. **Email Processor** (`electron/integrated-email-processor.js`): Unified processing pipeline
+4. **LLM Engine** (`electron/llm/llmEngine.ts`): Streaming inference with early-stop optimization
+5. **Classifier Factory** (`electron/classifier/providerFactory.js`): Pure LLM provider
 
-2. **Gmail Integration** (`electron/gmail-multi-auth.js`):
-   - Multi-account Gmail support
-   - OAuth token management using AppAuth-JS
-   - Email fetching and parsing
-
-3. **ML Classification** (`ml-classifier/`):
-   - Local Python model for job email classification
-   - Invoked via python-shell from Electron
-   - Pre-trained model included in distribution
-
-4. **React Frontend** (`src/`):
-   - Material-UI v7 + Chakra UI components
-   - React Router v7 for navigation
-   - Context API for state management
+### Frontend Architecture
+- **Components** (`src/components/`): Reusable UI components
+  - `JobsList.tsx`: Real-time job dashboard with live updates
+  - `GmailMultiAccount.tsx`: Multi-account management with settings UI
+  - `EmailViewModal.tsx`: Job email viewer
+- **Pages** (`src/pages/`): Route-level components
+- **Services** (`src/services/`): API and Firebase operations
+- **Context** (`src/context/AuthContext.tsx`): Authentication state management
+- **Types** (`src/types/`): TypeScript type definitions
 
 ## Important Development Patterns
 
-### Frontend Patterns
-- Components in `src/components/` should be reusable and typed
-- Pages in `src/pages/` handle routing and data fetching
-- Services in `src/services/` handle API calls and Firebase operations
-- All TypeScript types defined in `src/types/`
-- Authentication state managed via AuthContext
+### Environment Configuration
+- Root `.env`: React app environment variables
+- `electron/.env`: Electron main process OAuth credentials
+- Both must have matching Google OAuth credentials
 
-### Electron Patterns
-- IPC handlers in `electron/ipc-handlers.js`
-- OAuth flows handled by `electron/auth-flow.js` using AppAuth-JS
-- Gmail operations in `electron/gmail-multi-auth.js`
-- ML processing via `electron/ml-handler.js`
+### LLM Classification Flow
+1. Email received → Prefilter check (regex)
+2. Cache lookup (7-day TTL default)
+3. LLM inference with streaming early-stop
+4. JSON schema validation and normalization
+5. Database storage with deduplication
 
-### Data Schema
-- Job application schema defined in `schema.json`
-- Local SQLite database for job data storage
-- Gmail tokens stored securely via electron-store
+### Database Schema
+- `jobs`: Classified job applications
+- `email_sync`: Processed email tracking
+- `gmail_accounts`: Multi-account management
+- `sync_status`: Sync progress tracking
+- `llm_cache`: Classification result caching
+
+### Native Module Requirements
+- **IMPORTANT**: Native modules must be rebuilt for Electron, not Node.js
+- Always test LLM functions with `ELECTRON_RUN_AS_NODE=1` prefix
+- node-llama-cpp must ONLY be imported in main process, never in renderer
 
 ## Testing Approach
-- Frontend: Jest + React Testing Library (run with `npm test`)
-- Backend: pytest for unit tests
-- Integration tests in `integration_tests.ipynb`
-- Manual testing via local development servers
+
+### Unit Tests
+```bash
+npm test                  # Run Jest tests for React components
+```
+
+### LLM Testing
+```bash
+npm run llm:test          # Manual test with sample emails
+npm run llm:evaluate      # Systematic evaluation with fixtures
+```
+
+### Integration Testing
+- Manual testing via development servers
+- Check `integration_tests.ipynb` for backend integration tests
+
+## Build & Release
+
+### GitHub Actions Workflows
+- `.github/workflows/build-only.yml`: Build and sign without releasing
+- `.github/workflows/release.yml`: Full release workflow
+
+### Build Configuration
+- Electron Builder config in `package.json` under `build` key
+- Code signing identity: "Andrew Ting (NGANSYMPNR)"
+- DMG creation for macOS distribution
+- NSIS installer for Windows
 
 ## Security Considerations
-- Never commit secrets or API keys
-- Use Google Secret Manager for sensitive configuration
-- Firebase Security Rules protect user data
-- IAM roles follow least-privilege principle
+
+- Never commit OAuth credentials or API keys
+- Use electron-store for secure token storage
+- Gmail tokens stored separately from user data
+- All LLM processing happens locally (no external API calls)
+- Context isolation enabled in Electron
 
 ## Common Tasks
 
-### Adding a New Feature
-1. Update TypeScript types if needed
+### Adding New Features
+1. Update TypeScript types in `src/types/`
 2. Create/modify React components
-3. Update backend services if data processing changes
-4. Test locally before deployment
-5. Deploy using the automated notebook
+3. Add IPC handlers if Electron communication needed
+4. Test with both `npm start` and `npm run electron-dev`
 
 ### Debugging Issues
-- Frontend logs: Browser DevTools console
-- Backend logs: Google Cloud Console → Cloud Run → Logs
-- Pub/Sub issues: Check message acknowledgment in GCP Console
-- AI processing: Review Vertex AI logs and model responses
+- Frontend: Browser DevTools in Electron window
+- Main Process: Console logs in terminal running Electron
+- LLM Issues: Check `npm run diagnose:native` output
+- Database: SQLite files in platform userData directory
 
 ### Performance Optimization
-- Frontend: Use React.memo for expensive components
-- Backend: Monitor Cloud Run metrics, adjust concurrency
-- Database: Use Firestore indexes for complex queries
-- BigQuery: Partition tables by date for cost efficiency
+- LLM: Adjust `ONLYJOBS_N_GPU_LAYERS` for GPU acceleration
+- Cache: Configure `ONLYJOBS_CACHE_TTL_HOURS` for result caching
+- Sync: Adjust email fetch limits via Settings UI (1-1000 per account)

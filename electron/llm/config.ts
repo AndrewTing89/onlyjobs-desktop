@@ -10,7 +10,7 @@ export const GPU_LAYERS = Number(process.env.ONLYJOBS_N_GPU_LAYERS ?? 0);
 // Versioning for tracking model decisions and prompts
 export const DECISION_VERSION = process.env.ONLYJOBS_DECISION_VERSION ?? "v1.0-prompt-2025-08-08";
 export const PROMPT_VERSION = process.env.ONLYJOBS_PROMPT_VERSION ?? "v1.0";
-export const MODEL_NAME = process.env.ONLYJOBS_MODEL_NAME ?? "Llama-3.2-3B Q4_K_M";
+export const MODEL_NAME = process.env.ONLYJOBS_MODEL_NAME ?? "Mistral-7B-Instruct Q4_K_M";
 
 // Database configuration
 export function getElectronUserDataDir(): string {

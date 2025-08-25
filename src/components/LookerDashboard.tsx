@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Alert, CircularProgress, Typography } from '@mui/material';
-import { useAuth as useFirebaseAuth } from '../contexts/AuthContext';
-import { useAuth as useElectronAuth } from '../contexts/ElectronAuthContext';
-
-const useAuth = window.electronAPI ? useElectronAuth : useFirebaseAuth;
+import { useAuth } from '../contexts/ElectronAuthContext';
 
 interface LookerDashboardProps {
   baseUrl?: string;

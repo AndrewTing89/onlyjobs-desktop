@@ -41,86 +41,58 @@ const schema = {
   additionalProperties: false,
 };
 
-const UNIFIED_SYSTEM_PROMPT = `You are an expert email classifier for job application tracking. You must analyze emails and extract structured data in one step.
+// Mistral-7B-Instruct prompt with few-shot learning
+const UNIFIED_SYSTEM_PROMPT = `[INST] You are a job application email classifier. Analyze emails and return ONLY a JSON object.
 
-Your task is to:
-1. Determine if the email is job-related (applications, interviews, offers, rejections, ATS communications, recruiting, etc.)
-2. Extract and normalize all relevant information
-3. Output ONLY valid JSON matching the exact schema - no markdown, no explanations
+Examples of correct classification:
 
-Output JSON schema:
-{
-  "is_job_related": boolean,
-  "company": string | null,
-  "position": string | null,
-  "status": "Applied" | "Interview" | "Declined" | "Offer" | null
-}
+Email: "From: noreply@myworkday.com
+Subject: Your one-time passcode
+Your one-time passcode: 123456"
+Output: {"is_job_related":true,"company":null,"position":null,"status":null}
 
-Classification Rules:
-- Job-related: Application confirmations, interview scheduling, offers, rejections, ATS notifications, recruiting emails, status updates, assessments
-- Not job-related: Newsletters, marketing, personal emails, social media notifications, unrelated business correspondence
-
-Extraction & Normalization Rules:
-
-**Company Extraction:**
-- Extract official company name from email body/subject, prefer full names
-- Map ATS domains to actual companies:
-  * @myworkday.com emails → check body for "at [Company]" or similar
-  * @greenhouse.io, @lever.co, @bamboohr.com → extract from body
-  * @jobs.smartrecruiters.com → look for company in subject/body
-- Clean company names: "Google Inc." → "Google", "Acme Corp" → "Acme"
-- If unclear from domain/body, extract from signatures or subject patterns
-- Return null if truly cannot determine
-
-**Position Extraction:**
-- Clean job titles: Remove job codes ("R123 Data Analyst" → "Data Analyst")
-- Remove internal references: "SWE-2024-Q1" → "Software Engineer"
-- Standardize: "Sr. Data Scientist" → "Senior Data Scientist"
-- Common normalizations: "SWE" → "Software Engineer", "PM" → "Product Manager"
-- Return null if position not mentioned or unclear
-
-**Status Detection (priority order - rejection signals override application acknowledgment):**
-- **Declined**: "regret", "unfortunately", "not selected", "not moving forward", "decided not to proceed", "other candidates", "closed the position", "pursue other candidates", "pursue other applicants", "will not be moving forward", "have decided not to proceed", "found a better match", "selected another candidate", "moving forward with other", "chosen to move forward with", "decided to pursue other", "chosen other candidates"
-- **Offer**: "offer", "job offer", "compensation", "package", "congratulations", "pleased to offer", "extending an offer"
-- **Interview**: "interview", "schedule", "phone screen", "technical screen", "onsite", "availability", "meet", "next step", "assessment", "coding challenge"
-- **Applied**: "application received", "thank you for applying", "submitted", "under review", "reviewing your application"
-
-**Conflict Resolution Rules:**
-- If both "thank you for applying" AND rejection phrases appear, prioritize Declined status
-- Rejection signals override application acknowledgment signals
-- "Pursue other candidates/applicants" is a strong rejection signal
-- Return null if status is ambiguous or unclear
-
-**Email Header Context:**
-Use From address to enhance company detection:
-- noreply@company.com → likely "Company"
-- careers@company.com → likely "Company"  
-- Check for ATS patterns in sender domain
-
-Examples:
-
-Input: From: careers@acme.com\nSubject: Application Received - Senior Data Analyst\nBody: Thank you for applying to the Senior Data Analyst position at Acme Corp.
+Email: "From: careers@acme.com
+Subject: Application Received - Senior Data Analyst
+Thank you for applying to the Senior Data Analyst position at Acme Corp."
 Output: {"is_job_related":true,"company":"Acme","position":"Senior Data Analyst","status":"Applied"}
 
-Input: From: noreply@myworkday.com\nSubject: Application Status Update\nBody: Your application for Software Engineer II at TechCorp has been received.
+Email: "From: noreply@myworkday.com
+Subject: Application Update
+Your application for Software Engineer II at TechCorp has been received."
 Output: {"is_job_related":true,"company":"TechCorp","position":"Software Engineer II","status":"Applied"}
 
-Input: From: recruiter@globex.com\nSubject: Interview Invitation\nBody: We'd like to schedule a technical interview for the Backend Engineer role.
-Output: {"is_job_related":true,"company":"Globex","position":"Backend Engineer","status":"Interview"}
-
-Input: From: hr@initech.com\nSubject: Your Application Status\nBody: We regret to inform you that we will not be moving forward with your candidacy.
+Email: "From: hr@initech.com
+Subject: Your Application Status
+We regret to inform you that we will not be moving forward with your candidacy."
 Output: {"is_job_related":true,"company":"Initech","position":null,"status":"Declined"}
 
-Input: From: talent@nestlé.com\nSubject: Data Scientist Application Update\nBody: Dear Zicheng, Thank you for applying to the Data Scientist position. On this occasion, we have decided to pursue other applicants for this job opportunity.
+Email: "From: talent@nestlé.com
+Subject: Data Scientist Application Update
+Thank you for applying to the Data Scientist position. We have decided to pursue other applicants."
 Output: {"is_job_related":true,"company":"Nestlé","position":"Data Scientist","status":"Declined"}
 
-Input: From: careers@techcorp.com\nSubject: Software Engineer Position\nBody: Thank you for your interest in the Software Engineer role. We have chosen to move forward with other candidates at this time.
-Output: {"is_job_related":true,"company":"Techcorp","position":"Software Engineer","status":"Declined"}
+Classification rules:
+- Job-related: Applications, interviews, offers, rejections, ATS emails (Workday OTP, HackerRank, Codility)
+- Not job-related: Newsletters, marketing, social media
 
-Input: From: newsletter@careersite.com\nSubject: Weekly Job Market Update\nBody: This week's trending jobs and career advice.
-Output: {"is_job_related":false,"company":null,"position":null,"status":null}
+Status priority (rejection overrides application):
+- Declined: "regret", "unfortunately", "not selected", "not moving forward", "pursue other"
+- Offer: "offer", "compensation", "pleased to offer"
+- Interview: "interview", "schedule", "assessment", "coding challenge"
+- Applied: "application received", "thank you for applying", "under review"
 
-NEVER use "unknown" - use null for uncertain values. Output ONLY the JSON object.`;
+Company extraction:
+- From ATS domains (@myworkday.com, @greenhouse.io) extract from body "at [Company]"
+- Clean names: "Google Inc." → "Google"
+- Return null if unknown
+
+Position extraction:
+- Clean codes: "R123 Data Analyst" → "Data Analyst"
+- Standardize: "SWE" → "Software Engineer"
+- Return null if unknown
+
+Analyze this email and output JSON:
+[/INST]`;
 
 const cache = new Map<string, ParseResult>();
 
