@@ -1263,10 +1263,28 @@ ipcMain.handle('gmail:remove-account', async (event, email) => {
 // Multi-account sync
 ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
   const syncStartTime = Date.now();
+  console.log('🔄 SYNC: Starting sync process...');
+  
   try {
     const mainWindow = BrowserWindow.getAllWindows()[0];
+    
+    // Send immediate feedback that sync is starting
+    if (mainWindow) {
+      mainWindow.webContents.send('sync-progress', {
+        current: 0,
+        total: 1,
+        status: 'Initializing sync...',
+        phase: 'initializing'
+      });
+    }
+    
+    console.log('🔄 SYNC: Getting GmailMultiAuth instance...');
+    const initStartTime = Date.now();
     const gmailMultiAuth = getGmailMultiAuth();
+    console.log(`🔄 SYNC: GmailMultiAuth initialized in ${Date.now() - initStartTime}ms`);
+    
     const accounts = gmailMultiAuth.getAllAccounts();
+    console.log(`🔄 SYNC: Found ${accounts.length} accounts`);
     
     if (accounts.length === 0) {
       return {
@@ -1327,16 +1345,22 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
           details: `Searching from ${dateString} to today (${daysToSync} days)`
         });
         
+        const fetchStartTime = Date.now();
+        console.log(`🔄 SYNC: Fetching emails from Gmail API for ${account.email}...`);
+        
         const fetchResult = await gmailMultiAuth.fetchEmailsFromAccount(account.email, {
           maxResults: maxEmails,
           query: `in:inbox after:${dateString}`
         });
         
+        const fetchDuration = Date.now() - fetchStartTime;
+        console.log(`🔄 SYNC: Gmail API fetch completed in ${fetchDuration}ms`);
         console.log('Fetch result:', {
           hasMessages: !!fetchResult.messages,
           messageCount: fetchResult.messages ? fetchResult.messages.length : 0,
           nextPageToken: fetchResult.nextPageToken,
-          accountEmail: fetchResult.accountEmail
+          accountEmail: fetchResult.accountEmail,
+          fetchTimeMs: fetchDuration
         });
         
         if (!fetchResult.messages || fetchResult.messages.length === 0) {
