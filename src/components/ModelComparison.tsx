@@ -111,6 +111,8 @@ export const ModelComparison: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [emailFilter, setEmailFilter] = useState<'all' | 'tested' | 'untested'>('all');
+  const [useCustomPrompt, setUseCustomPrompt] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState('');
 
   useEffect(() => {
     loadModels();
@@ -184,7 +186,8 @@ export const ModelComparison: React.FC = () => {
       // Run comparison
       const results = await window.electronAPI.models.runComparison({
         subject: email.subject,
-        body: email.body
+        body: email.body,
+        customPrompt: useCustomPrompt ? customPrompt : undefined
       });
       
       if (results.success === false) {
@@ -364,6 +367,59 @@ export const ModelComparison: React.FC = () => {
         </Alert>
       )}
 
+      {/* Custom Prompt Section */}
+      <Paper sx={{ p: 2, mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: useCustomPrompt ? 2 : 0 }}>
+          <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            Prompt Configuration
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Button
+              size="small"
+              variant={useCustomPrompt ? "contained" : "outlined"}
+              onClick={() => setUseCustomPrompt(!useCustomPrompt)}
+              color={useCustomPrompt ? "primary" : "inherit"}
+            >
+              {useCustomPrompt ? "Custom Prompt" : "Default Prompt"}
+            </Button>
+            {useCustomPrompt && (
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => {
+                  setCustomPrompt('');
+                  setUseCustomPrompt(false);
+                }}
+              >
+                Reset
+              </Button>
+            )}
+          </Box>
+        </Box>
+        
+        {useCustomPrompt && (
+          <>
+            <TextField
+              fullWidth
+              multiline
+              rows={4}
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              placeholder="Enter your custom prompt here. Make sure it instructs the model to return JSON with: is_job_related (boolean), company (string), position (string), status (string)"
+              sx={{
+                '& .MuiInputBase-input': {
+                  fontFamily: 'monospace',
+                  fontSize: '0.875rem',
+                }
+              }}
+            />
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+              Required JSON fields: is_job_related, company, position, status
+            </Typography>
+          </>
+        )}
+      </Paper>
+
       {/* Model Status Bar */}
       <Box sx={{ display: 'flex', gap: 1, mb: 3, flexWrap: 'wrap' }}>
         {models.map((model) => {
@@ -411,7 +467,16 @@ export const ModelComparison: React.FC = () => {
           variant="scrollable"
           scrollButtons="auto"
         >
-          <Tab label={getTabLabel(0)} icon={<EmailIcon />} iconPosition="start" />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                Gmail Emails
+                <Badge badgeContent={emails.length} color="primary" />
+              </Box>
+            } 
+            icon={<EmailIcon />} 
+            iconPosition="start" 
+          />
           {models.map((model, index) => (
             <Tab key={model.id} label={getTabLabel(index + 1)} />
           ))}
