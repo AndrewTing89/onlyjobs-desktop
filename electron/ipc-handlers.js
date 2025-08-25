@@ -65,8 +65,8 @@ const llmHandler = {
   }
 };
 
-const ElectronAuthFlow = require('./auth-flow');
-const GmailAuth = require('./gmail-auth');
+// Removed old auth-flow - using simplified auth for desktop app
+// const GmailAuth = require('./gmail-auth'); // Removed - using multi-account only
 const GmailMultiAuth = require('./gmail-multi-auth');
 const IntegratedEmailProcessor = require('./integrated-email-processor');
 
@@ -706,17 +706,12 @@ ipcMain.handle('ml:initialize', async () => {
   }
 });
 
-// Initialize auth flow
-const authFlow = new ElectronAuthFlow();
-
-// Initialize Gmail auth (legacy single account)
-let gmailAuth;
-try {
-  gmailAuth = new GmailAuth();
-  console.log('Gmail auth initialized successfully');
-} catch (error) {
-  console.error('Failed to initialize Gmail auth:', error);
-}
+// Simple mock auth for desktop app (no real authentication needed)
+const mockUser = {
+  email: 'user@onlyjobs.desktop',
+  name: 'OnlyJobs User',
+  picture: null
+};
 
 // Initialize multi-account Gmail auth - defer until first use
 let gmailMultiAuth = null;
@@ -742,41 +737,18 @@ function getGmailMultiAuth() {
   }
 }
 
-// Listen for Gmail auth events
-if (gmailAuth) {
-  gmailAuth.on('authenticated', (tokens) => {
-    console.log('Gmail authenticated event received');
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    if (mainWindow) {
-      mainWindow.webContents.send('gmail-authenticated', tokens);
-    }
-  });
-}
+// Removed old auth event listeners - using simplified auth
 
-// Listen for auth events
-authFlow.on('auth-success', (data) => {
-  console.log('🟢 IPC: auth-success event received from authFlow');
-  const windows = BrowserWindow.getAllWindows();
-  console.log(`🔵 IPC: Broadcasting auth-success to ${windows.length} windows`);
-  windows.forEach(window => {
-    console.log(`🔵 IPC: Sending auth-success to window ${window.id}`);
-    window.webContents.send('auth-success', data);
-  });
-});
-
-authFlow.on('auth-error', (error) => {
-  console.log('🔴 IPC: auth-error event received from authFlow:', error);
-  const windows = BrowserWindow.getAllWindows();
-  windows.forEach(window => {
-    window.webContents.send('auth-error', error.message);
-  });
-});
-
-// Authentication operations
+// Authentication operations (simplified for desktop app)
 ipcMain.handle('auth:sign-in', async () => {
-  console.log('🔵 IPC: auth:sign-in called from renderer');
+  console.log('🔵 IPC: auth:sign-in called - using mock auth for desktop app');
   try {
-    const result = await authFlow.signIn();
+    // Simply return success with mock user for desktop app
+    const result = {
+      success: true,
+      user: mockUser,
+      tokens: { email: mockUser.email }
+    };
     console.log('🟢 IPC: Sign in completed, result:', result);
     console.log('🔵 IPC: User data:', result?.user);
     
@@ -812,119 +784,50 @@ ipcMain.handle('auth:sign-in', async () => {
 });
 
 ipcMain.handle('auth:sign-out', async () => {
-  try {
-    await authFlow.signOut();
-    return { success: true };
-  } catch (error) {
-    console.error('Sign out error:', error);
-    throw error;
-  }
+  // No-op for desktop app
+  return { success: true };
 });
 
 ipcMain.handle('auth:get-tokens', async () => {
-  try {
-    const tokens = authFlow.getStoredTokens();
-    let userInfo = null;
-    
-    // Try to get user info from tokens
-    if (tokens && tokens.id_token) {
-      try {
-        // Decode JWT ID token to get user info
-        const parts = tokens.id_token.split('.');
-        if (parts.length === 3) {
-          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-          userInfo = {
-            email: payload.email,
-            name: payload.name,
-            picture: payload.picture
-          };
-        }
-      } catch (e) {
-        console.error('Failed to parse ID token:', e);
-      }
+  // Return mock tokens for desktop app
+  return { 
+    success: true, 
+    tokens: { 
+      email: mockUser.email,
+      name: mockUser.name,
+      picture: mockUser.picture
     }
-    
-    return { 
-      success: true, 
-      tokens: {
-        ...tokens,
-        ...userInfo
-      }
-    };
-  } catch (error) {
-    console.error('Get tokens error:', error);
-    throw error;
-  }
+  };
 });
 
 ipcMain.handle('auth:is-authenticated', async () => {
-  try {
-    const isAuth = authFlow.isAuthenticated();
-    return { success: true, authenticated: isAuth };
-  } catch (error) {
-    console.error('Auth check error:', error);
-    throw error;
-  }
+  // Always authenticated for desktop app
+  return { success: true, authenticated: true };
 });
 
-// Gmail authentication
+// Old single-account Gmail handlers - DEPRECATED (use multi-account handlers below)
+// These are commented out but kept for reference during migration
+/*
 ipcMain.handle('gmail:authenticate', async () => {
-  try {
-    console.log('IPC: gmail:authenticate called');
-    
-    // Check if we're in the correct environment
-    if (!gmailAuth) {
-      console.error('Gmail auth not initialized!');
-      throw new Error('Gmail authentication not initialized');
-    }
-    
-    const tokens = await gmailAuth.authenticate();
-    console.log('IPC: Gmail auth successful');
-    return { success: true, tokens };
-  } catch (error) {
-    console.error('IPC: Gmail auth error:', error);
-    throw error;
-  }
+  // DEPRECATED - use gmail:add-account instead
+  throw new Error('gmail:authenticate is deprecated. Use gmail:add-account for multi-account support');
 });
 
-// Get Gmail authentication status
 ipcMain.handle('gmail:get-auth-status', async () => {
-  try {
-    const isAuthenticated = gmailAuth.isAuthenticated();
-    const tokens = gmailAuth.getStoredTokens();
-    return { 
-      success: true, 
-      authenticated: isAuthenticated,
-      hasTokens: !!tokens
-    };
-  } catch (error) {
-    console.error('Error getting Gmail auth status:', error);
-    throw error;
-  }
+  // DEPRECATED - use gmail:get-accounts instead
+  throw new Error('gmail:get-auth-status is deprecated. Use gmail:get-accounts for multi-account support');
 });
 
-// Fetch Gmail emails
 ipcMain.handle('gmail:fetch-emails', async (event, options = {}) => {
-  try {
-    console.log('IPC: gmail:fetch-emails called with options:', options);
-    const result = await gmailAuth.fetchEmails(options);
-    return { success: true, ...result };
-  } catch (error) {
-    console.error('IPC: Error fetching emails:', error);
-    throw error;
-  }
+  // DEPRECATED - use gmail:sync-all instead
+  throw new Error('gmail:fetch-emails is deprecated. Use gmail:sync-all for multi-account support');
 });
 
-// Disconnect Gmail
 ipcMain.handle('gmail:disconnect', async () => {
-  try {
-    await gmailAuth.disconnect();
-    return { success: true };
-  } catch (error) {
-    console.error('Error disconnecting Gmail:', error);
-    throw error;
-  }
+  // DEPRECATED - use gmail:remove-account instead
+  throw new Error('gmail:disconnect is deprecated. Use gmail:remove-account for multi-account support');
 });
+*/
 
 // Gmail sync functionality is now handled by gmail:sync-all handler below
 
@@ -1750,20 +1653,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
   }
 });
 
-// Clear email sync for re-processing
-ipcMain.handle('db:clear-email-sync-only', async () => {
-  try {
-    const result = getDb().prepare('DELETE FROM email_sync').run();
-    console.log(`Cleared ${result.changes} records from email_sync table`);
-    return { 
-      success: true, 
-      message: `Cleared ${result.changes} email sync records` 
-    };
-  } catch (error) {
-    console.error('Error clearing email sync:', error);
-    return { success: false, error: error.message };
-  }
-});
+// Removed duplicate handler - use db:clear-email-sync instead
 
 // Database management operations
 ipcMain.handle('db:clear-all-records', async () => {

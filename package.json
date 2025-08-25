@@ -81,7 +81,6 @@
     "googleapis": "^154.1.0",
     "html-to-text": "^9.0.5",
     "node-llama-cpp": "^3.12.0",
-    "python-shell": "^5.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-icons": "^5.5.0",
