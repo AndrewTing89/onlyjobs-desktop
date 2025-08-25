@@ -27,10 +27,10 @@ import { onlyJobsTheme } from '../theme';
 // Import layout components
 import Sidebar from '../components/layout/Sidebar';
 import TopBar from '../components/layout/TopBar';
+import { LLMHealthCard } from '../components/LLMHealthCard';
 
 // Import auth contexts
 import { useAuth } from "../contexts/ElectronAuthContext";
-import { PromptEditor } from "../components/PromptEditor";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -165,6 +165,9 @@ export default function Settings() {
 
           {/* Main Content */}
           <Box sx={{ flexGrow: 1, p: 3, pt: 1, overflow: 'auto' }}>
+            {/* LLM Health Status */}
+            <LLMHealthCard />
+            
             {/* Status Messages */}
             {message && (
               <Alert severity="success" sx={{ mb: 3, borderRadius: 2 }}>
@@ -179,11 +182,6 @@ export default function Settings() {
             )}
 
 
-
-            {/* LLM Prompt Editor - Electron Only */}
-            {isElectron && (
-              <PromptEditor isElectron={isElectron} />
-            )}
 
             {/* Database Management Section - Electron Only */}
             {isElectron && (

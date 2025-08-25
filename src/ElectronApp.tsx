@@ -10,6 +10,7 @@ import { onlyJobsTheme } from './theme';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Settings = lazy(() => import('./pages/Settings'));
 const AnalyticsDashboard = lazy(() => import('./pages/AnalyticsDashboard'));
+const PromptEditor = lazy(() => import('./pages/PromptEditor'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TestIPC = lazy(() => import('./pages/TestIPC'));
@@ -99,6 +100,7 @@ function ElectronApp() {
                 {/* Main app routes */}
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/analytics" element={<AnalyticsDashboard />} />
+                <Route path="/prompt-editor" element={<PromptEditor />} />
                 <Route path="/settings" element={<Settings />} />
                 
                 {/* Utility routes */}

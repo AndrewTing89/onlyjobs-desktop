@@ -8,7 +8,8 @@ const { spawn } = require('child_process');
 const { convert } = require('html-to-text');
 const { getClassifierProvider } = require('./classifier');
 const classifier = getClassifierProvider();
-const { SYSTEM_PROMPT: DEFAULT_SYSTEM_PROMPT } = require('./llm/prompts');
+const { PromptManager } = require('./llm/promptManager');
+const promptManager = new PromptManager();
 
 // LLM-only classification handler (no ML, no keyword fallback)
 const llmHandler = {
@@ -633,6 +634,23 @@ function _extractPosition(content) {
 }
 
 // ML Model management
+// LLM Health Check
+ipcMain.handle('llm:health-check', async () => {
+  try {
+    const llmEngine = require('./llm/llmEngine');
+    const health = await llmEngine.checkLLMHealth();
+    return health;
+  } catch (error) {
+    console.error('Health check error:', error);
+    return {
+      status: 'error',
+      error: error.message,
+      modelExists: false,
+      canLoad: false
+    };
+  }
+});
+
 ipcMain.handle('ml:get-status', async () => {
   try {
     const status = await llmHandler.getModelStatus();
@@ -1361,6 +1379,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     let totalEmailsFetched = 0;
     let totalEmailsClassified = 0;
     let totalJobsFound = 0;
+    let totalEmailsSkipped = 0;
     
     // Update sync status
     const updateStatus = getDb().prepare(`
@@ -1378,8 +1397,10 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       mainWindow.webContents.send('sync-progress', {
         current: i,
         total: accounts.length,
-        status: `Fetching emails from ${account.email}...`,
-        account: account.email
+        status: `Connecting to ${account.email}...`,
+        account: account.email,
+        phase: 'fetching',
+        details: `Searching for emails from the last ${daysToSync} days`
       });
       
       try {
@@ -1389,8 +1410,19 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
         afterDate.setDate(afterDate.getDate() - daysToSync);
         const dateString = afterDate.toISOString().split('T')[0]; // Format: YYYY-MM-DD
         
-        console.log(`Fetching emails for ${account.email} after ${dateString}`);
+        const today = new Date().toISOString().split('T')[0];
+        console.log(`Fetching emails for ${account.email} from ${dateString} to ${today}`);
         console.log(`Query params: maxResults=${maxEmails}, query="in:inbox after:${dateString}"`);
+        
+        // Send more detailed progress with date range
+        mainWindow.webContents.send('sync-progress', {
+          current: i,
+          total: accounts.length,
+          status: `Fetching emails from ${account.email}...`,
+          account: account.email,
+          phase: 'fetching',
+          details: `Searching from ${dateString} to today (${daysToSync} days)`
+        });
         
         const fetchResult = await gmailMultiAuth.fetchEmailsFromAccount(account.email, {
           maxResults: maxEmails,
@@ -1414,16 +1446,23 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
         for (const email of fetchResult.messages) {
           emailIndex++;
           
-          // Send progress update for each email
+          // Extract subject early for progress display
+          const headers = email.payload?.headers || [];
+          const subject = headers.find(h => h.name === 'Subject')?.value || 'No subject';
+          
+          // Send detailed progress update for each email
+          const percentComplete = Math.round((emailIndex / fetchResult.messages.length) * 100);
           mainWindow.webContents.send('sync-progress', {
             current: i,
             total: accounts.length,
-            status: `Processing email ${emailIndex}/${fetchResult.messages.length} from ${account.email}...`,
+            status: `Processing emails from ${account.email}`,
             account: account.email,
             emailProgress: {
               current: emailIndex,
               total: fetchResult.messages.length
-            }
+            },
+            phase: 'classifying',
+            details: `Analyzing: "${subject.substring(0, 50)}${subject.length > 50 ? '...' : ''}"`
           });
           
           try {
@@ -1438,17 +1477,46 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
             // Only proceed if the record was actually inserted (not a duplicate)
             if (syncResult.changes === 0) {
               console.log(`Email ${email.id} already processed for ${account.email}, skipping...`);
+              totalEmailsSkipped++;
               continue;
             }
             
-            // Extract email info for classification
-            const headers = email.payload?.headers || [];
-            const subject = headers.find(h => h.name === 'Subject')?.value || '';
+            // Extract remaining email info for classification
             const from = headers.find(h => h.name === 'From')?.value || '';
             const emailContent = _extractEmailContent(email);
             
+            // Send classification start update
+            mainWindow.webContents.send('sync-progress', {
+              current: i,
+              total: accounts.length,
+              status: `Analyzing email from ${account.email}`,
+              account: account.email,
+              emailProgress: {
+                current: emailIndex,
+                total: fetchResult.messages.length
+              },
+              phase: 'classifying',
+              details: `Using AI to check if this is job-related: "${subject.substring(0, 40)}..."`
+            });
+            
             // Classify with LLM
             const classification = await llmHandler.classifyEmail(emailContent);
+            
+            // Send classification result update
+            if (classification.is_job_related) {
+              mainWindow.webContents.send('sync-progress', {
+                current: i,
+                total: accounts.length,
+                status: `Found job application from ${account.email}!`,
+                account: account.email,
+                emailProgress: {
+                  current: emailIndex,
+                  total: fetchResult.messages.length
+                },
+                phase: 'saving',
+                details: `✅ Job found: ${classification.company || 'Unknown Company'} - ${classification.position || 'Unknown Position'}`
+              });
+            }
             
             // Update the record with classification result
             const updateSyncStmt = getDb().prepare(`
@@ -1664,6 +1732,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       emailsFetched: totalEmailsFetched,
       emailsClassified: totalEmailsClassified,
       jobsFound: totalJobsFound,
+      emailsSkipped: totalEmailsSkipped,
       accounts: accounts.length
     });
     
@@ -1672,6 +1741,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       emailsFetched: totalEmailsFetched,
       emailsClassified: totalEmailsClassified,
       jobsFound: totalJobsFound,
+      emailsSkipped: totalEmailsSkipped,
       accounts: accounts.length
     };
   } catch (error) {
@@ -1786,97 +1856,30 @@ ipcMain.handle('get-job-email', async (event, jobId) => {
 });
 
 // Prompt management handlers
-const promptFilePath = path.join(app.getPath('userData'), 'classificationPrompt.txt');
-
-// Get the current prompt (custom or default)
 ipcMain.handle('prompt:get', async () => {
-  try {
-    // Try to read custom prompt
-    try {
-      const customPrompt = await fs.readFile(promptFilePath, 'utf-8');
-      return { success: true, prompt: customPrompt, isCustom: true };
-    } catch (error) {
-      // File doesn't exist, return default prompt
-      return { success: true, prompt: DEFAULT_SYSTEM_PROMPT, isCustom: false };
-    }
-  } catch (error) {
-    console.error('Error getting prompt:', error);
-    return { success: false, error: error.message };
-  }
+  return await promptManager.getPrompt();
 });
 
-// Set a custom prompt
 ipcMain.handle('prompt:set', async (event, prompt) => {
-  try {
-    // Validate prompt
-    if (!prompt || typeof prompt !== 'string') {
-      throw new Error('Invalid prompt: must be a non-empty string');
-    }
-    
-    // Write to file
-    await fs.writeFile(promptFilePath, prompt, 'utf-8');
-    
-    // Clear the LLM session cache to use new prompt
-    if (classifier && classifier.clearCache) {
-      classifier.clearCache();
-    }
-    
-    return { success: true };
-  } catch (error) {
-    console.error('Error setting prompt:', error);
-    return { success: false, error: error.message };
-  }
+  return await promptManager.setPrompt(prompt);
 });
 
-// Reset to default prompt
 ipcMain.handle('prompt:reset', async () => {
-  try {
-    // Delete custom prompt file
-    try {
-      await fs.unlink(promptFilePath);
-    } catch (error) {
-      // File might not exist, that's ok
-    }
-    
-    // Clear the LLM session cache
-    if (classifier && classifier.clearCache) {
-      classifier.clearCache();
-    }
-    
-    return { success: true };
-  } catch (error) {
-    console.error('Error resetting prompt:', error);
-    return { success: false, error: error.message };
-  }
+  return await promptManager.resetPrompt();
 });
 
-// Get prompt info (version, stats, etc.)
 ipcMain.handle('prompt:info', async () => {
-  try {
-    let isCustom = false;
-    let customPromptLength = 0;
-    
-    try {
-      const customPrompt = await fs.readFile(promptFilePath, 'utf-8');
-      isCustom = true;
-      customPromptLength = customPrompt.length;
-    } catch {
-      // No custom prompt
-    }
-    
-    return {
-      success: true,
-      info: {
-        isCustom,
-        defaultPromptLength: DEFAULT_SYSTEM_PROMPT.length,
-        customPromptLength,
-        promptPath: promptFilePath
-      }
-    };
-  } catch (error) {
-    console.error('Error getting prompt info:', error);
-    return { success: false, error: error.message };
-  }
+  return await promptManager.getPromptInfo();
+});
+
+// Test prompt with a sample email
+ipcMain.handle('prompt:test', async (event, { prompt, email }) => {
+  return await promptManager.testPrompt(prompt, email);
+});
+
+// Get token info for a text
+ipcMain.handle('prompt:token-info', async (event, text) => {
+  return await promptManager.getTokenInfo(text);
 });
 
 // Cleanup on app quit

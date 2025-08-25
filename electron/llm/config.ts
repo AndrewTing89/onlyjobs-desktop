@@ -1,7 +1,29 @@
 import path from "path";
 
 // Model configuration
-export const DEFAULT_MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH ?? path.resolve(process.cwd(), "models", "model.gguf");
+// Determine if we're in a packaged app and get the correct path
+let defaultPath: string;
+
+// Check if we're in a packaged app by looking for app.asar in the path
+const isPackaged = __dirname.includes('app.asar');
+
+if (isPackaged && (process as any).resourcesPath) {
+    // We're in a packaged app - models are in Resources directory
+    defaultPath = path.join((process as any).resourcesPath, "models", "model.gguf");
+    console.log('LLM Config: Running in packaged app');
+    console.log('LLM Config: Resources path:', (process as any).resourcesPath);
+} else {
+    // In development, use relative path from the config file location
+    const configDir = __dirname; // electron/llm
+    const electronDir = path.dirname(configDir); // electron
+    const appRootPath = path.dirname(electronDir); // app root
+    defaultPath = path.join(appRootPath, "models", "model.gguf");
+    console.log('LLM Config: Running in development');
+    console.log('LLM Config: App root path:', appRootPath);
+}
+
+console.log('LLM Config: Default model path resolved to:', defaultPath);
+export const DEFAULT_MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH ?? defaultPath;
 export const LLM_TEMPERATURE = Number(process.env.ONLYJOBS_TEMPERATURE ?? 0.1);
 export const LLM_MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS ?? 256);
 export const LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 2048);

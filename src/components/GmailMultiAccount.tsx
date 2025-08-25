@@ -20,7 +20,6 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Divider,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -46,6 +45,12 @@ interface SyncProgress {
   total: number;
   status: string;
   account?: string;
+  emailProgress?: {
+    current: number;
+    total: number;
+  };
+  phase?: 'fetching' | 'classifying' | 'saving';
+  details?: string;
 }
 
 export const GmailMultiAccount: React.FC = () => {
@@ -56,7 +61,8 @@ export const GmailMultiAccount: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [emailFetchLimit, setEmailFetchLimit] = useState<number>(50);
+  const [daysToSync, setDaysToSync] = useState<number>(365); // Default to 1 year for better results
+  const [syncStats, setSyncStats] = useState<{processed?: number; found?: number; skipped?: number}>({});
 
   useEffect(() => {
     loadAccounts();
@@ -69,9 +75,17 @@ export const GmailMultiAccount: React.FC = () => {
     window.electronAPI.on('sync-complete', (result: any) => {
       setSyncing(false);
       setSyncProgress(null);
-      setSuccessMessage(
-        `Sync complete! Fetched ${result.emailsFetched} emails, classified ${result.emailsClassified}, found ${result.jobsFound} jobs from ${result.accounts} accounts.`
-      );
+      setSyncStats({
+        processed: result.emailsFetched || 0,
+        found: result.jobsFound || 0,
+        skipped: result.emailsSkipped || 0
+      });
+      const message = `Sync complete! Processed ${result.emailsFetched || 0} emails • Found ${result.jobsFound || 0} job applications`;
+      if (result.emailsSkipped > 0) {
+        setSuccessMessage(message + ` • Skipped ${result.emailsSkipped} already processed emails`);
+      } else {
+        setSuccessMessage(message);
+      }
       loadAccounts(); // Refresh accounts to show updated sync times
     });
     
@@ -135,8 +149,8 @@ export const GmailMultiAccount: React.FC = () => {
     
     try {
       await window.electronAPI.gmail.syncAll({
-        daysToSync: 90,
-        maxEmails: emailFetchLimit
+        daysToSync: daysToSync,
+        maxEmails: 1000  // Maximum allowed per sync
       });
     } catch (err: any) {
       setSyncing(false);
@@ -227,14 +241,14 @@ export const GmailMultiAccount: React.FC = () => {
         <AccordionDetails>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <TextField
-              label="Emails to fetch per sync"
+              label="Days to sync"
               type="number"
-              value={emailFetchLimit}
-              onChange={(e) => setEmailFetchLimit(Math.max(1, parseInt(e.target.value) || 1))}
+              value={daysToSync}
+              onChange={(e) => setDaysToSync(Math.max(1, Math.min(3650, parseInt(e.target.value) || 1)))}
               inputProps={{
                 min: 1,
-                max: 1000,
-                step: 1,
+                max: 3650,
+                step: 30,
                 onKeyDown: (e: React.KeyboardEvent) => {
                   // Enable Cmd+A (Mac) and Ctrl+A (Windows/Linux) to select all
                   if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
@@ -244,12 +258,14 @@ export const GmailMultiAccount: React.FC = () => {
                   }
                 }
               }}
-              helperText="Number of recent emails to fetch from each account (1-1000)"
+              helperText="How many days back to search (1-3650 days / ~10 years)"
               sx={{ maxWidth: 300 }}
             />
             <Typography variant="body2" color="text.secondary">
-              Higher numbers will take longer to sync but may find more job applications.
-              Default is 50 emails per account.
+              <strong>Tip:</strong> Try 365 days (1 year) to catch all recent job applications. Already processed emails are automatically skipped.
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Note: Each sync fetches up to 1,000 emails per account. Emails already in the database are skipped.
             </Typography>
           </Box>
         </AccordionDetails>
@@ -271,26 +287,122 @@ export const GmailMultiAccount: React.FC = () => {
           onClick={handleSyncAll}
           disabled={syncing || accounts.length === 0}
         >
-          Sync All Accounts ({emailFetchLimit} emails each)
+          Sync All Accounts ({daysToSync} days)
         </Button>
       </Box>
 
       {syncing && syncProgress && (
         <Paper sx={{ p: 3 }}>
-          <Typography variant="subtitle1" gutterBottom>
-            Syncing Emails...
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+            <Typography variant="subtitle1">
+              Syncing Emails
+            </Typography>
+            {syncProgress.phase && (
+              <Chip 
+                size="small" 
+                label={syncProgress.phase.charAt(0).toUpperCase() + syncProgress.phase.slice(1)}
+                color={syncProgress.phase === 'fetching' ? 'info' : syncProgress.phase === 'classifying' ? 'warning' : 'success'}
+              />
+            )}
+          </Box>
+          
+          {/* Main status text */}
           <Typography variant="body2" color="text.secondary" gutterBottom>
             {syncProgress.status}
           </Typography>
-          <LinearProgress 
-            variant="determinate" 
-            value={syncProgress.total > 0 ? (syncProgress.current / syncProgress.total) * 100 : 0}
-            sx={{ mb: 1 }}
-          />
-          <Typography variant="caption" color="text.secondary">
-            {syncProgress.current} / {syncProgress.total}
+          
+          {/* Detailed progress info */}
+          {syncProgress.details && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+              {syncProgress.details}
+            </Typography>
+          )}
+          
+          {/* Account progress bar */}
+          <Box sx={{ mb: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="caption" color="text.secondary">
+                Account {syncProgress.current + 1} of {syncProgress.total}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {Math.round((syncProgress.current / syncProgress.total) * 100)}%
+              </Typography>
+            </Box>
+            <LinearProgress 
+              variant="determinate" 
+              value={syncProgress.total > 0 ? (syncProgress.current / syncProgress.total) * 100 : 0}
+              sx={{ height: 8, borderRadius: 4 }}
+            />
+          </Box>
+          
+          {/* Email progress bar if processing emails */}
+          {syncProgress.emailProgress && (
+            <Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Email {syncProgress.emailProgress.current} of {syncProgress.emailProgress.total}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {Math.round((syncProgress.emailProgress.current / syncProgress.emailProgress.total) * 100)}%
+                </Typography>
+              </Box>
+              <LinearProgress 
+                variant="determinate" 
+                value={(syncProgress.emailProgress.current / syncProgress.emailProgress.total) * 100}
+                sx={{ height: 6, borderRadius: 3 }}
+                color="secondary"
+              />
+            </Box>
+          )}
+          
+          {/* Live stats */}
+          <Box sx={{ display: 'flex', gap: 2, mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+            <Typography variant="caption" color="text.secondary">
+              📧 Processing: {syncProgress.emailProgress?.current || 0} emails
+            </Typography>
+            {syncStats.skipped && syncStats.skipped > 0 && (
+              <Typography variant="caption" color="text.secondary">
+                ⏭️ Skipped: {syncStats.skipped} (already processed)
+              </Typography>
+            )}
+          </Box>
+        </Paper>
+      )}
+
+      {/* Sync History Summary */}
+      {syncStats.processed !== undefined && !syncing && (
+        <Paper sx={{ p: 2, mt: 2, bgcolor: 'background.default' }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Last Sync Summary
           </Typography>
+          <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+            <Box>
+              <Typography variant="h6" color="primary">
+                {syncStats.processed || 0}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Emails Processed
+              </Typography>
+            </Box>
+            <Box>
+              <Typography variant="h6" color="success.main">
+                {syncStats.found || 0}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Jobs Found
+              </Typography>
+            </Box>
+            {syncStats.skipped && syncStats.skipped > 0 && (
+              <Box>
+                <Typography variant="h6" color="text.secondary">
+                  {syncStats.skipped}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Already Processed
+                </Typography>
+              </Box>
+            )}
+          </Box>
         </Paper>
       )}
 

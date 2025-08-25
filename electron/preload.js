@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Email classification
   classifyEmail: (content) => ipcRenderer.invoke('classify-email', content),
   
+  // LLM Health Check
+  checkLLMHealth: () => ipcRenderer.invoke('llm:health-check'),
+  
   // ML Model operations
   getMlStatus: () => ipcRenderer.invoke('ml:get-status'),
   isMlReady: () => ipcRenderer.invoke('ml:is-ready'),
@@ -29,6 +32,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPrompt: (prompt) => ipcRenderer.invoke('prompt:set', prompt),
   resetPrompt: () => ipcRenderer.invoke('prompt:reset'),
   getPromptInfo: () => ipcRenderer.invoke('prompt:info'),
+  testPrompt: (data) => ipcRenderer.invoke('prompt:test', data),
+  getTokenInfo: (text) => ipcRenderer.invoke('prompt:token-info', text),
   
   // Authentication operations
   auth: {

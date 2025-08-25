@@ -18,6 +18,18 @@ interface ElectronAPI {
   // Email classification
   classifyEmail: (input: string | { subject: string; plaintext: string }) => Promise<any>;
   
+  // LLM Health Check
+  checkLLMHealth: () => Promise<{
+    status: 'healthy' | 'unhealthy' | 'error' | 'unknown';
+    modelPath: string;
+    modelExists: boolean;
+    modelSize: number;
+    expectedSize: number;
+    canLoad: boolean;
+    error: string | null;
+    lastChecked: string;
+  }>;
+  
   // ML Model operations
   getMlStatus: () => Promise<any>;
   isMlReady: () => Promise<any>;
@@ -25,10 +37,33 @@ interface ElectronAPI {
   initializeMl: () => Promise<any>;
   
   // Prompt management
-  getPrompt: () => Promise<{ success: boolean; prompt: string; isCustom: boolean }>;
+  getPrompt: () => Promise<{ 
+    success: boolean; 
+    prompt: string; 
+    isCustom: boolean;
+    tokenInfo?: {
+      promptTokens: number;
+      contextSize: number;
+      availableTokens: number;
+      usagePercent: number;
+      warning: string | null;
+    };
+  }>;
   setPrompt: (prompt: string) => Promise<{ success: boolean; error?: string }>;
   resetPrompt: () => Promise<{ success: boolean; prompt: string }>;
   getPromptInfo: () => Promise<{ success: boolean; modelPath: string; userDataPath: string; promptFilePath: string }>;
+  testPrompt: (data: { 
+    prompt: string; 
+    email: { subject: string; from: string; body: string } 
+  }) => Promise<{ success: boolean; result?: any; error?: string }>;
+  getTokenInfo: (text: string) => Promise<{
+    promptTokens: number;
+    contextSize: number;
+    availableTokens: number;
+    usagePercent: number;
+    warning: string | null;
+    status: 'good' | 'warning' | 'danger';
+  }>;
   
   // Authentication operations
   auth: {

@@ -5,16 +5,15 @@ const path = require("path");
 // Model configuration
 // Determine if we're in a packaged app and get the correct path
 let defaultPath;
-
 // Check if we're in a packaged app by looking for app.asar in the path
 const isPackaged = __dirname.includes('app.asar');
-
 if (isPackaged && process.resourcesPath) {
     // We're in a packaged app - models are in Resources directory
     defaultPath = path.join(process.resourcesPath, "models", "model.gguf");
     console.log('LLM Config: Running in packaged app');
     console.log('LLM Config: Resources path:', process.resourcesPath);
-} else {
+}
+else {
     // In development, use relative path from the config file location
     const configDir = __dirname; // electron/llm
     const electronDir = path.dirname(configDir); // electron
@@ -23,7 +22,6 @@ if (isPackaged && process.resourcesPath) {
     console.log('LLM Config: Running in development');
     console.log('LLM Config: App root path:', appRootPath);
 }
-
 console.log('LLM Config: Default model path resolved to:', defaultPath);
 exports.DEFAULT_MODEL_PATH = process.env.ONLYJOBS_MODEL_PATH ?? defaultPath;
 exports.LLM_TEMPERATURE = Number(process.env.ONLYJOBS_TEMPERATURE ?? 0.1);
@@ -33,7 +31,7 @@ exports.GPU_LAYERS = Number(process.env.ONLYJOBS_N_GPU_LAYERS ?? 0);
 // Versioning for tracking model decisions and prompts
 exports.DECISION_VERSION = process.env.ONLYJOBS_DECISION_VERSION ?? "v1.0-prompt-2025-08-08";
 exports.PROMPT_VERSION = process.env.ONLYJOBS_PROMPT_VERSION ?? "v1.0";
-exports.MODEL_NAME = process.env.ONLYJOBS_MODEL_NAME ?? "Llama-3.2-3B Q4_K_M";
+exports.MODEL_NAME = process.env.ONLYJOBS_MODEL_NAME ?? "Mistral-7B-Instruct Q4_K_M";
 // Database configuration
 function getElectronUserDataDir() {
     const productName = "OnlyJobs Desktop";

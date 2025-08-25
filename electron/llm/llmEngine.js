@@ -180,9 +180,9 @@ async function parseEmailWithLLM(input) {
         .filter(Boolean)
         .join("\n");
     
-    console.log('LLM: Processing email with subject:', subject.substring(0, 50));
-    
-    const response = await session.prompt(userPrompt, {
+        console.log('LLM: Processing email with subject:', subject.substring(0, 50));
+        
+        const response = await session.prompt(userPrompt, {
         temperature,
         maxTokens,
         responseFormat: {
@@ -221,3 +221,62 @@ async function parseEmailWithLLM(input) {
     return parsed;
 }
 exports.parseEmailWithLLM = parseEmailWithLLM;
+
+// Health check function for LLM
+async function checkLLMHealth() {
+    const fs = require('fs');
+    const modelPath = config_1.DEFAULT_MODEL_PATH;
+    
+    const health = {
+        status: 'unknown',
+        modelPath: modelPath,
+        modelExists: false,
+        modelSize: 0,
+        expectedSize: 4368439584, // Expected size for Mistral-7B Q4_K_M (actual download)
+        canLoad: false,
+        error: null,
+        lastChecked: new Date().toISOString()
+    };
+    
+    try {
+        // Check if model file exists
+        if (fs.existsSync(modelPath)) {
+            health.modelExists = true;
+            const stats = fs.statSync(modelPath);
+            health.modelSize = stats.size;
+            
+            // Check file size
+            if (health.modelSize !== health.expectedSize) {
+                health.status = 'unhealthy';
+                health.error = `Model file size mismatch. Expected ${health.expectedSize} bytes, got ${health.modelSize} bytes`;
+                return health;
+            }
+            
+            // Try to load the model
+            console.log('Health check: Testing model load...');
+            const testSession = await ensureSession(modelPath);
+            
+            // Try a simple prompt to ensure it works
+            const testPrompt = 'Test prompt\nOutput';
+            const response = await testSession.prompt(testPrompt, {
+                maxTokens: 10,
+                temperature: 0.1
+            });
+            
+            health.canLoad = true;
+            health.status = 'healthy';
+            console.log('Health check: Model is healthy');
+        } else {
+            health.status = 'unhealthy';
+            health.error = 'Model file not found';
+        }
+    } catch (error) {
+        health.status = 'unhealthy';
+        health.canLoad = false;
+        health.error = error.message;
+        console.error('Health check failed:', error);
+    }
+    
+    return health;
+}
+exports.checkLLMHealth = checkLLMHealth;

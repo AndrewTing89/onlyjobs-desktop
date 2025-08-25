@@ -17,7 +17,8 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  LinearProgress
+  LinearProgress,
+  TextField
 } from '@mui/material';
 import {
   Email,
@@ -49,6 +50,8 @@ export default function GmailConnectionElectron() {
   const [showEmailsDialog, setShowEmailsDialog] = useState(false);
   const [syncProgress, setSyncProgress] = useState(0);
   const [syncStatus, setSyncStatus] = useState('');
+  const [daysToSync, setDaysToSync] = useState(30); // Default to 30 days
+  const [syncStats, setSyncStats] = useState<{emailsProcessed?: number; jobsFound?: number}>({});
 
   useEffect(() => {
     checkGmailStatus();
@@ -168,6 +171,7 @@ export default function GmailConnectionElectron() {
       };
       
       const handleFetchComplete = (data: any) => {
+        setSyncStats(prev => ({ ...prev, emailsProcessed: data.fetched }));
         setSyncStatus(`Fetched ${data.fetched} emails, ${data.stored} new. Analyzing...`);
         currentPhase = 'classifying';
       };
@@ -179,6 +183,7 @@ export default function GmailConnectionElectron() {
       
       const handleClassifyComplete = (data: any) => {
         jobsFound += data.jobsFound;
+        setSyncStats(prev => ({ ...prev, jobsFound: jobsFound }));
       };
       
       const handleError = (error: string) => {
@@ -201,11 +206,14 @@ export default function GmailConnectionElectron() {
       
       // Start sync (which now does both fetch and classify)
       const result = await window.electronAPI.gmail.sync({
-        daysToSync: 90,
-        maxEmails: 500
+        daysToSync: daysToSync,
+        maxEmails: 1000  // Maximum allowed per sync
       });
       
-      setSyncStatus(`Sync complete! Processed ${result.emailsProcessed} emails, found ${result.jobsFound || jobsFound} jobs`);
+      const totalEmailsProcessed = result.emailsProcessed || syncStats.emailsProcessed || 0;
+      const totalJobsFound = result.jobsFound || jobsFound;
+      setSyncStatus(`Sync complete! Processed ${totalEmailsProcessed} emails • Found ${totalJobsFound} job applications`);
+      setSyncStats({ emailsProcessed: totalEmailsProcessed, jobsFound: totalJobsFound });
       setSyncProgress(100);
       setFetchingEmails(false);
       
@@ -285,6 +293,25 @@ export default function GmailConnectionElectron() {
                 Your Gmail is connected. OnlyJobs can now sync your job-related emails.
               </Typography>
               
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 2 }}>
+                <TextField
+                  label="Days to sync"
+                  type="number"
+                  value={daysToSync}
+                  onChange={(e) => setDaysToSync(Math.max(1, Math.min(365, parseInt(e.target.value) || 1)))}
+                  inputProps={{
+                    min: 1,
+                    max: 365,
+                    step: 1
+                  }}
+                  size="small"
+                  sx={{ width: 120 }}
+                />
+                <Typography variant="body2" color="text.secondary">
+                  How far back to search (up to 1,000 emails per sync)
+                </Typography>
+              </Box>
+              
               <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                 <Button
                   variant="outlined"
@@ -309,13 +336,13 @@ export default function GmailConnectionElectron() {
                   variant="contained"
                   onClick={handleFullSync}
                   disabled={fetchingEmails}
-                  title="Sync all emails from the last 90 days (max 200 for testing)"
+                  title={`Sync all emails from the last ${daysToSync} days`}
                   sx={{
                     background: accent,
                     '&:hover': { background: accent }
                   }}
                 >
-                  Sync (90 days)
+                  Sync ({daysToSync} days)
                 </Button>
                 
                 <Button
@@ -329,12 +356,26 @@ export default function GmailConnectionElectron() {
                 </Button>
               </Box>
               
-              {fetchingEmails && (
+              {(fetchingEmails || syncStatus) && (
                 <Box sx={{ mt: 3 }}>
                   <Typography variant="body2" color="text.secondary" gutterBottom>
                     {syncStatus}
                   </Typography>
-                  <LinearProgress variant="determinate" value={syncProgress} />
+                  {fetchingEmails && (
+                    <LinearProgress variant="determinate" value={syncProgress} sx={{ mb: 1 }} />
+                  )}
+                  {syncStats.emailsProcessed && (
+                    <Box sx={{ display: 'flex', gap: 3, mt: 1 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        📧 Emails: {syncStats.emailsProcessed}
+                      </Typography>
+                      {syncStats.jobsFound !== undefined && (
+                        <Typography variant="caption" color="text.secondary">
+                          💼 Jobs found: {syncStats.jobsFound}
+                        </Typography>
+                      )}
+                    </Box>
+                  )}
                 </Box>
               )}
             </Box>
