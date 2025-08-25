@@ -42,12 +42,26 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: false, // Temporarily disable for debugging
-      allowRunningInsecureContent: true
+      webSecurity: true, // Re-enabled for security
+      allowRunningInsecureContent: false // Re-enabled for security
     },
     // icon: path.join(__dirname, '..', 'assets', 'icon.png'), // TODO: Add icon
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: true // Show immediately for debugging
+  });
+
+  // Set Content Security Policy for better security
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          isDev 
+            ? "default-src 'self' http://localhost:3000 'unsafe-inline' 'unsafe-eval'; connect-src 'self' http://localhost:3000 ws://localhost:3000 https://*.googleapis.com https://*.google.com"
+            : "default-src 'self' 'unsafe-inline'; connect-src 'self' https://*.googleapis.com https://*.google.com"
+        ]
+      }
+    });
   });
 
   // Load the app
