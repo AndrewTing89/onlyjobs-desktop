@@ -11,12 +11,16 @@ const { LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_CONTEXT, GPU_LAYERS } = require('./
 const promptStore = new Store({ name: 'model-prompts' });
 
 // Track loaded models and contexts (not sessions)
+// Add unique ID to verify this is the same module instance
+const MODULE_ID = Math.random().toString(36).substring(7);
+console.log(`🔧 two-stage-classifier module loaded with ID: ${MODULE_ID}`);
+
 const loadedModels = new Map();
 const loadedContexts = new Map();
 
 // Track context usage for refresh
 const contextUsageCount = new Map();
-const MAX_CONTEXT_USES = 50; // Refresh context after 50 classifications
+const MAX_CONTEXT_USES = 10; // Refresh context after 10 classifications (more conservative to avoid exhaustion)
 
 // Default Stage 1 prompts (classification) - optimized for speed
 const DEFAULT_STAGE1_PROMPTS = {
@@ -102,12 +106,14 @@ async function loadLlamaModule() {
 }
 
 async function ensureModelLoaded(modelId, modelPath) {
+  console.log(`🔍 [Module ${MODULE_ID}] Checking model cache for ${modelId}. Current cache:`, Array.from(loadedModels.keys()));
+  
   if (loadedModels.has(modelId)) {
-    console.log(`✅ Model ${modelId} already loaded, reusing existing model`);
+    console.log(`✅ [Module ${MODULE_ID}] Model ${modelId} already loaded, reusing existing model`);
     return loadedModels.get(modelId);
   }
   
-  console.log(`⚠️ Model ${modelId} NOT in cache (cache size: ${loadedModels.size}), loading from ${modelPath}`);
+  console.log(`⚠️ [Module ${MODULE_ID}] Model ${modelId} NOT in cache (cache size: ${loadedModels.size}), loading from ${modelPath}`);
   
   const fs = require('fs');
   if (!fs.existsSync(modelPath)) {
@@ -125,7 +131,8 @@ async function ensureModelLoaded(modelId, modelPath) {
     });
     
     loadedModels.set(modelId, model);
-    console.log(`TwoStage: Model ${modelId} loaded successfully`);
+    console.log(`TwoStage: Model ${modelId} loaded successfully and cached (cache size now: ${loadedModels.size})`);
+    console.log(`TwoStage: Cache contents:`, Array.from(loadedModels.keys()));
     return model;
   } catch (error) {
     console.error(`TwoStage: Error loading model ${modelId}:`, error);
@@ -271,11 +278,26 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody, custo
   } catch (error) {
     console.error(`TwoStage: Stage 1 error with ${modelId}:`, error);
     
-    // If we ran out of sequences, force context refresh on next run
+    // If we ran out of sequences, immediately delete the broken context
     if (error.message && error.message.includes('No sequences left')) {
-      console.log(`⚠️ Context exhausted for ${modelId}, will refresh on next use`);
+      console.log(`⚠️ Context exhausted for ${modelId}, removing broken context`);
       const contextKey = `${modelId}_context`;
-      contextUsageCount.set(contextKey, MAX_CONTEXT_USES); // Force refresh next time
+      
+      // Dispose and remove the broken context immediately
+      if (loadedContexts.has(contextKey)) {
+        const brokenContext = loadedContexts.get(contextKey);
+        try {
+          if (brokenContext && brokenContext.dispose) {
+            brokenContext.dispose();
+          }
+        } catch (disposeError) {
+          // Ignore disposal errors
+        }
+        loadedContexts.delete(contextKey);
+      }
+      
+      // Reset usage count
+      contextUsageCount.delete(contextKey);
     }
     
     // Dispose sequence on error (if not already disposed)
@@ -381,6 +403,29 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody, custom
     
   } catch (error) {
     console.error(`TwoStage: Stage 2 error with ${modelId}:`, error);
+    
+    // If we ran out of sequences, immediately delete the broken context
+    if (error.message && error.message.includes('No sequences left')) {
+      console.log(`⚠️ Context exhausted for ${modelId} in Stage 2, removing broken context`);
+      const contextKey = `${modelId}_context`;
+      
+      // Dispose and remove the broken context immediately
+      if (loadedContexts.has(contextKey)) {
+        const brokenContext = loadedContexts.get(contextKey);
+        try {
+          if (brokenContext && brokenContext.dispose) {
+            brokenContext.dispose();
+          }
+        } catch (disposeError) {
+          // Ignore disposal errors
+        }
+        loadedContexts.delete(contextKey);
+      }
+      
+      // Reset usage count
+      contextUsageCount.delete(contextKey);
+    }
+    
     // Dispose sequence on error (if not already disposed)
     try {
       if (sequence && sequence.dispose) {
