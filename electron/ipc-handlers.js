@@ -1911,8 +1911,18 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
           }
           
           // Store jobs in database
+          console.log(`📝 Attempting to save ${jobs.length} jobs to database...`);
           for (const job of jobs) {
             try {
+              console.log(`  Processing job: ${job.company} - ${job.position}`);
+              
+              // Get the first email ID to use as gmail_message_id (required field)
+              const primaryEmailId = job.emails && job.emails.length > 0 ? job.emails[0].id : null;
+              if (!primaryEmailId) {
+                console.error(`  ❌ No email ID found for job ${job.company} - ${job.position}`);
+                continue;
+              }
+              
               // Check if job already exists (by thread_id or similarity)
               const existingJobStmt = getDb().prepare(`
                 SELECT id FROM jobs 
@@ -1945,20 +1955,25 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
                 // Insert new job
                 const insertJobStmt = getDb().prepare(`
                   INSERT INTO jobs (
-                    id, thread_id, company, position, status,
+                    id, gmail_message_id, thread_id, company, position, status,
                     applied_date, account_email, confidence_score,
                     classification_model, email_thread_ids
-                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `);
                 
                 const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                const appliedDate = job.firstEmailDate ? 
+                  job.firstEmailDate.toISOString().split('T')[0] : 
+                  new Date().toISOString().split('T')[0];
+                
                 insertJobStmt.run(
                   jobId,
-                  job.threadId,
+                  primaryEmailId,  // Use first email ID as gmail_message_id
+                  job.threadId || null,
                   job.company,
                   job.position,
                   job.status,
-                  job.firstEmailDate.toISOString(),
+                  appliedDate,
                   account.email,
                   job.confidence || 0.85,
                   'thread_aware_llm',
@@ -1993,9 +2008,16 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
                 updateSyncStmt.run(email.id, account.email);
               }
             } catch (dbError) {
-              console.error(`Error saving job ${job.company} - ${job.position}:`, dbError);
+              console.error(`❌ Error saving job ${job.company} - ${job.position}:`, dbError);
+              console.error(`  Job data:`, {
+                threadId: job.threadId,
+                primaryEmailId,
+                emailCount: job.emails?.length || 0,
+                accountEmail: account.email
+              });
             }
           }
+          console.log(`✅ Job saving complete: ${totalJobsFound} jobs saved successfully`);
           
           totalEmailsFetched += fetchResult.messages.length;
           totalEmailsClassified += fetchResult.messages.length;

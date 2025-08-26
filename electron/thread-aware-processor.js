@@ -80,7 +80,7 @@ class ThreadAwareProcessor {
    */
   async processThreads(threads, account, modelId, isCancelled = null) {
     const jobs = [];
-    const BATCH_SIZE = 5; // Process 5 threads at a time to prevent sequence exhaustion
+    const BATCH_SIZE = 3; // Reduced from 5 to 3 to prevent context exhaustion
     
     // Convert Map to Array for easier batching
     const threadEntries = Array.from(threads.entries());
@@ -241,10 +241,10 @@ class ThreadAwareProcessor {
         }
       }
       
-      // Small delay between batches to let system resources recover
+      // Increased delay between batches to let system resources and context recover
       if (i + BATCH_SIZE < threadEntries.length) {
-        console.log(`⏸️  Pausing briefly before next batch...`);
-        await new Promise(resolve => setTimeout(resolve, 500));
+        console.log(`⏸️  Pausing before next batch to let resources recover...`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Increased from 500ms to 1s
       }
     }
     
@@ -316,7 +316,7 @@ class ThreadAwareProcessor {
    */
   async classifyOrphans(orphans, modelId) {
     const classified = [];
-    const BATCH_SIZE = 5; // Process 5 orphans at a time
+    const BATCH_SIZE = 3; // Reduced from 5 to 3 to prevent context exhaustion
     
     if (orphans.length === 0) return classified;
     

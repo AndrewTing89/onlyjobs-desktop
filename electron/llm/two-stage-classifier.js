@@ -14,6 +14,10 @@ const promptStore = new Store({ name: 'model-prompts' });
 const loadedModels = new Map();
 const loadedContexts = new Map();
 
+// Track context usage for refresh
+const contextUsageCount = new Map();
+const MAX_CONTEXT_USES = 50; // Refresh context after 50 classifications
+
 // Default Stage 1 prompts (classification) - optimized for speed
 const DEFAULT_STAGE1_PROMPTS = {
   'llama-3-8b-instruct-q5_k_m': `Classify this email as job-related or not.
@@ -128,12 +132,34 @@ async function ensureModelLoaded(modelId, modelPath) {
   }
 }
 
-async function getOrCreateContext(modelId, modelPath) {
+async function getOrCreateContext(modelId, modelPath, forceRefresh = false) {
   const contextKey = `${modelId}_context`;
   
-  // Reuse existing context if available
-  if (loadedContexts.has(contextKey)) {
+  // Check usage count and force refresh if needed
+  const usageCount = contextUsageCount.get(contextKey) || 0;
+  if (usageCount >= MAX_CONTEXT_USES) {
+    console.log(`📊 Context for ${modelId} has been used ${usageCount} times, refreshing...`);
+    forceRefresh = true;
+  }
+  
+  // Reuse existing context if available and not forcing refresh
+  if (!forceRefresh && loadedContexts.has(contextKey)) {
+    // Increment usage count
+    contextUsageCount.set(contextKey, usageCount + 1);
     return loadedContexts.get(contextKey);
+  }
+  
+  // Dispose old context if refreshing
+  if (forceRefresh && loadedContexts.has(contextKey)) {
+    const oldContext = loadedContexts.get(contextKey);
+    try {
+      if (oldContext && oldContext.dispose) {
+        oldContext.dispose();
+      }
+    } catch (e) {
+      console.error('Error disposing old context:', e);
+    }
+    loadedContexts.delete(contextKey);
   }
   
   // Create new context
@@ -147,6 +173,9 @@ async function getOrCreateContext(modelId, modelPath) {
   });
   
   loadedContexts.set(contextKey, context);
+  contextUsageCount.set(contextKey, 1); // Reset usage count
+  console.log(`✅ Created fresh context for ${modelId}`);
+  
   return context;
 }
 
@@ -176,6 +205,14 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody, custo
     // Get prompt (custom or default)
     const systemPrompt = customPrompt || getStage1Prompt(modelId);
     
+    // Debug: Log if using saved prompt
+    const savedPrompt = promptStore.get(`${modelId}.stage1`);
+    if (savedPrompt) {
+      console.log(`📝 Using SAVED Stage 1 prompt for ${modelId}`);
+    } else {
+      console.log(`📝 Using DEFAULT Stage 1 prompt for ${modelId}`);
+    }
+    
     // Get or create context (reused across all classifications)
     const context = await getOrCreateContext(modelId, modelPath);
     
@@ -202,6 +239,11 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody, custo
     const processingTime = Date.now() - startTime;
     console.log(`TwoStage: Stage 1 completed in ${processingTime}ms`);
     
+    // IMPORTANT: Dispose sequence to free up context
+    if (sequence && sequence.dispose) {
+      sequence.dispose();
+    }
+    
     // Parse response
     let isJob = false;
     try {
@@ -226,9 +268,21 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody, custo
     
   } catch (error) {
     console.error(`TwoStage: Stage 1 error with ${modelId}:`, error);
-    // Dispose sequence on error too
-    if (sequence && sequence.dispose) {
-      sequence.dispose();
+    
+    // If we ran out of sequences, force context refresh on next run
+    if (error.message && error.message.includes('No sequences left')) {
+      console.log(`⚠️ Context exhausted for ${modelId}, will refresh on next use`);
+      const contextKey = `${modelId}_context`;
+      contextUsageCount.set(contextKey, MAX_CONTEXT_USES); // Force refresh next time
+    }
+    
+    // Dispose sequence on error (if not already disposed)
+    try {
+      if (sequence && sequence.dispose) {
+        sequence.dispose();
+      }
+    } catch (disposeError) {
+      // Ignore disposal errors
     }
     return {
       is_job: false,
@@ -247,8 +301,16 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody, custom
   let sequence = null;
   
   try {
-    // Get prompt (custom or default)
+    // Get prompt (custom or default)  
     const systemPrompt = customPrompt || getStage2Prompt(modelId);
+    
+    // Debug: Log if using saved prompt
+    const savedPrompt = promptStore.get(`${modelId}.stage2`);
+    if (savedPrompt) {
+      console.log(`📝 Using SAVED Stage 2 prompt for ${modelId}`);
+    } else {
+      console.log(`📝 Using DEFAULT Stage 2 prompt for ${modelId}`);
+    }
     
     // Get or create context (reused across all classifications)
     const context = await getOrCreateContext(modelId, modelPath);
@@ -275,6 +337,11 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody, custom
     
     const processingTime = Date.now() - startTime;
     console.log(`TwoStage: Stage 2 completed in ${processingTime}ms`);
+    
+    // IMPORTANT: Dispose sequence to free up context
+    if (sequence && sequence.dispose) {
+      sequence.dispose();
+    }
     
     // Parse response
     let extracted = {
@@ -312,9 +379,13 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody, custom
     
   } catch (error) {
     console.error(`TwoStage: Stage 2 error with ${modelId}:`, error);
-    // Dispose sequence on error too
-    if (sequence && sequence.dispose) {
-      sequence.dispose();
+    // Dispose sequence on error (if not already disposed)
+    try {
+      if (sequence && sequence.dispose) {
+        sequence.dispose();
+      }
+    } catch (disposeError) {
+      // Ignore disposal errors
     }
     return {
       company: null,
