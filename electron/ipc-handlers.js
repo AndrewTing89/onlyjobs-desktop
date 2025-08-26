@@ -2203,7 +2203,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
               
               // Use LLM to find actual match
               let existingJob = null;
-              const twoStage = require('./llm/two-stage-classifier-optimized');
+              const twoStage = require('./llm/two-stage-classifier');
               
               for (const potentialMatch of potentialMatches) {
                 try {
@@ -2999,7 +2999,7 @@ ipcMain.handle('models:get-test-history', async () => {
 });
 
 // Two-Stage LLM Classification Handlers
-const twoStage = require('./llm/two-stage-classifier-optimized');
+const twoStage = require('./llm/two-stage-classifier');
 
 // Get prompts for a model
 ipcMain.handle('two-stage:get-prompts', async (event, modelId) => {

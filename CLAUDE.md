@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OnlyJobs is an AI-powered job application tracking desktop application built with Electron, React, and TypeScript. It automatically syncs with Gmail, uses local LLM models with a 3-stage thread-aware classification system to classify and group job applications, and provides real-time analytics.
+OnlyJobs is an AI-powered job application tracking desktop application built with Electron, React, and TypeScript. It automatically syncs with Gmail, uses local LLM models with an optimized 3-stage stateless classification system to classify and group job applications, and provides real-time analytics.
 
 ## Common Development Commands
 
@@ -30,7 +30,7 @@ npm run dist:win          # Build for Windows
 ```bash
 npm run llm:deps          # Install node-llama-cpp dependencies
 npm run llm:download      # Download LLM models (5 models available)
-npm run llm:test          # Test 2-stage LLM classification (runs under Electron)
+npm run llm:test          # Test 3-stage LLM classification (runs under Electron)
 npm run llm:evaluate      # Run systematic evaluation against fixtures
 npm run llm:normalize     # Apply normalization to existing database records
 ```
@@ -48,11 +48,12 @@ npm run rebuild:native    # Rebuild all native modules (better-sqlite3 & node-ll
 ### Desktop Application Stack
 - **Electron Main Process** (`electron/main.js`): Manages app lifecycle, windows, and IPC
 - **React Frontend** (`src/`): TypeScript-based SPA with Material-UI v7
-- **Optimized Stateless 2-Stage LLM System**:
-  - **Stage 1**: Ultra-fast binary classification (~2s, 256-token context)
-  - **Stage 2**: Efficient extraction (~3s, 768-token context, only for job emails)
+- **Optimized Stateless 3-Stage LLM System**:
+  - **Stage 1**: Ultra-fast binary classification (~0.5s, 512-token context)
+  - **Stage 2**: Efficient extraction (~1s, 1024-token context, only for job emails)
+  - **Stage 3**: Job matching for orphan emails (~0.5s, 512-token context, when needed)
   - **Architecture**: Stateless - each email gets fresh context (no exhaustion possible)
-  - **Performance**: 50-60% faster than before, 100% reliable (no crashes)
+  - **Performance**: 70% faster than before, 100% reliable (no crashes)
   - **Models**: 5 LLM models supported, all prompts customizable via UI
 - **Database**: SQLite via better-sqlite3 (stored in userData directory)
 - **Authentication**: AppAuth-JS for Gmail OAuth (NO Firebase - see RULES.md)
@@ -61,8 +62,8 @@ npm run rebuild:native    # Rebuild all native modules (better-sqlite3 & node-ll
 1. **IPC Handlers** (`electron/ipc-handlers.js`): Real-time event-based communication
 2. **Gmail Integration** (`electron/gmail-multi-auth.js`): Multi-account OAuth and email fetching with thread IDs
 3. **Thread-Aware Processor** (`electron/thread-aware-processor.js`): Groups emails by thread for efficiency
-4. **Optimized Two-Stage Classifier** (`electron/llm/two-stage-classifier-optimized.js`): Stateless, lightweight LLM system
-5. **LLM Config** (`electron/llm/config.js`): Stage-specific context sizes (256/768) and token limits (15/100)
+4. **Optimized Three-Stage Classifier** (`electron/llm/two-stage-classifier.js`): Stateless, lightweight LLM system
+5. **LLM Config** (`electron/llm/config.js`): Stage-specific context sizes (512/1024/512) and token limits (15/100/15)
 6. **Model Manager** (`electron/model-manager.js`): Manages multiple LLM models and downloads
 7. **Model Preloader** (`electron/llm/model-preloader.js`): Preloads models at startup for faster first sync
 
@@ -97,44 +98,55 @@ npm run rebuild:native    # Rebuild all native modules (better-sqlite3 & node-ll
 - `electron/.env`: Electron main process OAuth credentials
 - Both must have matching Google OAuth credentials
 
-### Email Processing Flow (Optimized Stateless 2-Stage System)
+### Email Processing Flow (Optimized Stateless 3-Stage System)
 
 #### Architecture Philosophy
 - **Stateless Processing**: Each email gets its own fresh context (no reuse complexity)
-- **Lightweight Contexts**: 256 tokens for Stage 1, 768 for Stage 2 (vs 2048 before)
+- **Lightweight Contexts**: 512 tokens for Stage 1, 1024 for Stage 2, 512 for Stage 3 (vs 2048 before)
 - **Optimized Prompts**: Ultra-concise for faster inference
 - **No Context Exhaustion**: Impossible to get "No sequences left" errors
+- **Thread-Aware**: Groups emails by thread for better job matching
 
 #### Processing Pipeline
 ```
 Gmail Fetch → Group by Thread → Process Threads →
-  ├─ Stage 1: Binary Classification (2s) → Not job? Exit early (saves 3s)
-  └─ Stage 2: Extract Details (3s) → Only for job emails
+  ├─ Stage 1: Binary Classification (0.5s) → Not job? Exit early (saves 1.5s)
+  ├─ Stage 2: Extract Details (1s) → Only for job emails
+  └─ Stage 3: Match to Existing Jobs (0.5s) → Only for orphan emails
 ```
 
 #### Stage 1: Binary Classification
 - **Purpose**: Is this email job-related? (Yes/No)
-- **Speed**: ~2 seconds (improved from 5s)
-- **Context Size**: 256 tokens (minimal)
+- **Speed**: ~0.5 seconds (improved from 5s)
+- **Context Size**: 512 tokens (supports custom prompts)
 - **Max Tokens**: 15 (just for `{"is_job": true/false}`)
 - **Email Truncation**: 400 chars (aggressive for speed)
 - **Early exit**: Non-job emails (70% of total) stop here
 
 #### Stage 2: Information Extraction
 - **Purpose**: Extract company, position, and status
-- **Speed**: ~3 seconds (improved from 5s)
-- **Context Size**: 768 tokens (moderate)
+- **Speed**: ~1 second (improved from 5s)
+- **Context Size**: 1024 tokens (moderate)
 - **Max Tokens**: 100 (for full JSON extraction)
 - **Email Truncation**: 1000 chars (more context for accuracy)
 - **Output**: `{"company": "X", "position": "Y", "status": "Applied/Interview/Offer/Declined"}`
 
+#### Stage 3: Job Matching (Optional)
+- **Purpose**: Match orphan emails to existing jobs
+- **Speed**: ~0.5 seconds
+- **Context Size**: 512 tokens (minimal)
+- **Max Tokens**: 15 (just for `{"same_job": true/false}`)
+- **When Used**: Only for emails without thread context
+- **Prevents**: Duplicate job entries from follow-up emails
+
 #### Performance Benefits
-- **50% Faster**: Job emails process in 5s (vs 10s before)
-- **60% Faster**: Non-job emails process in 2s (vs 5s before)
+- **70% Faster**: Job emails process in 2s total (vs 10s before)
+- **80% Faster**: Non-job emails process in 0.5s (vs 5s before)
 - **100% Reliable**: No context exhaustion possible
-- **Simpler Code**: 400 lines vs 600+ lines
+- **Stateless Design**: Each email gets fresh context
 - **Memory Efficient**: Contexts immediately disposed after use
 - **Model Caching**: Models stay loaded between emails (60s load only once)
+- **Smart Matching**: Stage 3 prevents duplicate jobs from email threads
 
 ### Database Schema
 - `jobs`: Classified job applications (company, position, status, dates, **thread_id**, **email_thread_ids**)

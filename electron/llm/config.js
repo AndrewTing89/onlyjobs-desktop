@@ -29,11 +29,13 @@ exports.LLM_MAX_TOKENS = Number(process.env.ONLYJOBS_MAX_TOKENS ?? 256);
 exports.LLM_CONTEXT = Number(process.env.ONLYJOBS_CTX ?? 2048);
 exports.GPU_LAYERS = Number(process.env.ONLYJOBS_N_GPU_LAYERS ?? 0);
 
-// Stage-specific optimizations for 2-stage classifier
-exports.STAGE1_CONTEXT_SIZE = Number(process.env.ONLYJOBS_STAGE1_CTX ?? 256);  // Minimal for yes/no classification
-exports.STAGE2_CONTEXT_SIZE = Number(process.env.ONLYJOBS_STAGE2_CTX ?? 768);  // Moderate for extraction
+// Stage-specific optimizations for 3-stage classifier
+exports.STAGE1_CONTEXT_SIZE = Number(process.env.ONLYJOBS_STAGE1_CTX ?? 512);  // Increased to handle custom prompts
+exports.STAGE2_CONTEXT_SIZE = Number(process.env.ONLYJOBS_STAGE2_CTX ?? 1024);  // Moderate for extraction
+exports.STAGE3_CONTEXT_SIZE = Number(process.env.ONLYJOBS_STAGE3_CTX ?? 512);   // For job matching comparison
 exports.STAGE1_MAX_TOKENS = Number(process.env.ONLYJOBS_STAGE1_TOKENS ?? 15);   // Just for {"is_job": true/false}
 exports.STAGE2_MAX_TOKENS = Number(process.env.ONLYJOBS_STAGE2_TOKENS ?? 100);  // For company/position/status JSON
+exports.STAGE3_MAX_TOKENS = Number(process.env.ONLYJOBS_STAGE3_TOKENS ?? 15);   // Just for {"same_job": true/false}
 // Versioning for tracking model decisions and prompts
 exports.DECISION_VERSION = process.env.ONLYJOBS_DECISION_VERSION ?? "v1.0-prompt-2025-08-08";
 exports.PROMPT_VERSION = process.env.ONLYJOBS_PROMPT_VERSION ?? "v1.0";

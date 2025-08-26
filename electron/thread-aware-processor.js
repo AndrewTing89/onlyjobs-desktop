@@ -17,7 +17,7 @@ class ThreadAwareProcessor {
   constructor(mainWindow = null) {
     const { getClassifierProvider } = require('./classifier');
     this.classifier = getClassifierProvider();
-    this.twoStage = require('./llm/two-stage-classifier-optimized');
+    this.twoStage = require('./llm/two-stage-classifier');
     this.mainWindow = mainWindow;
   }
 

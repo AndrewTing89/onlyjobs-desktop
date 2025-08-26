@@ -7,7 +7,7 @@ const path = require('path');
 const os = require('os');
 
 // Import the optimized two-stage classifier which handles model loading
-const twoStage = require('./two-stage-classifier-optimized');
+const twoStage = require('./two-stage-classifier');
 
 /**
  * Preload the default model in the background
