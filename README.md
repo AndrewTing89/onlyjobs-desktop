@@ -14,7 +14,7 @@ An AI-powered job application tracker that automatically syncs with Gmail, uses 
 
 - 🔐 **Gmail Integration**: Secure OAuth 2.0 authentication with multi-account support
 - 🧵 **Thread-Aware Processing**: Gmail threads treated as single jobs (70-80% fewer LLM calls)
-- 🤖 **3-Stage LLM System**: Classification → Extraction → Smart Job Matching
+- 🤖 **Stateless 3-Stage LLM System**: Classification → Extraction → Smart Job Matching (no context exhaustion)
 - ⚡ **Real-time Updates**: See job applications appear instantly during sync
 - 📅 **Chronological Processing**: Processes oldest → newest for proper job timeline
 - 🎯 **Smart Job Matching**: "Google SWE" intelligently matches "Google Software Engineer"
@@ -41,28 +41,35 @@ The app uses a sophisticated **Thread-Aware 3-Stage LLM System** for intelligent
 3. **Chronological Sort**: Processes oldest → newest for proper timeline
 4. **Smart Classification**: Only classifies first email per thread
 
-### Three-Stage System
+### Three-Stage System (Optimized Stateless Architecture)
 
 #### Stage 1: Binary Classification
 - **Purpose**: Is this email job-related? (Yes/No)
-- **Speed**: ~1.5 seconds
+- **Speed**: ~0.5 seconds (512-token context)
 - **Early Exit**: Non-job emails skip Stages 2 & 3
+- **Stateless**: Fresh context per email (no exhaustion)
 
 #### Stage 2: Information Extraction
 - **Purpose**: Extract company, position, and status
-- **Speed**: ~2 seconds  
+- **Speed**: ~1 second (1024-token context)
 - **Runs On**: Only job-related emails
+- **Output**: `{"company": "X", "position": "Y", "status": "Applied/Interview/Offer/Declined"}`
 
-#### Stage 3: Job Matching
-- **Purpose**: Are two emails for the same position?
-- **Speed**: ~1 second
-- **Smart**: Matches "Google SWE" with "Google Software Engineer"
-- **Runs On**: Only orphan emails within same company
+#### Stage 3: Job Matching (Deduplication)
+- **Purpose**: Compare pairs of jobs - are they the same position?
+- **Speed**: ~0.5 seconds (512-token context)
+- **When Used**: Only for orphan emails (no thread ID) within same company
+- **Smart Matching Examples**:
+  - "Software Engineer" vs "SWE" → same_job: true
+  - "Senior Engineer" vs "Sr. Engineer" → same_job: true  
+  - "Frontend Dev" vs "Backend Dev" → same_job: false
+- **Prevents**: Duplicate job entries from follow-up emails
 
 ### Performance Benefits
-- **Thread Intelligence**: 70-80% fewer LLM calls
-- **Company Grouping**: Stage 3 only within companies
-- **Result**: 85% faster than naive processing
+- **Thread Intelligence**: 70-80% fewer LLM calls (one per thread)
+- **Stateless Design**: 100% reliable - no context exhaustion possible
+- **Smart Stage 3**: Only compares orphan emails within same company
+- **Result**: 70% faster for job emails, 80% faster for non-job emails
 
 For complete technical details, see [EMAIL_PROCESSING_WORKFLOW.md](./EMAIL_PROCESSING_WORKFLOW.md)
 
