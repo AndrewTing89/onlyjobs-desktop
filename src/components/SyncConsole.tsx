@@ -22,7 +22,10 @@ export default function SyncConsole() {
 
     // Listen to all sync-related events
     const handleSyncProgress = (data: any) => {
+      // Set syncing to true when we receive any progress event
       setIsSyncing(true);
+      
+      // Log different types of progress messages
       if (data.status) {
         addLog(`📊 ${data.status}`);
       }
@@ -31,6 +34,11 @@ export default function SyncConsole() {
       }
       if (data.progress !== undefined) {
         addLog(`⏳ Progress: ${data.progress}%`);
+      }
+      
+      // Special handling for initialization phase
+      if (data.phase === 'initializing') {
+        addLog('🚀 Sync initializing...');
       }
     };
 
@@ -57,12 +65,18 @@ export default function SyncConsole() {
       addLog(`❌ Error: ${error.message || 'Sync failed'}`);
     };
 
+    const handleSyncCancelled = () => {
+      setIsSyncing(false);
+      addLog('🛑 Sync was cancelled');
+    };
+
     // Subscribe to events
     window.electronAPI.on('sync-progress', handleSyncProgress);
     window.electronAPI.on('classify-progress', handleClassifyProgress);
     window.electronAPI.on('job-found', handleJobFound);
     window.electronAPI.on('sync-complete', handleSyncComplete);
     window.electronAPI.on('sync-error', handleSyncError);
+    window.electronAPI.on('sync-cancelled', handleSyncCancelled);
 
     return () => {
       // Cleanup
@@ -72,6 +86,7 @@ export default function SyncConsole() {
         window.electronAPI.removeListener('job-found', handleJobFound);
         window.electronAPI.removeListener('sync-complete', handleSyncComplete);
         window.electronAPI.removeListener('sync-error', handleSyncError);
+        window.electronAPI.removeListener('sync-cancelled', handleSyncCancelled);
       }
     };
   }, []);
@@ -81,14 +96,25 @@ export default function SyncConsole() {
   };
 
   const handleStopSync = async () => {
+    console.log('Stop button clicked, isSyncing:', isSyncing);
+    console.log('window.electronAPI:', window.electronAPI);
+    console.log('window.electronAPI?.gmail:', window.electronAPI?.gmail);
+    console.log('window.electronAPI?.gmail?.cancelSync:', window.electronAPI?.gmail?.cancelSync);
+    
     if (window.electronAPI?.gmail?.cancelSync) {
       try {
-        await window.electronAPI.gmail.cancelSync();
+        setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ⏳ Requesting sync cancellation...`]);
+        const result = await window.electronAPI.gmail.cancelSync();
+        console.log('Cancel sync result:', result);
         setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] 🛑 Sync cancelled by user`]);
         setIsSyncing(false);
       } catch (error) {
         console.error('Failed to cancel sync:', error);
+        setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Failed to cancel sync: ${error}`]);
       }
+    } else {
+      console.error('cancelSync API not available');
+      setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Cancel sync API not available`]);
     }
   };
 

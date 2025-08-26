@@ -1771,7 +1771,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       if (syncCancelled) {
         console.log('🛑 SYNC: Cancelled by user');
         if (mainWindow) {
-          mainWindow.webContents.send('sync-error', {
+          mainWindow.webContents.send('sync-cancelled', {
             message: 'Sync cancelled by user'
           });
         }
