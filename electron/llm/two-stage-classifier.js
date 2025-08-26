@@ -103,10 +103,11 @@ async function loadLlamaModule() {
 
 async function ensureModelLoaded(modelId, modelPath) {
   if (loadedModels.has(modelId)) {
+    console.log(`✅ Model ${modelId} already loaded, reusing existing model`);
     return loadedModels.get(modelId);
   }
   
-  console.log(`TwoStage: Loading model ${modelId} from ${modelPath}`);
+  console.log(`⚠️ Model ${modelId} NOT in cache (cache size: ${loadedModels.size}), loading from ${modelPath}`);
   
   const fs = require('fs');
   if (!fs.existsSync(modelPath)) {
@@ -146,6 +147,7 @@ async function getOrCreateContext(modelId, modelPath, forceRefresh = false) {
   if (!forceRefresh && loadedContexts.has(contextKey)) {
     // Increment usage count
     contextUsageCount.set(contextKey, usageCount + 1);
+    console.log(`✅ Reusing existing context for ${modelId} (usage ${usageCount + 1}/${MAX_CONTEXT_USES})`);
     return loadedContexts.get(contextKey);
   }
   
@@ -565,9 +567,10 @@ function resetPrompts(modelId) {
 
 // Cleanup function
 async function cleanup() {
-  console.log('TwoStage: Cleaning up loaded models and sessions');
+  console.log('TwoStage: Cleaning up loaded models and contexts');
   
-  for (const [key, { context }] of loadedSessions) {
+  // Clean up contexts
+  for (const [key, context] of loadedContexts) {
     try {
       if (context && context.dispose) {
         context.dispose();
@@ -577,8 +580,9 @@ async function cleanup() {
     }
   }
   
-  loadedSessions.clear();
+  loadedContexts.clear();
   loadedModels.clear();
+  contextUsageCount.clear();
 }
 
 module.exports = {
