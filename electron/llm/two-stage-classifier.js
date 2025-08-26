@@ -26,6 +26,13 @@ const promptStore = new Store({ name: 'model-prompts' });
 // Single global model cache - models are expensive to load (60+ seconds)
 const loadedModels = new Map();
 
+// Context pools for each stage - reuse contexts safely
+const contextPools = {
+  stage1: new Map(), // modelId -> context
+  stage2: new Map(), // modelId -> context  
+  stage3: new Map()  // modelId -> context
+};
+
 // Optimized Stage 1 prompts - ultra concise
 const OPTIMIZED_STAGE1_PROMPTS = {
   'llama-3-8b-instruct-q5_k_m': 'Job-related email? Output only: {"is_job":true} or {"is_job":false}',
@@ -117,13 +124,39 @@ async function ensureModelLoaded(modelId, modelPath) {
 }
 
 /**
- * Create a lightweight, single-use context
+ * Get or create a reusable context for a specific stage
+ * Contexts are reused but sequences are disposed after each use
  */
-async function createLightweightContext(model, contextSize) {
-  return await model.createContext({ 
-    contextSize,
-    batchSize: 128  // Small batch size for efficiency
-  });
+async function getOrCreateContext(model, modelId, stage, contextSize, forceNew = false) {
+  const pool = contextPools[stage];
+  
+  // Force new context if requested or if context doesn't exist
+  if (forceNew || !pool.has(modelId)) {
+    // Dispose old context if forcing new
+    if (forceNew && pool.has(modelId)) {
+      console.log(`🔄 Disposing exhausted ${stage} context for ${modelId}`);
+      try {
+        const oldContext = pool.get(modelId);
+        oldContext.dispose();
+      } catch (e) {
+        console.error(`Error disposing old context:`, e);
+      }
+    }
+    
+    console.log(`📦 Creating NEW ${stage} context for ${modelId} (size: ${contextSize})`);
+    const contextStart = Date.now();
+    const context = await model.createContext({ 
+      contextSize,
+      batchSize: 128  // Small batch size for efficiency
+    });
+    console.log(`⏱️ Context creation took ${Date.now() - contextStart}ms for ${stage}`);
+    pool.set(modelId, context);
+    console.log(`✅ Context created and pooled for ${stage}/${modelId}`);
+  } else {
+    console.log(`♻️ REUSING existing ${stage} context for ${modelId}`);
+  }
+  
+  return pool.get(modelId);
 }
 
 /**
@@ -136,8 +169,34 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody) {
     // Get model (cached after first load)
     const model = await ensureModelLoaded(modelId, modelPath);
     
-    // Create lightweight context just for this classification
-    const context = await createLightweightContext(model, STAGE1_CONTEXT_SIZE);
+    // Try to get context and sequence, recreate if exhausted
+    let context;
+    let sequence;
+    let retryCount = 0;
+    const maxRetries = 2;
+    
+    while (retryCount < maxRetries) {
+      try {
+        // Get or create reusable context for Stage 1
+        const contextStart = Date.now();
+        context = await getOrCreateContext(model, modelId, 'stage1', STAGE1_CONTEXT_SIZE, retryCount > 0);
+        console.log(`⏱️ Context ready in ${Date.now() - contextStart}ms`);
+        
+        // Try to get a fresh sequence from the reusable context
+        const seqStart = Date.now();
+        sequence = context.getSequence();
+        console.log(`⏱️ Sequence created in ${Date.now() - seqStart}ms`);
+        break; // Success, exit retry loop
+        
+      } catch (error) {
+        if (error.message.includes('No sequences left') && retryCount < maxRetries - 1) {
+          console.log(`⚠️ Context exhausted, creating fresh context (retry ${retryCount + 1}/${maxRetries})`);
+          retryCount++;
+        } else {
+          throw error; // Re-throw if not sequence error or max retries reached
+        }
+      }
+    }
     
     try {
       // Get prompt (custom or optimized default)
@@ -151,8 +210,6 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody) {
       // Create session
       const module = await loadLlamaModule();
       const { LlamaChatSession } = module;
-      
-      const sequence = context.getSequence();
       const session = new LlamaChatSession({ 
         contextSequence: sequence, 
         systemPrompt
@@ -167,10 +224,12 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody) {
       const userPrompt = `Subject: ${emailSubject}\nBody: ${truncatedBody}`;
       
       // Get response with minimal tokens
+      const promptStart = Date.now();
       const response = await session.prompt(userPrompt, {
         temperature: 0,
         maxTokens: STAGE1_MAX_TOKENS
       });
+      console.log(`⏱️ LLM inference took ${Date.now() - promptStart}ms`);
       
       // Parse response
       let isJob = false;
@@ -194,8 +253,8 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody) {
       };
       
     } finally {
-      // ALWAYS dispose context
-      context.dispose();
+      // Dispose the sequence, not the context (context is reused)
+      sequence.dispose();
     }
     
   } catch (error) {
@@ -218,8 +277,30 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody) {
     // Get model (cached)
     const model = await ensureModelLoaded(modelId, modelPath);
     
-    // Create lightweight context for extraction
-    const context = await createLightweightContext(model, STAGE2_CONTEXT_SIZE);
+    // Try to get context and sequence, recreate if exhausted
+    let context;
+    let sequence;
+    let retryCount = 0;
+    const maxRetries = 2;
+    
+    while (retryCount < maxRetries) {
+      try {
+        // Get or create reusable context for Stage 2
+        context = await getOrCreateContext(model, modelId, 'stage2', STAGE2_CONTEXT_SIZE, retryCount > 0);
+        
+        // Try to get a fresh sequence from the reusable context
+        sequence = context.getSequence();
+        break; // Success, exit retry loop
+        
+      } catch (error) {
+        if (error.message.includes('No sequences left') && retryCount < maxRetries - 1) {
+          console.log(`⚠️ Stage 2 context exhausted, creating fresh context (retry ${retryCount + 1}/${maxRetries})`);
+          retryCount++;
+        } else {
+          throw error; // Re-throw if not sequence error or max retries reached
+        }
+      }
+    }
     
     try {
       // Get prompt
@@ -233,8 +314,6 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody) {
       // Create session
       const module = await loadLlamaModule();
       const { LlamaChatSession } = module;
-      
-      const sequence = context.getSequence();
       const session = new LlamaChatSession({ 
         contextSequence: sequence, 
         systemPrompt
@@ -293,8 +372,8 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody) {
       };
       
     } finally {
-      // ALWAYS dispose context
-      context.dispose();
+      // Dispose the sequence, not the context (context is reused)
+      sequence.dispose();
     }
     
   } catch (error) {
@@ -319,8 +398,30 @@ async function matchJobs(modelId, modelPath, job1, job2) {
     // Get model (cached)
     const model = await ensureModelLoaded(modelId, modelPath);
     
-    // Create lightweight context for matching
-    const context = await createLightweightContext(model, STAGE3_CONTEXT_SIZE);
+    // Try to get context and sequence, recreate if exhausted
+    let context;
+    let sequence;
+    let retryCount = 0;
+    const maxRetries = 2;
+    
+    while (retryCount < maxRetries) {
+      try {
+        // Get or create reusable context for Stage 3
+        context = await getOrCreateContext(model, modelId, 'stage3', STAGE3_CONTEXT_SIZE, retryCount > 0);
+        
+        // Try to get a fresh sequence from the reusable context
+        sequence = context.getSequence();
+        break; // Success, exit retry loop
+        
+      } catch (error) {
+        if (error.message.includes('No sequences left') && retryCount < maxRetries - 1) {
+          console.log(`⚠️ Stage 3 context exhausted, creating fresh context (retry ${retryCount + 1}/${maxRetries})`);
+          retryCount++;
+        } else {
+          throw error; // Re-throw if not sequence error or max retries reached
+        }
+      }
+    }
     
     try {
       // Get prompt
@@ -334,8 +435,6 @@ async function matchJobs(modelId, modelPath, job1, job2) {
       // Create session
       const module = await loadLlamaModule();
       const { LlamaChatSession } = module;
-      
-      const sequence = context.getSequence();
       const session = new LlamaChatSession({ 
         contextSequence: sequence, 
         systemPrompt
@@ -374,8 +473,8 @@ Job 2: ${job2.company} - ${job2.position}`;
       };
       
     } finally {
-      // ALWAYS dispose context
-      context.dispose();
+      // Dispose the sequence, not the context (context is reused)
+      sequence.dispose();
     }
     
   } catch (error) {
@@ -480,9 +579,24 @@ function resetToDefaults(modelId) {
   return { success: true };
 }
 
-// Simple cleanup - just clear model cache if needed
+// Cleanup function - clears models and contexts
 async function cleanup() {
-  console.log('Cleaning up loaded models');
+  console.log('Cleaning up loaded models and contexts');
+  
+  // Dispose all pooled contexts
+  for (const pool of Object.values(contextPools)) {
+    for (const [modelId, context] of pool) {
+      try {
+        await context.dispose();
+        console.log(`Disposed context for ${modelId}`);
+      } catch (e) {
+        console.error(`Error disposing context for ${modelId}:`, e);
+      }
+    }
+    pool.clear();
+  }
+  
+  // Clear model cache
   loadedModels.clear();
 }
 

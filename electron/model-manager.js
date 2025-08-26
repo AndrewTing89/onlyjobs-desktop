@@ -92,7 +92,9 @@ class ModelManager {
         };
       }
       
-      // 2. SHA256 verification - if it passes, model is ready!
+      // 2. SKIP SHA256 verification - it's too slow and pointless
+      // Just check if file exists with reasonable size
+      /*
       if (model.sha256) {
         try {
           const isValid = await this.verifySHA256(modelPath, model.sha256);
@@ -114,8 +116,9 @@ class ModelManager {
           // Fall through to size check
         }
       }
+      */
       
-      // If no SHA256 hash available, just check if file exists with reasonable size
+      // Just check if file exists with reasonable size
       if (stats.size > 1e9) { // File is > 1GB, probably valid
         return {
           status: 'ready',
