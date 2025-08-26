@@ -6,8 +6,8 @@
 const path = require('path');
 const os = require('os');
 
-// Import the two-stage classifier which handles model loading
-const twoStage = require('./two-stage-classifier');
+// Import the optimized two-stage classifier which handles model loading
+const twoStage = require('./two-stage-classifier-optimized');
 
 /**
  * Preload the default model in the background
@@ -69,7 +69,13 @@ async function preloadModels(modelIds = []) {
     
     try {
       console.log(`Preloading ${modelId}...`);
-      await twoStage.ensureModelLoaded(modelId, modelPath);
+      // Use classifyTwoStage with dummy email to preload the model
+      await twoStage.classifyTwoStage(
+        modelId,
+        modelPath,
+        'Preload test',
+        'Preloading model cache'
+      );
       results.push({ modelId, success: true });
     } catch (error) {
       console.error(`Failed to preload ${modelId}:`, error);

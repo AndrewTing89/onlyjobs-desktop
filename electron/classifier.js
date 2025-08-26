@@ -1,5 +1,6 @@
 // Wrapper for two-stage classifier to maintain compatibility with existing code
-const twoStage = require('./llm/two-stage-classifier');
+// Using optimized version for better performance
+const twoStage = require('./llm/two-stage-classifier-optimized');
 
 function getClassifierProvider() {
   return {
