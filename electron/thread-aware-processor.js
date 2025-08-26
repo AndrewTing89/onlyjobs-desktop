@@ -87,9 +87,7 @@ class ThreadAwareProcessor {
     console.log(`📦 Processing ${threadEntries.length} threads in batches of ${BATCH_SIZE}`);
     
     // Send initial thread processing event
-    console.log('[ThreadAwareProcessor] mainWindow exists?', !!this.mainWindow);
     if (this.mainWindow) {
-      console.log('[ThreadAwareProcessor] Sending initial sync-progress event');
       this.mainWindow.webContents.send('sync-progress', {
         stage: `Starting thread processing: ${threadEntries.length} threads`,
         phase: 'classifying',
