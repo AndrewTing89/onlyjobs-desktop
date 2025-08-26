@@ -18,18 +18,36 @@ class IntegratedEmailProcessor {
     // Initialize job summary database
     const appDir = path.join(require('os').homedir(), 'Library', 'Application Support', 'onlyjobs-desktop');
     this.db = new Database(path.join(appDir, 'jobs.db'));
+    
+    // Performance metrics
+    this.metrics = {
+      startTime: null,
+      threadsProcessed: 0,
+      emailsProcessed: 0,
+      llmCalls: 0,
+      cacheHits: 0,
+      stage1Time: 0,
+      stage2Time: 0,
+      stage3Time: 0,
+      jobsFound: 0,
+      jobsSkipped: 0
+    };
   }
 
   /**
    * Process a batch of emails with matching
    */
   async processEmails(messages, userId = 'default') {
+    // Reset metrics for this batch
+    this.metrics.startTime = Date.now();
+    
     const results = {
       processed: 0,
       newJobs: 0,
       updatedJobs: 0,
       filtered: 0,
-      errors: []
+      errors: [],
+      metrics: {} // Will be populated at the end
     };
 
     for (const message of messages) {
@@ -336,6 +354,51 @@ class IntegratedEmailProcessor {
     this.db.prepare('DELETE FROM job_applications WHERE job_id = ?').run(secondaryJobId);
 
     return primaryJobId;
+  }
+
+  /**
+   * Get performance metrics for the current/last sync
+   */
+  getMetrics() {
+    if (this.metrics.startTime) {
+      const duration = (Date.now() - this.metrics.startTime) / 1000;
+      const avgStage1 = this.metrics.llmCalls > 0 ? this.metrics.stage1Time / this.metrics.llmCalls : 0;
+      const avgStage2 = this.metrics.jobsFound > 0 ? this.metrics.stage2Time / this.metrics.jobsFound : 0;
+      const avgStage3 = this.metrics.jobsFound > 0 ? this.metrics.stage3Time / this.metrics.jobsFound : 0;
+      
+      return {
+        ...this.metrics,
+        duration,
+        avgStage1Time: avgStage1,
+        avgStage2Time: avgStage2,
+        avgStage3Time: avgStage3,
+        reductionRatio: this.metrics.emailsProcessed > 0 
+          ? ((1 - this.metrics.llmCalls / this.metrics.emailsProcessed) * 100).toFixed(1) + '%'
+          : '0%',
+        cacheHitRate: this.metrics.llmCalls > 0
+          ? ((this.metrics.cacheHits / this.metrics.llmCalls) * 100).toFixed(1) + '%'
+          : '0%'
+      };
+    }
+    return this.metrics;
+  }
+
+  /**
+   * Reset metrics for a new sync session
+   */
+  resetMetrics() {
+    this.metrics = {
+      startTime: Date.now(),
+      threadsProcessed: 0,
+      emailsProcessed: 0,
+      llmCalls: 0,
+      cacheHits: 0,
+      stage1Time: 0,
+      stage2Time: 0,
+      stage3Time: 0,
+      jobsFound: 0,
+      jobsSkipped: 0
+    };
   }
 }
 

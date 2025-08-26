@@ -445,8 +445,9 @@ class GmailMultiAuth extends EventEmitter {
             id: message.id,
             format: 'full'
           });
-          // Add account email to message
+          // Add account email and ensure thread ID is included
           fullMessage.data.accountEmail = email;
+          // Gmail API already includes threadId in the response
           fullMessages.push(fullMessage.data);
         } catch (error) {
           console.error(`GmailMultiAuth: Error fetching message ${message.id}:`, error);

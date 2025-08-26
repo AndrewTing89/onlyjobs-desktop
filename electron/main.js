@@ -318,6 +318,15 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   createMenu();
+  
+  // Preload LLM model in background after UI loads
+  setTimeout(() => {
+    console.log('🔧 Initializing LLM model preloader...');
+    const { preloadDefaultModel } = require('./llm/model-preloader');
+    preloadDefaultModel().catch(err => {
+      console.error('Model preload failed:', err);
+    });
+  }, 5000); // Wait 5 seconds for UI to be ready
 });
 
 app.on('window-all-closed', () => {

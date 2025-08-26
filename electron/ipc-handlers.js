@@ -14,126 +14,17 @@ const promptManager = new PromptManager();
 // Store for saving custom prompt
 const promptStore = new Store({ name: 'prompt-settings' });
 
-// LLM-only classification handler (no ML, no keyword fallback)
-const llmHandler = {
-  classifyEmail: async (content, modelId = null) => {
-    console.log('🧠 Using LLM classifier only' + (modelId ? ` with model: ${modelId}` : ''));
-    try {
-      // Parse content to extract subject and body
-      const lines = content.split('\n');
-      const subjectLine = lines.find(line => line.toLowerCase().startsWith('subject:'));
-      const subject = subjectLine ? subjectLine.substring(8).trim() : '';
-      
-      // If modelId is provided, use the specific model
-      let result;
-      if (modelId) {
-        // Get model path from ModelManager
-        const ModelManager = require('./model-manager');
-        const modelManager = new ModelManager();
-        const modelPath = modelManager.getModelPath(modelId);
-        
-        // Use parseEmailWithLLM directly with the specific model
-        const { parseEmailWithLLM } = require('./llm/llmEngine');
-        result = await parseEmailWithLLM({ 
-          subject, 
-          plaintext: content,
-          modelPath 
-        });
-      } else {
-        // Use default classifier
-        result = await classifier.parse({ subject, plaintext: content });
-      }
-      
-      console.log('LLM classification result:', result);
-      
-      // Calculate confidence score based on result completeness and certainty
-      let confidence = 0.5; // Base confidence
-      
-      if (result.is_job_related) {
-        // Start with higher base for job-related
-        confidence = 0.7;
-        
-        // Increase confidence if we have complete information
-        if (result.company && result.company !== 'Unknown') confidence += 0.1;
-        if (result.position && result.position !== 'Unknown Position') confidence += 0.1;
-        if (result.status) confidence += 0.05;
-        
-        // Cap at 0.95 for job-related
-        confidence = Math.min(confidence, 0.95);
-      } else {
-        // For non-job emails, confidence depends on how clearly it's not job-related
-        // If the model returned it quickly with no job markers, it's likely confident
-        confidence = 0.8; // Most non-job emails are clearly not job-related
-      }
-      
-      // Map status to job_type for backward compatibility
-      let jobType = null;
-      if (result.is_job_related && result.status) {
-        const status = result.status.toLowerCase();
-        if (status.includes('interview')) jobType = 'interview';
-        else if (status.includes('offer')) jobType = 'offer';
-        else if (status.includes('declined') || status.includes('reject')) jobType = 'rejection';
-        else if (status.includes('applied')) jobType = 'application_sent';
-        else jobType = 'application_sent';
-      }
-      
-      return {
-        ...result,
-        job_type: jobType,
-        confidence: confidence
-      };
-    } catch (error) {
-      console.error('LLM classification error:', error);
-      // Return non-job-related as safe fallback with low confidence
-      return {
-        is_job_related: false,
-        company: null,
-        position: null,
-        status: null,
-        job_type: null,
-        confidence: 0.3 // Low confidence on error
-      };
-    }
-  },
-  initialize: async () => {
-    console.log('🧠 LLM handler initialized');
-    return true;
-  },
-  isModelReady: async () => true,
-  getModelStatus: async () => ({ 
-    status: 'Using local LLM model',
-    model_ready: true 
-  }),
-  trainModel: async () => {
-    throw new Error('Training not available for LLM');
-  }
-};
-
 // Removed old auth-flow - using simplified auth for desktop app
 // const GmailAuth = require('./gmail-auth'); // Removed - using multi-account only
 const GmailMultiAuth = require('./gmail-multi-auth');
 const IntegratedEmailProcessor = require('./integrated-email-processor');
-const EmailMLClassifier = require('./ml-classifier');
+// ML classifier removed - using pure LLM approach
 
 console.log('Loading IPC handlers...');
 
-// Initialize ML classifier
-let mlClassifier = null;
-async function initializeMLClassifier() {
-  try {
-    const dbPath = path.join(app.getPath('userData'), 'jobs.db');
-    mlClassifier = new EmailMLClassifier();
-    await mlClassifier.initialize(dbPath);
-    console.log('🤖 ML Classifier initialized');
-  } catch (error) {
-    console.error('Failed to initialize ML classifier:', error);
-  }
-}
+// ML classifier removed - using pure LLM approach
 
-// Initialize on app ready
-app.whenReady().then(() => {
-  initializeMLClassifier();
-});
+// Pure LLM approach - no ML initialization needed
 
 // Initialize secure storage - defer until needed
 let store = null;
@@ -155,6 +46,27 @@ function getDb() {
     db = new Database(dbPath);
     if (!initialized) {
       initializeDatabase();
+      
+      // Run thread support migration
+      try {
+        const tableInfo = db.pragma('table_info(jobs)');
+        const columnNames = tableInfo.map(col => col.name);
+        
+        // Add thread support columns if they don't exist
+        if (!columnNames.includes('thread_id')) {
+          console.log('Adding thread_id column to jobs table...');
+          db.exec(`ALTER TABLE jobs ADD COLUMN thread_id TEXT`);
+          db.exec(`CREATE INDEX IF NOT EXISTS idx_thread_id ON jobs(thread_id)`);
+        }
+        
+        if (!columnNames.includes('email_thread_ids')) {
+          console.log('Adding email_thread_ids column to jobs table...');
+          db.exec(`ALTER TABLE jobs ADD COLUMN email_thread_ids TEXT`);
+        }
+      } catch (migrationError) {
+        console.error('Thread migration error:', migrationError);
+      }
+      
       initialized = true;
     }
   }
@@ -391,6 +303,83 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_gmail_id ON jobs(gmail_message_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_account ON jobs(account_email);
+    -- Model-specific test tables for A/B testing
+    -- These are separate from production jobs table to keep test data isolated
+    
+    -- Llama test table
+    CREATE TABLE IF NOT EXISTS jobs_llama_test (
+      id TEXT PRIMARY KEY,
+      gmail_message_id TEXT NOT NULL,
+      company TEXT,
+      position TEXT,
+      status TEXT CHECK(status IN ('Applied', 'Interview', 'Declined', 'Offer', NULL)),
+      applied_date DATE,
+      account_email TEXT,
+      from_address TEXT,
+      subject TEXT,
+      confidence_score REAL,
+      stage1_result BOOLEAN,
+      stage1_time_ms INTEGER,
+      stage2_time_ms INTEGER,
+      total_time_ms INTEGER,
+      raw_stage1_response TEXT,
+      raw_stage2_response TEXT,
+      tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(gmail_message_id, account_email)
+    );
+    
+    -- Qwen test table  
+    CREATE TABLE IF NOT EXISTS jobs_qwen_test (
+      id TEXT PRIMARY KEY,
+      gmail_message_id TEXT NOT NULL,
+      company TEXT,
+      position TEXT,
+      status TEXT CHECK(status IN ('Applied', 'Interview', 'Declined', 'Offer', NULL)),
+      applied_date DATE,
+      account_email TEXT,
+      from_address TEXT,
+      subject TEXT,
+      confidence_score REAL,
+      stage1_result BOOLEAN,
+      stage1_time_ms INTEGER,
+      stage2_time_ms INTEGER,
+      total_time_ms INTEGER,
+      raw_stage1_response TEXT,
+      raw_stage2_response TEXT,
+      tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(gmail_message_id, account_email)
+    );
+    
+    -- Hermes test table
+    CREATE TABLE IF NOT EXISTS jobs_hermes_test (
+      id TEXT PRIMARY KEY,
+      gmail_message_id TEXT NOT NULL,
+      company TEXT,
+      position TEXT,
+      status TEXT CHECK(status IN ('Applied', 'Interview', 'Declined', 'Offer', NULL)),
+      applied_date DATE,
+      account_email TEXT,
+      from_address TEXT,
+      subject TEXT,
+      confidence_score REAL,
+      stage1_result BOOLEAN,
+      stage1_time_ms INTEGER,
+      stage2_time_ms INTEGER,
+      total_time_ms INTEGER,
+      raw_stage1_response TEXT,
+      raw_stage2_response TEXT,
+      tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(gmail_message_id, account_email)
+    );
+
+    -- Indices for test tables
+    CREATE INDEX IF NOT EXISTS idx_llama_test_email ON jobs_llama_test(account_email);
+    CREATE INDEX IF NOT EXISTS idx_llama_test_msg ON jobs_llama_test(gmail_message_id);
+    CREATE INDEX IF NOT EXISTS idx_qwen_test_email ON jobs_qwen_test(account_email);
+    CREATE INDEX IF NOT EXISTS idx_qwen_test_msg ON jobs_qwen_test(gmail_message_id);
+    CREATE INDEX IF NOT EXISTS idx_hermes_test_email ON jobs_hermes_test(account_email);
+    CREATE INDEX IF NOT EXISTS idx_hermes_test_msg ON jobs_hermes_test(gmail_message_id);
+
     CREATE INDEX IF NOT EXISTS idx_email_sync_account ON email_sync(account_email);
     CREATE INDEX IF NOT EXISTS idx_review_expires ON email_review(expires_at);
     CREATE INDEX IF NOT EXISTS idx_review_confidence ON email_review(confidence_score);
@@ -471,7 +460,7 @@ async function storeEmailForReview(email, classification, confidence, retentionD
       expiresAt.toISOString()
     );
     
-    console.log(`📋 Stored email for review: ${subject.substring(0, 50)} (confidence: ${confidence.toFixed(2)}, retention: ${retentionDays} days)`);
+    // console.log(`📋 Stored email for review: ${subject.substring(0, 50)} (confidence: ${confidence.toFixed(2)}, retention: ${retentionDays} days)`);
   } catch (error) {
     console.error('Error storing email for review:', error);
   }
@@ -554,6 +543,79 @@ ipcMain.handle('db:get-jobs', async (event, filters = {}) => {
     return results;
   } catch (error) {
     console.error('Error fetching jobs:', error);
+    throw error;
+  }
+});
+
+// Get jobs for a specific model (from test tables)
+ipcMain.handle('db:get-jobs-for-model', async (event, modelId, filters = {}) => {
+  try {
+    // Determine table name based on modelId
+    let tableName;
+    if (modelId.includes('llama')) {
+      tableName = 'jobs_llama_test';
+    } else if (modelId.includes('qwen')) {
+      tableName = 'jobs_qwen_test';
+    } else if (modelId.includes('hermes')) {
+      tableName = 'jobs_hermes_test';
+    } else {
+      throw new Error(`Unknown model: ${modelId}`);
+    }
+    
+    let query = `
+      SELECT 
+        id,
+        gmail_message_id,
+        company,
+        position,
+        status,
+        applied_date,
+        account_email,
+        from_address,
+        subject,
+        confidence_score as ml_confidence,
+        tested_at as created_at,
+        tested_at as updated_at
+      FROM ${tableName}
+      WHERE stage1_result = 1
+    `;
+    const params = [];
+
+    if (filters.status) {
+      query += ' AND status = ?';
+      params.push(filters.status);
+    }
+
+    if (filters.company) {
+      query += ' AND company LIKE ?';
+      params.push(`%${filters.company}%`);
+    }
+
+    if (filters.startDate) {
+      query += ' AND applied_date >= ?';
+      params.push(filters.startDate);
+    }
+
+    if (filters.endDate) {
+      query += ' AND applied_date <= ?';
+      params.push(filters.endDate);
+    }
+
+    query += ' ORDER BY tested_at DESC';
+
+    if (filters.limit) {
+      query += ' LIMIT ?';
+      params.push(filters.limit);
+    }
+
+    const stmt = getDb().prepare(query);
+    const results = stmt.all(...params);
+    
+    console.log(`Found ${results.length} jobs for model ${modelId}`);
+    
+    return results;
+  } catch (error) {
+    console.error(`Error fetching jobs for model ${modelId}:`, error);
     throw error;
   }
 });
@@ -963,11 +1025,58 @@ function _extractPosition(content) {
 }
 
 // ML Model management
-// LLM Health Check
+// LLM Health Check - Updated for multi-model system
 ipcMain.handle('llm:health-check', async () => {
   try {
-    const llmEngine = require('./llm/llmEngine');
-    const health = await llmEngine.checkLLMHealth();
+    const fs = require('fs');
+    const path = require('path');
+    const modelManager = require('./model-manager');
+    
+    // Check the default model
+    const defaultModelId = 'llama-3-8b-instruct-q5_k_m';
+    const modelPath = path.join('/Users/ndting/Library/Application Support/models', `${defaultModelId}.gguf`);
+    
+    const health = {
+      status: 'unknown',
+      modelPath: modelPath,
+      modelExists: false,
+      modelSize: 0,
+      expectedSize: 0, // Will be set from model manager
+      canLoad: false,
+      error: null,
+      lastChecked: new Date().toISOString()
+    };
+    
+    // Get model info
+    const models = modelManager.getAllModels();
+    const defaultModel = models.find(m => m.id === defaultModelId);
+    
+    if (defaultModel) {
+      health.expectedSize = defaultModel.size;
+      
+      // Check if model file exists
+      if (fs.existsSync(modelPath)) {
+        health.modelExists = true;
+        const stats = fs.statSync(modelPath);
+        health.modelSize = stats.size;
+        
+        // Check file size
+        if (Math.abs(health.modelSize - health.expectedSize) < 1000) {
+          health.status = 'healthy';
+          health.canLoad = true;
+        } else {
+          health.status = 'unhealthy';
+          health.error = `Model file size mismatch. Expected ~${health.expectedSize} bytes, got ${health.modelSize} bytes`;
+        }
+      } else {
+        health.status = 'unhealthy';
+        health.error = 'Model file not found. Please download the model first.';
+      }
+    } else {
+      health.status = 'error';
+      health.error = 'Default model not found in model registry';
+    }
+    
     return health;
   } catch (error) {
     console.error('Health check error:', error);
@@ -975,15 +1084,19 @@ ipcMain.handle('llm:health-check', async () => {
       status: 'error',
       error: error.message,
       modelExists: false,
-      canLoad: false
+      canLoad: false,
+      lastChecked: new Date().toISOString()
     };
   }
 });
 
 ipcMain.handle('ml:get-status', async () => {
   try {
-    const status = await llmHandler.getModelStatus();
-    return status;
+    // ML model status is now handled by LLM models
+    return { 
+      status: 'Using local LLM model',
+      model_ready: true 
+    };
   } catch (error) {
     console.error('Error getting ML model status:', error);
     throw error;
@@ -992,8 +1105,8 @@ ipcMain.handle('ml:get-status', async () => {
 
 ipcMain.handle('ml:is-ready', async () => {
   try {
-    const isReady = await llmHandler.isModelReady();
-    return { ready: isReady };
+    // LLM models are checked separately
+    return { ready: true };
   } catch (error) {
     console.error('Error checking ML model readiness:', error);
     return { ready: false, error: error.message };
@@ -1001,136 +1114,24 @@ ipcMain.handle('ml:is-ready', async () => {
 });
 
 ipcMain.handle('ml:train-model', async (event, options = {}) => {
-  try {
-    console.log('🏋️  Starting ML model training...');
-    const result = await llmHandler.trainModel(options);
-    
-    // Notify frontend of training completion
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    if (mainWindow) {
-      mainWindow.webContents.send('ml-training-complete', result);
-    }
-    
-    return result;
-  } catch (error) {
-    console.error('❌ ML model training failed:', error);
-    
-    // Notify frontend of training error
-    const mainWindow = BrowserWindow.getAllWindows()[0];
-    if (mainWindow) {
-      mainWindow.webContents.send('ml-training-error', { error: error.message });
-    }
-    
-    throw error;
-  }
+  // Training not available for LLM models
+  console.log('🏋️  Training not available for LLM models');
+  throw new Error('Training not available for LLM models');
 });
 
 ipcMain.handle('ml:initialize', async () => {
   try {
-    const result = await llmHandler.initialize();
-    return { success: result };
-  } catch (error) {
-    console.error('Error initializing ML handler:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-// ML Classifier operations for Random Forest model
-ipcMain.handle('ml:get-stats', async () => {
-  try {
-    // For now, return mock stats until ML classifier is integrated
-    // TODO: Integrate with EmailMLClassifier from ml-classifier.js
-    return { 
-      success: true, 
-      stats: {
-        trained: false,
-        totalSamples: 0,
-        jobSamples: 0,
-        nonJobSamples: 0,
-        accuracy: 0,
-        lastTrained: null,
-        vocabularySize: 0,
-        modelSize: '0 KB'
-      }
-    };
-  } catch (error) {
-    console.error('Error getting ML stats:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('ml:retrain', async () => {
-  try {
-    // TODO: Integrate with EmailMLClassifier from ml-classifier.js
-    return { 
-      success: false, 
-      error: 'ML classifier not yet integrated',
-      stats: {
-        trained: false,
-        totalSamples: 0,
-        jobSamples: 0,
-        nonJobSamples: 0,
-        accuracy: 0,
-        lastTrained: null,
-        vocabularySize: 0,
-        modelSize: '0 KB'
-      }
-    };
-  } catch (error) {
-    console.error('Error retraining ML model:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('ml:submit-feedback', async (event, feedback) => {
-  try {
-    // Store feedback in database for future training
-    const db = getDatabase();
-    
-    // Create feedback table if it doesn't exist
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ml_feedback (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email_id TEXT,
-        is_job_related INTEGER,
-        company TEXT,
-        position TEXT,
-        confidence REAL,
-        corrected_type TEXT,
-        corrected_company TEXT,
-        corrected_position TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    
-    // Insert feedback
-    const stmt = db.prepare(`
-      INSERT INTO ml_feedback (
-        email_id, is_job_related, company, position, confidence,
-        corrected_type, corrected_company, corrected_position
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    stmt.run(
-      feedback.emailId,
-      feedback.isJobRelated ? 1 : 0,
-      feedback.company || null,
-      feedback.position || null,
-      feedback.confidence || 1.0,
-      feedback.correctedType || null,
-      feedback.correctedCompany || null,
-      feedback.correctedPosition || null
-    );
-    
-    // TODO: Trigger retraining when enough feedback accumulates
-    
+    console.log('🧠 LLM models initialized');
     return { success: true };
   } catch (error) {
-    console.error('Error submitting ML feedback:', error);
+    console.error('Error initializing LLM models:', error);
     return { success: false, error: error.message };
   }
 });
+
+// ML handlers removed - using pure LLM approach
+
+// ML feedback handler removed - using pure LLM approach
 
 // Simple mock auth for desktop app (no real authentication needed)
 const mockUser = {
@@ -1686,10 +1687,23 @@ ipcMain.handle('gmail:remove-account', async (event, email) => {
   }
 });
 
+// Global sync cancellation flag
+let syncCancelled = false;
+
+// Cancel sync handler
+ipcMain.handle('gmail:cancel-sync', async () => {
+  console.log('🛑 SYNC: Cancellation requested');
+  syncCancelled = true;
+  return { success: true };
+});
+
 // Multi-account sync
 ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
   const syncStartTime = Date.now();
   console.log('🔄 SYNC: Starting sync process...');
+  
+  // Reset cancellation flag at start
+  syncCancelled = false;
   
   try {
     const mainWindow = BrowserWindow.getAllWindows()[0];
@@ -1719,14 +1733,28 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       };
     }
     
+    // Initialize ThreadAwareProcessor for efficient processing
+    let ThreadAwareProcessor;
+    let processor;
+    try {
+      console.log('🔧 Attempting to load ThreadAwareProcessor...');
+      ThreadAwareProcessor = require('./thread-aware-processor');
+      processor = new ThreadAwareProcessor(mainWindow);
+      console.log('✅ ThreadAwareProcessor loaded successfully');
+    } catch (loadError) {
+      console.error('❌ Failed to load ThreadAwareProcessor:', loadError);
+      console.error('Stack:', loadError.stack);
+    }
+    
     console.log(`Starting sync for ${accounts.length} accounts...`);
-    const { daysToSync = 90, maxEmails = 500, modelId = null } = options;
+    const { daysToSync = 90, maxEmails = 50000, modelId = null } = options; // High default to get all emails in period
     console.log(`Sync options - daysToSync: ${daysToSync}, maxEmails: ${maxEmails}, modelId: ${modelId || 'default'}`);
     
     let totalEmailsFetched = 0;
     let totalEmailsClassified = 0;
     let totalJobsFound = 0;
     let totalEmailsSkipped = 0;
+    const foundJobs = []; // Track found jobs for notification
     
     // Update sync status
     const updateStatus = getDb().prepare(`
@@ -1739,6 +1767,26 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     
     // Sync each account
     for (let i = 0; i < accounts.length; i++) {
+      // Check for cancellation
+      if (syncCancelled) {
+        console.log('🛑 SYNC: Cancelled by user');
+        if (mainWindow) {
+          mainWindow.webContents.send('sync-error', {
+            message: 'Sync cancelled by user'
+          });
+        }
+        return {
+          success: false,
+          message: 'Sync cancelled by user',
+          stats: {
+            totalEmailsFetched,
+            totalEmailsClassified,
+            totalJobsFound,
+            cancelled: true
+          }
+        };
+      }
+      
       const account = accounts[i];
       
       mainWindow.webContents.send('sync-progress', {
@@ -1789,36 +1837,200 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
           fetchTimeMs: fetchDuration
         });
         
+        console.log('🔍 DEBUG: About to check fetchResult.messages...');
+        console.log('🔍 DEBUG: fetchResult structure:', Object.keys(fetchResult));
+        console.log('🔍 DEBUG: fetchResult.messages exists?', !!fetchResult.messages);
+        console.log('🔍 DEBUG: fetchResult.messages is array?', Array.isArray(fetchResult.messages));
+        
         if (!fetchResult.messages || fetchResult.messages.length === 0) {
           console.log(`No messages found for ${account.email}`);
           continue;
         }
         
-        // Process each email directly
-        let emailIndex = 0;
-        for (const email of fetchResult.messages) {
-          emailIndex++;
-          
-          // Extract subject early for progress display
-          const headers = email.payload?.headers || [];
-          const subject = headers.find(h => h.name === 'Subject')?.value || 'No subject';
-          
-          // Send detailed progress update for each email
-          const percentComplete = Math.round((emailIndex / fetchResult.messages.length) * 100);
+        console.log('🔍 DEBUG: Passed the messages check, about to reverse...');
+        
+        // CRITICAL: Reverse emails to process oldest → newest for proper timeline
+        console.log(`📅 Sorting ${fetchResult.messages.length} emails chronologically (oldest first)...`);
+        fetchResult.messages.reverse();
+        
+        // Send progress update about thread-aware processing
+        mainWindow.webContents.send('sync-progress', {
+          current: i,
+          total: accounts.length,
+          status: `Processing ${fetchResult.messages.length} emails with thread-aware system...`,
+          account: account.email,
+          phase: 'processing',
+          details: `Using intelligent thread grouping and 3-stage classification`
+        });
+        
+        // Use ThreadAwareProcessor for efficient processing
+        console.log('🧵 Using Thread-Aware Processor for efficient processing...');
+        const processorStartTime = Date.now();
+        
+        // Send initial processing status with thread count
+        if (mainWindow) {
           mainWindow.webContents.send('sync-progress', {
-            current: i,
-            total: accounts.length,
-            status: `Processing emails from ${account.email}`,
-            account: account.email,
-            emailProgress: {
-              current: emailIndex,
-              total: fetchResult.messages.length
-            },
-            phase: 'classifying',
-            details: `Analyzing: "${subject.substring(0, 50)}${subject.length > 50 ? '...' : ''}"`
+            stage: 'Starting email classification...',
+            details: {
+              totalThreads: fetchResult.messages.length, // Will be refined after grouping
+              threadsProcessed: 0
+            }
           });
+        }
+        
+        try {
+          if (!processor) {
+            throw new Error('ThreadAwareProcessor not initialized');
+          }
+          console.log('🧵 Calling processor.processEmails...');
+          const result = await processor.processEmails(
+            fetchResult.messages,
+            account,
+            modelId || 'llama-3-8b-instruct-q5_k_m',
+            () => syncCancelled // Pass cancellation check function
+          );
           
-          try {
+          // Extract jobs array from result
+          const jobs = result.jobs || [];
+          
+          const processingTime = Date.now() - processorStartTime;
+          console.log(`✅ Thread-aware processing completed in ${processingTime}ms`);
+          console.log(`   Found ${jobs.length} jobs from ${fetchResult.messages.length} emails`);
+          console.log(`   Stats:`, result.stats);
+          
+          // Send completion update
+          if (mainWindow) {
+            mainWindow.webContents.send('sync-progress', {
+              stage: 'Classification complete',
+              details: {
+                totalThreads: result.stats?.threads || 0,
+                threadsProcessed: result.stats?.threads || 0,
+                jobsFound: jobs.length
+              }
+            });
+          }
+          
+          // Store jobs in database
+          for (const job of jobs) {
+            try {
+              // Check if job already exists (by thread_id or similarity)
+              const existingJobStmt = getDb().prepare(`
+                SELECT id FROM jobs 
+                WHERE thread_id = ? AND account_email = ?
+                LIMIT 1
+              `);
+              
+              const existingJob = job.threadId ? 
+                existingJobStmt.get(job.threadId, account.email) : 
+                null;
+              
+              if (existingJob) {
+                // Update existing job
+                const updateJobStmt = getDb().prepare(`
+                  UPDATE jobs SET
+                    status = ?,
+                    last_updated = CURRENT_TIMESTAMP,
+                    email_thread_ids = ?
+                  WHERE id = ?
+                `);
+                
+                updateJobStmt.run(
+                  job.status,
+                  JSON.stringify(job.emails.map(e => e.id)),
+                  existingJob.id
+                );
+                
+                console.log(`Updated existing job: ${job.company} - ${job.position}`);
+              } else {
+                // Insert new job
+                const insertJobStmt = getDb().prepare(`
+                  INSERT INTO jobs (
+                    id, thread_id, company, position, status,
+                    applied_date, account_email, confidence_score,
+                    classification_model, email_thread_ids
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `);
+                
+                const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                insertJobStmt.run(
+                  jobId,
+                  job.threadId,
+                  job.company,
+                  job.position,
+                  job.status,
+                  job.firstEmailDate.toISOString(),
+                  account.email,
+                  job.confidence || 0.85,
+                  'thread_aware_llm',
+                  JSON.stringify(job.emails.map(e => e.id))
+                );
+                
+                console.log(`✅ Saved new job: ${job.company} - ${job.position}`);
+                totalJobsFound++;
+                foundJobs.push({
+                  company: job.company,
+                  position: job.position,
+                  status: job.status
+                });
+                
+                // Send progress update for found job
+                mainWindow.webContents.send('sync-progress', {
+                  current: i,
+                  total: accounts.length,
+                  status: `Found job application!`,
+                  account: account.email,
+                  phase: 'saving',
+                  details: `✅ ${job.company} - ${job.position} (${job.emails.length} emails in thread)`
+                });
+              }
+              
+              // Update email_sync records
+              for (const email of job.emails) {
+                const updateSyncStmt = getDb().prepare(`
+                  INSERT OR REPLACE INTO email_sync (gmail_message_id, account_email, is_job_related)
+                  VALUES (?, ?, 1)
+                `);
+                updateSyncStmt.run(email.id, account.email);
+              }
+            } catch (dbError) {
+              console.error(`Error saving job ${job.company} - ${job.position}:`, dbError);
+            }
+          }
+          
+          totalEmailsFetched += fetchResult.messages.length;
+          totalEmailsClassified += fetchResult.messages.length;
+          
+        } catch (processingError) {
+          console.error('Error in thread-aware processing:', processingError);
+          
+          // Fall back to simple processing if thread processor fails
+          console.log('⚠️ Falling back to simple email processing...');
+          
+          // Process each email directly (OLD FLOW - kept as fallback)
+          let emailIndex = 0;
+          for (const email of fetchResult.messages) {
+            emailIndex++;
+            
+            // Extract subject early for progress display
+            const headers = email.payload?.headers || [];
+            const subject = headers.find(h => h.name === 'Subject')?.value || 'No subject';
+          
+            // Send detailed progress update for each email
+            const percentComplete = Math.round((emailIndex / fetchResult.messages.length) * 100);
+            mainWindow.webContents.send('sync-progress', {
+              current: i,
+              total: accounts.length,
+              status: `Fallback: Processing emails from ${account.email}`,
+              account: account.email,
+              emailProgress: {
+                current: emailIndex,
+                total: fetchResult.messages.length
+              },
+              phase: 'classifying',
+              details: `Analyzing: "${subject.substring(0, 50)}${subject.length > 50 ? '...' : ''}"`
+            });
+            
+            try {
             // Use atomic INSERT OR IGNORE to check and mark as processing in one operation
             // This eliminates the race condition between check and insert
             const insertSyncStmt = getDb().prepare(`
@@ -1838,63 +2050,55 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
             const from = headers.find(h => h.name === 'From')?.value || '';
             const emailContent = _extractEmailContent(email);
             
-            // Two-tier classification: ML first, then LLM if uncertain
+            // Pure LLM classification using two-stage approach
             let classification;
             let confidence;
-            let classificationMethod = 'unknown';
+            let classificationMethod = 'two_stage_llm';
             
-            // Try ML classification first (instant, <10ms)
-            if (mlClassifier && mlClassifier.trained) {
-              const mlResult = mlClassifier.classify({
-                subject: subject,
-                from: from,
-                plaintext: emailContent
-              });
-              
-              // Use ML result if high confidence
-              if (mlResult.confidence > 0.85) {
-                classification = mlResult;
-                confidence = mlResult.confidence;
-                classificationMethod = 'ml_random_forest';
-                console.log(`⚡ ML classification (${(confidence * 100).toFixed(0)}% confidence): ${mlResult.is_job_related ? 'JOB' : 'NOT_JOB'}`);
-              } else {
-                console.log(`🤔 ML uncertain (${(mlResult.confidence * 100).toFixed(0)}% confidence), using LLM...`);
-              }
+            // Send classification start update
+            mainWindow.webContents.send('sync-progress', {
+              current: i,
+              total: accounts.length,
+              status: `Analyzing email from ${account.email}`,
+              account: account.email,
+              emailProgress: {
+                current: emailIndex,
+                total: fetchResult.messages.length
+              },
+              phase: 'classifying',
+              details: `Using AI to check if this is job-related: "${subject.substring(0, 40)}..."`
+            });
+            
+            // Classify with two-stage approach via classifier
+            // Build proper email format with subject
+            const emailWithSubject = `Subject: ${subject}\n${emailContent}`;
+            classification = await classifier.parse({ 
+              subject, 
+              plaintext: emailContent,
+              modelId 
+            });
+            
+            // Calculate confidence based on result completeness
+            confidence = 0.7; // Base confidence
+            if (classification.is_job_related) {
+              if (classification.company && classification.company !== 'Unknown') confidence += 0.1;
+              if (classification.position && classification.position !== 'Unknown Position') confidence += 0.1;
+              if (classification.status) confidence += 0.05;
+              confidence = Math.min(confidence, 0.95);
+            } else {
+              confidence = 0.8; // Non-job emails are usually clear
             }
             
-            // Fall back to LLM if ML is uncertain or unavailable
-            if (!classification || confidence < 0.85) {
-              // Send classification start update
-              mainWindow.webContents.send('sync-progress', {
-                current: i,
-                total: accounts.length,
-                status: `Analyzing email from ${account.email}`,
-                account: account.email,
-                emailProgress: {
-                  current: emailIndex,
-                  total: fetchResult.messages.length
-                },
-                phase: 'classifying',
-                details: `Using AI to check if this is job-related: "${subject.substring(0, 40)}..."`
-              });
-              
-              // Classify with LLM
-              classification = await llmHandler.classifyEmail(emailContent, modelId);
-              confidence = classification.confidence || 0.5;
-              classificationMethod = 'llm';
-              
-              // Train ML with high-confidence LLM results
-              if (mlClassifier && confidence > 0.8) {
-                mlClassifier.addTrainingSample(
-                  { subject, from, plaintext: emailContent },
-                  classification.is_job_related,
-                  false // Don't retrain immediately
-                );
-              }
+            // Log classification result
+            console.log(`🤖 LLM classification: ${classification.is_job_related ? 'JOB' : 'NOT_JOB'} (${(confidence * 100).toFixed(0)}% confidence)`);
+            if (classification.is_job_related) {
+              console.log(`   Company: ${classification.company || 'Unknown'}`);
+              console.log(`   Position: ${classification.position || 'Unknown'}`);
+              console.log(`   Status: ${classification.status || 'Unknown'}`);
             }
             
-            // Calculate retention days for review storage
-            const retentionDays = calculateRetentionDays(confidence, preClassification);
+            // Calculate retention days for uncertain classifications (confidence < 70%)
+            const retentionDays = confidence < 0.7 ? 7 : 0;
             
             // Decide where to store based on confidence and classification
             const shouldStoreAsJob = classification.is_job_related && confidence >= 0.6;
@@ -1939,35 +2143,73 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
             
             totalEmailsFetched++;
             
-            // Store for review if uncertain
+            // Skip storing for review if uncertain (feature not implemented yet)
             if (shouldStoreForReview) {
-              await storeEmailForReview(email, classification, confidence, retentionDays, account.email);
+              console.log(`Email marked for review (low confidence), skipping job storage`);
               totalEmailsClassified++;
               continue; // Don't store in jobs table
             }
             
             // If high-confidence job-related, create or update job entry
             if (shouldStoreAsJob) {
-              // Create similarity key for deduplication
+              // Create similarity key for deduplication (still stored for backwards compatibility)
               const company = classification.company || 'Unknown';
               const position = classification.position || 'Unknown Position';
               const similarityKey = `${company.toLowerCase().replace(/[^a-z0-9]/g, '')}_${position.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
               
-              // Check for existing similar job within 30 days
+              // Check for existing similar job within 30 days using LLM matching
               const thirtyDaysAgo = new Date();
               thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
               
-              const existingJobStmt = getDb().prepare(`
-                SELECT id, status, email_history 
+              // First, get potential matches based on company name (to limit LLM calls)
+              const potentialMatchesStmt = getDb().prepare(`
+                SELECT id, company, position, status, email_history 
                 FROM jobs 
-                WHERE similarity_key = ? 
-                  AND account_email = ?
+                WHERE account_email = ?
                   AND applied_date > ?
+                  AND (company LIKE ? OR position LIKE ?)
                 ORDER BY applied_date DESC
-                LIMIT 1
+                LIMIT 10
               `);
               
-              const existingJob = existingJobStmt.get(similarityKey, account.email, thirtyDaysAgo.toISOString());
+              const potentialMatches = potentialMatchesStmt.all(
+                account.email, 
+                thirtyDaysAgo.toISOString(),
+                `%${company}%`,
+                `%${position}%`
+              );
+              
+              // Use LLM to find actual match
+              let existingJob = null;
+              const twoStage = require('./llm/two-stage-classifier');
+              
+              for (const potentialMatch of potentialMatches) {
+                try {
+                  // Use the same model for matching as was used for classification
+                  const modelPath = `/Users/ndting/Library/Application Support/models/${modelId || 'llama-3-8b-instruct-q5_k_m'}.gguf`;
+                  const matchResult = await twoStage.matchJobs(
+                    modelId || 'llama-3-8b-instruct-q5_k_m',
+                    modelPath,
+                    { company: classification.company, position: classification.position, status: classification.status },
+                    { company: potentialMatch.company, position: potentialMatch.position, status: potentialMatch.status }
+                  );
+                  
+                  if (matchResult.same_job) {
+                    existingJob = potentialMatch;
+                    console.log(`LLM matched existing job: ${potentialMatch.company} - ${potentialMatch.position}`);
+                    break;
+                  }
+                } catch (matchError) {
+                  console.error('Error in LLM job matching:', matchError);
+                  // Fall back to similarity key matching if LLM fails
+                  const jobSimilarityKey = `${potentialMatch.company.toLowerCase().replace(/[^a-z0-9]/g, '')}_${potentialMatch.position.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+                  if (jobSimilarityKey === similarityKey) {
+                    existingJob = potentialMatch;
+                    console.log(`Fallback: Matched by similarity key: ${potentialMatch.company} - ${potentialMatch.position}`);
+                    break;
+                  }
+                }
+              }
               
               if (existingJob) {
                 // Update existing job with new email
@@ -2102,8 +2344,9 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
               }
               }
             }
-          } catch (error) {
-            console.error(`Error processing email ${email.id}:`, error);
+            } catch (error) {
+              console.error(`Error processing email ${email.id}:`, error);
+            }
           }
         }
       } catch (error) {
@@ -2609,28 +2852,20 @@ ipcMain.handle('models:get-recent-emails', async () => {
 
 ipcMain.handle('ml:test-email', async (event, emailData) => {
   try {
-    if (!mlClassifier || !mlClassifier.trained) {
-      return { 
-        success: false, 
-        error: 'ML classifier not ready',
-        mlResult: null,
-        llmResult: null 
-      };
-    }
+    // Only use LLM classification now (ML removed)
+    const subject = emailData.subject || '';
+    const plaintext = emailData.plaintext || emailData.body || emailData.content || '';
     
-    // Test with ML
-    const mlResult = mlClassifier.classify(emailData);
-    
-    // Also test with LLM for comparison
-    const llmResult = await llmHandler.classifyEmail(
-      emailData.plaintext || emailData.body || emailData.content
-    );
+    const llmResult = await classifier.parse({ 
+      subject, 
+      plaintext 
+    });
     
     return {
       success: true,
-      mlResult,
+      mlResult: null, // ML no longer used
       llmResult,
-      recommendation: mlResult.confidence > 0.85 ? 'use_ml' : 'use_llm'
+      recommendation: 'use_llm' // Always use LLM
     };
   } catch (error) {
     console.error('Error testing email:', error);
@@ -2741,6 +2976,188 @@ ipcMain.handle('models:get-test-history', async () => {
   }
 });
 
+// Two-Stage LLM Classification Handlers
+const twoStage = require('./llm/two-stage-classifier');
+
+// Get prompts for a model
+ipcMain.handle('two-stage:get-prompts', async (event, modelId) => {
+  try {
+    const prompts = twoStage.getModelPrompts(modelId);
+    return { success: true, prompts };
+  } catch (error) {
+    console.error('Error getting prompts:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Save Stage 1 prompt
+ipcMain.handle('two-stage:save-stage1', async (event, modelId, prompt) => {
+  try {
+    twoStage.saveStage1Prompt(modelId, prompt);
+    return { success: true };
+  } catch (error) {
+    console.error('Error saving Stage 1 prompt:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Save Stage 2 prompt
+ipcMain.handle('two-stage:save-stage2', async (event, modelId, prompt) => {
+  try {
+    twoStage.saveStage2Prompt(modelId, prompt);
+    return { success: true };
+  } catch (error) {
+    console.error('Error saving Stage 2 prompt:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Save Stage 3 (job matching) prompt
+ipcMain.handle('two-stage:save-stage3', async (event, modelId, prompt) => {
+  try {
+    twoStage.saveStage3Prompt(modelId, prompt);
+    return { success: true };
+  } catch (error) {
+    console.error('Error saving Stage 3 prompt:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Reset prompts to defaults
+ipcMain.handle('two-stage:reset-prompts', async (event, modelId) => {
+  try {
+    twoStage.resetPrompts(modelId);
+    return { success: true };
+  } catch (error) {
+    console.error('Error resetting prompts:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Classify email with two-stage approach
+ipcMain.handle('two-stage:classify', async (event, modelId, modelPath, emailSubject, emailBody) => {
+  try {
+    const result = await twoStage.classifyTwoStage(modelId, modelPath, emailSubject, emailBody);
+    return { success: true, result };
+  } catch (error) {
+    console.error('Error in two-stage classification:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Classify and save to model-specific test table
+ipcMain.handle('two-stage:classify-and-save-test', async (event, modelId, modelPath, email) => {
+  try {
+    const result = await twoStage.classifyTwoStage(modelId, modelPath, email.subject, email.body);
+    
+    // Determine which table to use based on model ID
+    let tableName;
+    if (modelId.includes('llama')) {
+      tableName = 'jobs_llama_test';
+    } else if (modelId.includes('qwen')) {
+      tableName = 'jobs_qwen_test';
+    } else if (modelId.includes('hermes')) {
+      tableName = 'jobs_hermes_test';
+    } else {
+      throw new Error(`Unknown model ID: ${modelId}`);
+    }
+    
+    // Generate unique ID for the test entry
+    const testId = `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Extract applied date from email if possible
+    const appliedDate = email.date ? new Date(email.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    
+    // Save to model-specific test table
+    const stmt = getDb().prepare(`
+      INSERT OR REPLACE INTO ${tableName} (
+        id, gmail_message_id, company, position, status, 
+        applied_date, account_email, from_address, subject,
+        confidence_score, stage1_result, stage1_time_ms, stage2_time_ms,
+        total_time_ms, raw_stage1_response, raw_stage2_response
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    stmt.run(
+      testId,
+      email.id || testId,
+      result.company || null,
+      result.position || null,
+      result.status || null,
+      appliedDate,
+      email.accountEmail || 'test@example.com',
+      email.from || '',
+      email.subject || '',
+      result.confidence || 0.5,
+      result.is_job_related ? 1 : 0,
+      result.stage1Time || 0,
+      result.stage2Time || 0,
+      (result.stage1Time || 0) + (result.stage2Time || 0),
+      result.stage1Response || '',
+      result.stage2Response || ''
+    );
+    
+    return { success: true, result, testId, tableName };
+  } catch (error) {
+    console.error('Error in two-stage classification and save:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Get test results from model-specific table
+ipcMain.handle('two-stage:get-test-results', async (event, modelId) => {
+  try {
+    // Determine which table to use
+    let tableName;
+    if (modelId.includes('llama')) {
+      tableName = 'jobs_llama_test';
+    } else if (modelId.includes('qwen')) {
+      tableName = 'jobs_qwen_test';
+    } else if (modelId.includes('hermes')) {
+      tableName = 'jobs_hermes_test';
+    } else {
+      throw new Error(`Unknown model ID: ${modelId}`);
+    }
+    
+    // Get results from the model-specific table
+    const results = getDb().prepare(`
+      SELECT * FROM ${tableName}
+      ORDER BY tested_at DESC
+      LIMIT 100
+    `).all();
+    
+    return { success: true, results, tableName };
+  } catch (error) {
+    console.error('Error getting test results:', error);
+    return { success: false, error: error.message, results: [] };
+  }
+});
+
+// Clear test results for a specific model
+ipcMain.handle('two-stage:clear-test-results', async (event, modelId) => {
+  try {
+    // Determine which table to clear
+    let tableName;
+    if (modelId.includes('llama')) {
+      tableName = 'jobs_llama_test';
+    } else if (modelId.includes('qwen')) {
+      tableName = 'jobs_qwen_test';
+    } else if (modelId.includes('hermes')) {
+      tableName = 'jobs_hermes_test';
+    } else {
+      throw new Error(`Unknown model ID: ${modelId}`);
+    }
+    
+    // Clear the table
+    getDb().prepare(`DELETE FROM ${tableName}`).run();
+    
+    return { success: true, tableName };
+  } catch (error) {
+    console.error('Error clearing test results:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 // Cleanup on app quit
 app.on('before-quit', () => {
   if (db) {
@@ -2749,6 +3166,8 @@ app.on('before-quit', () => {
   if (gmailMultiAuth && gmailMultiAuth.db) {
     gmailMultiAuth.db.close();
   }
+  // Clean up two-stage classifier
+  twoStage.cleanup();
 });
 
 console.log('IPC handlers loaded successfully');

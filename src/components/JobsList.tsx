@@ -59,9 +59,18 @@ const statusColors: Record<string, string> = {
 
 // Job type labels are no longer needed since we use status directly
 
-export default function JobsList() {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [loading, setLoading] = useState(true);
+interface JobsListProps {
+  jobs?: Job[];
+  modelId?: string;
+}
+
+export default function JobsList({ jobs: propJobs, modelId }: JobsListProps = {}) {
+  console.log(`[JobsList] Initializing with propJobs:`, propJobs?.length ?? 'undefined', 'jobs', propJobs);
+  // CRITICAL: Ensure clean initialization, especially when modelId is present
+  const initialJobs = propJobs !== undefined ? [...propJobs] : [];
+  console.log(`[JobsList] Setting initial state to:`, initialJobs, 'modelId:', modelId);
+  const [jobs, setJobs] = useState<Job[]>(initialJobs);
+  const [loading, setLoading] = useState(!propJobs);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
@@ -73,7 +82,13 @@ export default function JobsList() {
   const [feedbackJob, setFeedbackJob] = useState<Job | null>(null);
 
   useEffect(() => {
-    loadJobs();
+    // Only load jobs if not provided as props
+    if (propJobs === undefined) {
+      console.log('[JobsList] No props provided, loading jobs from database');
+      loadJobs();
+    } else {
+      console.log('[JobsList] Using jobs from props:', propJobs.length);
+    }
     loadSyncStatus();
     
     // Listen for individual job additions during sync
@@ -102,13 +117,23 @@ export default function JobsList() {
     
     // Listen for sync completion and reload jobs (as backup)
     const handleSyncComplete = () => {
-      console.log('Sync completed, reloading jobs from database');
-      loadJobs();
+      console.log('[JobsList] Sync completed');
+      if (propJobs === undefined) {
+        console.log('[JobsList] Reloading jobs from database after sync');
+        loadJobs();
+      }
       loadSyncStatus();
     };
     
-    window.electronAPI.on('job-found', handleJobFound);
-    window.electronAPI.onSyncComplete(handleSyncComplete);
+    // Only listen for events if we're managing our own jobs (not using props)
+    // SAFEGUARD: Also skip if modelId is present to prevent cross-contamination
+    if (propJobs === undefined && !modelId) {
+      console.log('[JobsList] Setting up event listeners (self-managed mode)');
+      window.electronAPI.on('job-found', handleJobFound);
+      window.electronAPI.onSyncComplete(handleSyncComplete);
+    } else {
+      console.log('[JobsList] Skipping event listeners (managed by parent or in model context)');
+    }
     
     return () => {
       // Clean up listeners if they exist
@@ -117,13 +142,38 @@ export default function JobsList() {
         window.electronAPI.removeListener('sync-complete', handleSyncComplete);
       }
     };
-  }, []);
+  }, [propJobs]);
+  
+  // Update jobs when props change
+  useEffect(() => {
+    if (propJobs !== undefined) {
+      console.log(`[JobsList] Props changed - setting jobs to:`, propJobs.length, 'jobs');
+      // CRITICAL: Force complete state reset, especially for empty arrays
+      if (propJobs.length === 0) {
+        console.log('[JobsList] Forcing complete state reset for empty props');
+        setJobs([]); // Explicitly set to empty
+        setLoading(false);
+        setError('');
+        setSearchTerm('');
+        return;
+      }
+      // Force state update even if it's an empty array
+      setJobs([...propJobs]); // Create new array reference
+      setLoading(false);
+    }
+  }, [propJobs]);
 
   const loadJobs = async () => {
+    // SAFEGUARD: Never load from main table if we're in a model context
+    if (modelId) {
+      console.warn('[JobsList] Attempted to load jobs with modelId present - blocking to prevent cross-contamination');
+      return;
+    }
+    
     try {
       setLoading(true);
       const result = await window.electronAPI.getJobs();
-      console.log('Loaded jobs:', result); // Debug log
+      // console.log('Loaded jobs:', result); // Debug log
       setJobs(result);
     } catch (error: any) {
       console.error('Error loading jobs:', error);
@@ -228,6 +278,10 @@ export default function JobsList() {
     (job.company || 'Unknown Company').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (job.position || 'Unknown Position').toLowerCase().includes(searchTerm.toLowerCase())
   );
+  
+  // Debug logging
+  console.log('[JobsList] Current jobs state:', jobs);
+  console.log('[JobsList] Filtered jobs:', filteredJobs);
 
   if (loading) {
     return (

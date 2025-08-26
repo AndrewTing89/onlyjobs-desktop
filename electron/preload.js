@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // Database operations
   getJobs: (filters) => ipcRenderer.invoke('db:get-jobs', filters),
+  getJobsForModel: (modelId, filters) => ipcRenderer.invoke('db:get-jobs-for-model', modelId, filters),
   getJob: (id) => ipcRenderer.invoke('db:get-job', id),
   getJobEmail: (id) => ipcRenderer.invoke('db:get-job-email', id),
   createJob: (job) => ipcRenderer.invoke('db:create-job', job),
@@ -69,7 +70,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAuthStatus: () => ipcRenderer.invoke('gmail:get-auth-status'),
     fetchEmails: (options) => ipcRenderer.invoke('gmail:fetch-emails', options),
     disconnect: () => ipcRenderer.invoke('gmail:disconnect'),
-    sync: (options) => ipcRenderer.invoke('gmail:sync', options),
+    sync: (options) => ipcRenderer.invoke('gmail:sync-all', options), // Map sync to sync-all
+    cancelSync: () => ipcRenderer.invoke('gmail:cancel-sync'),
     fetch: (options) => ipcRenderer.invoke('gmail:fetch', options),
     getSyncStatus: () => ipcRenderer.invoke('gmail:get-sync-status'),
     // Multi-account operations
@@ -174,7 +176,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('oauth-callback', (event, data) => callback(data));
   },
   initiateOAuth: () => ipcRenderer.invoke('initiate-oauth'),
-  notifyOAuthCompleted: (data) => ipcRenderer.invoke('oauth-completed', data)
+  notifyOAuthCompleted: (data) => ipcRenderer.invoke('oauth-completed', data),
+  
+  // Two-Stage LLM Classification
+  twoStage: {
+    getPrompts: (modelId) => ipcRenderer.invoke('two-stage:get-prompts', modelId),
+    saveStage1: (modelId, prompt) => ipcRenderer.invoke('two-stage:save-stage1', modelId, prompt),
+    saveStage2: (modelId, prompt) => ipcRenderer.invoke('two-stage:save-stage2', modelId, prompt),
+    saveStage3: (modelId, prompt) => ipcRenderer.invoke('two-stage:save-stage3', modelId, prompt),
+    resetPrompts: (modelId) => ipcRenderer.invoke('two-stage:reset-prompts', modelId),
+    classify: (modelId, modelPath, emailSubject, emailBody) => 
+      ipcRenderer.invoke('two-stage:classify', modelId, modelPath, emailSubject, emailBody),
+    classifyAndSaveTest: (modelId, modelPath, email) =>
+      ipcRenderer.invoke('two-stage:classify-and-save-test', modelId, modelPath, email),
+    getTestResults: (modelId) =>
+      ipcRenderer.invoke('two-stage:get-test-results', modelId),
+    clearTestResults: (modelId) =>
+      ipcRenderer.invoke('two-stage:clear-test-results', modelId)
+  }
 });
 
 // Expose environment info

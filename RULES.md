@@ -126,3 +126,131 @@ fi
 ```
 
 **NO FIREBASE. NO EXCEPTIONS. EVER.**
+
+## 📧 EMAIL PROCESSING WORKFLOW - CRITICAL RULES
+
+### MANDATORY Processing Order
+**ALWAYS process emails OLDEST → NEWEST. This is NON-NEGOTIABLE.**
+
+#### Why This Matters:
+- Gmail API returns NEWEST first by default
+- We MUST reverse the array to process chronologically
+- This ensures proper job lifecycle: Application → Interview → Offer
+- Without this, the timeline is backwards and wrong
+
+#### CORRECT Implementation:
+```javascript
+// Gmail returns: [Dec 5 Interview, Dec 1 Application] (newest first)
+emails.reverse(); // MANDATORY!
+// Now: [Dec 1 Application, Dec 5 Interview] (oldest first)
+```
+
+#### INCORRECT (Will Break Timeline):
+```javascript
+// ❌ Processing newest first creates backwards timeline
+for (const email of emails) { // WRONG - not reversed!
+  processEmail(email);
+}
+```
+
+### Thread-Aware Processing Rules
+
+#### Rule 1: Gmail Threads = Single Jobs
+- If emails share a threadId, they ARE the same job
+- ONLY classify the FIRST email in thread
+- ALL emails in thread inherit the classification
+- NEVER run Stage 3 matching on threaded emails
+
+#### Rule 2: Three Stages with Specific Purposes
+1. **Stage 1**: Binary classification - Is this job-related? (Yes/No)
+2. **Stage 2**: Information extraction - Get company, position, status
+3. **Stage 3**: Job matching - Are two orphan emails the same job?
+
+#### Rule 3: Stage 3 ONLY for Orphans
+- Stage 3 NEVER runs on threaded emails
+- Stage 3 ONLY compares within same company
+- Stage 3 ONLY runs on emails without threads
+
+#### Rule 4: Company Grouping is Mandatory
+```javascript
+// CORRECT: Group orphans by company first
+const companyGroups = groupByCompanyDomain(orphans);
+// Stage 3 only runs within each company group
+
+// ❌ WRONG: Comparing all orphans with each other
+for (const email1 of orphans) {
+  for (const email2 of orphans) {
+    compare(email1, email2); // NO! This is O(n²) and wrong
+  }
+}
+```
+
+### Performance Requirements
+
+#### Minimum Performance Standards:
+- Thread grouping MUST reduce LLM calls by at least 70%
+- Non-job emails MUST exit after Stage 1 (no Stage 2/3)
+- Stage 3 MUST only run within company groups
+- Processing 1000 emails should require < 600 LLM calls
+
+#### Optimization Checklist:
+- [ ] Emails processed oldest → newest
+- [ ] Threads processed as single units
+- [ ] Only first email in thread classified
+- [ ] Stage 3 only runs on orphans
+- [ ] Company grouping limits Stage 3 comparisons
+- [ ] Early exit for non-job emails
+
+### Status Progression Logic
+
+#### Status Must Only Move Forward:
+```javascript
+const STATUS_PRIORITY = {
+  'Applied': 1,
+  'Interview': 2,
+  'Offer': 3,
+  'Declined': 4
+};
+
+// ✅ CORRECT: Status progresses forward
+Applied → Interview → Offer
+
+// ❌ WRONG: Status moving backwards
+Offer → Applied // NEVER DO THIS
+```
+
+### Database Requirements
+
+#### Thread Support is Mandatory:
+- `jobs` table MUST have `thread_id` column
+- `jobs` table MUST have `email_thread_ids` column (JSON array)
+- Index on `thread_id` for performance
+
+### Testing Requirements
+
+Before ANY email processing changes:
+1. Test with mixed threads and orphans
+2. Verify chronological processing
+3. Confirm Stage 3 only runs on orphans
+4. Check LLM call count is < 60% of email count
+5. Validate timeline is Application → Interview → Offer
+
+### Common Violations to Avoid
+
+1. **DO NOT** process emails newest → oldest
+2. **DO NOT** classify every email in a thread
+3. **DO NOT** run Stage 3 on threaded emails
+4. **DO NOT** compare jobs from different companies
+5. **DO NOT** skip the reversal of Gmail results
+6. **DO NOT** update job status backwards
+7. **DO NOT** ignore threadId from Gmail
+
+### Enforcement
+
+Any PR that violates these workflow rules should be:
+1. Immediately blocked
+2. Required to fix the processing order
+3. Required to show performance metrics
+4. Required to demonstrate thread awareness
+
+**See EMAIL_PROCESSING_WORKFLOW.md for complete technical details**

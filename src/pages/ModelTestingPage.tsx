@@ -12,7 +12,6 @@ import {
 } from '@mui/material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
-  Science as ScienceIcon,
   Dashboard as DashboardIcon,
   Download as DownloadIcon,
   CheckCircle as CheckCircleIcon,
@@ -26,39 +25,25 @@ import { onlyJobsTheme } from '../theme';
 // Model configurations
 const models = [
   {
-    id: 'qwen2.5-7b',
-    name: 'Qwen2.5-7B',
-    description: 'Best overall - 32K context, excellent parsing',
-    size: '4.7GB',
-    color: '#4CAF50',
-  },
-  {
-    id: 'llama-3.1-8b',
-    name: 'Llama-3.1-8B',
-    description: 'Massive 128K context for few-shot learning',
-    size: '4.9GB',
+    id: 'llama-3-8b-instruct-q5_k_m',
+    name: 'Llama-3-8B-Instruct',
+    description: 'Balanced performance - Q5_K_M quantization',
+    size: '5.5GB',
     color: '#2196F3',
   },
   {
-    id: 'phi-3.5-mini-128k',
-    name: 'Phi-3.5-mini',
-    description: 'Small model with huge 128K context window',
-    size: '2.4GB',
-    color: '#FF9800',
+    id: 'qwen2.5-7b-instruct-q5_k_m',
+    name: 'Qwen2.5-7B-Instruct',
+    description: 'Latest Qwen model - Q5_K_M quantization',
+    size: '5.1GB',
+    color: '#4CAF50',
   },
   {
-    id: 'hermes-3-llama-8b',
-    name: 'Hermes-3-Llama',
-    description: 'Function calling specialist - 128K context',
-    size: '4.9GB',
+    id: 'hermes-2-pro-mistral-7b-q5_k_m',
+    name: 'Hermes-2-Pro-Mistral-7B',
+    description: 'Function calling specialist - Q5_K_M',
+    size: '4.8GB',
     color: '#9C27B0',
-  },
-  {
-    id: 'qwen2.5-3b',
-    name: 'Qwen2.5-3B',
-    description: 'Fast baseline - 32K context',
-    size: '2.1GB',
-    color: '#F44336',
   },
 ];
 
@@ -97,7 +82,7 @@ const ModelTestingPage: React.FC = () => {
   };
   
   const handleNavigateToModel = (modelId: string) => {
-    navigate(`/model-testing/${modelId}`);
+    navigate(`/models/${modelId}`);
   };
   
   const handleLogout = async () => {
@@ -252,28 +237,6 @@ const ModelTestingPage: React.FC = () => {
               </Box>
             )}
             
-            {/* Comparison View Card */}
-            <Card sx={{ mt: 4, borderLeft: '4px solid #666' }}>
-              <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Box>
-                    <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <ScienceIcon />
-                      Model Comparison Lab
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Test individual emails across all models simultaneously
-                    </Typography>
-                  </Box>
-                  <Button
-                    variant="outlined"
-                    onClick={() => navigate('/model-testing/comparison')}
-                  >
-                    Open Comparison View
-                  </Button>
-                </Box>
-              </CardContent>
-            </Card>
           </Box>
         </Box>
       </Box>

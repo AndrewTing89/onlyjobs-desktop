@@ -30,6 +30,7 @@ import {
   ExpandMore as ExpandMoreIcon,
   Settings as SettingsIcon,
 } from '@mui/icons-material';
+import { SyncActivityLog, SyncLogEntry } from './SyncActivityLog';
 
 interface GmailAccount {
   id: string;
@@ -63,6 +64,7 @@ export const GmailMultiAccount: React.FC = () => {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [daysToSync, setDaysToSync] = useState<number>(365); // Default to 1 year for better results
   const [syncStats, setSyncStats] = useState<{processed?: number; found?: number; skipped?: number}>({});
+  const [syncActivityLog, setSyncActivityLog] = useState<SyncLogEntry[]>([]);
 
   useEffect(() => {
     loadAccounts();
@@ -70,6 +72,17 @@ export const GmailMultiAccount: React.FC = () => {
     // Listen for sync progress
     window.electronAPI.on('sync-progress', (progress: SyncProgress) => {
       setSyncProgress(progress);
+    });
+    
+    // Listen for sync activity events
+    window.electronAPI.on('sync-activity', (event: any) => {
+      setSyncActivityLog(prev => [...prev, {
+        id: `${Date.now()}-${Math.random()}`,
+        timestamp: new Date(),
+        type: event.type,
+        message: event.message,
+        details: event.details
+      } as SyncLogEntry]);
     });
     
     window.electronAPI.on('sync-complete', (result: any) => {
@@ -97,6 +110,7 @@ export const GmailMultiAccount: React.FC = () => {
     
     return () => {
       window.electronAPI.removeAllListeners('sync-progress');
+      window.electronAPI.removeAllListeners('sync-activity');
       window.electronAPI.removeAllListeners('sync-complete');
       window.electronAPI.removeAllListeners('sync-error');
     };
@@ -146,6 +160,7 @@ export const GmailMultiAccount: React.FC = () => {
     setSyncing(true);
     setError(null);
     setSuccessMessage(null);
+    setSyncActivityLog([]); // Clear previous activity log
     
     try {
       await window.electronAPI.gmail.syncAll({
@@ -367,6 +382,13 @@ export const GmailMultiAccount: React.FC = () => {
             )}
           </Box>
         </Paper>
+      )}
+      
+      {/* Live Activity Log */}
+      {syncing && (
+        <Box sx={{ mt: 2 }}>
+          <SyncActivityLog entries={syncActivityLog} />
+        </Box>
       )}
 
       {/* Sync History Summary */}

@@ -7,57 +7,45 @@ const { createReadStream } = require('fs');
 
 class ModelManager {
   constructor() {
+    // Cache for SHA256 verification results
+    this.sha256Cache = new Map();
+    this.sha256InProgress = new Map();
+    
     // Model configurations - optimized for job email classification
     this.models = {
-      'qwen2.5-7b': {
+      'llama-3-8b-instruct-q5_k_m': {
+        name: 'Llama-3-8B-Instruct',
+        filename: 'llama-3-8b-instruct-q5_k_m.gguf',
+        url: 'https://huggingface.co/bartowski/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct-Q5_K_M.gguf',
+        size: 5900000000, // ~5.5GB Q5_K_M
+        sha256: '16d824ee771e0e33b762bb3dc3232b972ac8dce4d2d449128fca5081962a1a9e',
+        description: 'Balanced performance - Q5_K_M quantization',
+        context: 8192
+      },
+      'qwen2.5-7b-instruct-q5_k_m': {
         name: 'Qwen2.5-7B-Instruct',
-        filename: 'qwen2.5-7b.gguf',
-        url: 'https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf',
-        size: 4683074240, // Actual size from bartowski repo
-        sha256: null, // Will be fetched from HuggingFace or computed
-        description: 'Best overall - 32K context, excellent parsing',
+        filename: 'qwen2.5-7b-instruct-q5_k_m.gguf',
+        url: 'https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q5_K_M.gguf',
+        size: 5460000000, // ~5.1GB Q5_K_M
+        sha256: '2e998d7e181c8756c5ffc55231b9ee1cdc9d3acec4245d6e27d32bd8e738c474',
+        description: 'Latest Qwen model - Q5_K_M quantization',
         context: 32768
       },
-      'llama-3.1-8b': {
-        name: 'Llama-3.1-8B-Instruct',
-        filename: 'llama-3.1-8b.gguf',
-        url: 'https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
-        size: 4920739232, // Actual downloaded size
-        sha256: null, // Will be computed or fetched
-        description: 'Massive 128K context for few-shot learning',
-        context: 131072
-      },
-      'phi-3.5-mini-128k': {
-        name: 'Phi-3.5-mini-128K',
-        filename: 'phi-3.5-mini-128k.gguf',
-        url: 'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf',
-        size: 2393232672, // Actual downloaded size
-        sha256: null, // Will be computed or fetched
-        description: 'Small model with huge 128K context window',
-        context: 131072
-      },
-      'hermes-3-llama-8b': {
-        name: 'Hermes-3-Llama-3.1-8B',
-        filename: 'hermes-3-llama-8b.gguf',
-        url: 'https://huggingface.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF/resolve/main/Hermes-3-Llama-3.1-8B.Q4_K_M.gguf',
-        size: 4920733824, // Actual downloaded size
-        sha256: null, // Will be computed or fetched
-        description: 'Function calling specialist - 128K context',
-        context: 131072
-      },
-      'qwen2.5-3b': {
-        name: 'Qwen2.5-3B-Instruct',
-        filename: 'qwen2.5-3b.gguf',
-        url: 'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf',
-        size: 2104932768, // Actual downloaded size
-        sha256: null, // Will be computed or fetched
-        description: 'Fast baseline - 32K context',
+      'hermes-2-pro-mistral-7b-q5_k_m': {
+        name: 'Hermes-2-Pro-Mistral-7B',
+        filename: 'hermes-2-pro-mistral-7b-q5_k_m.gguf',
+        url: 'https://huggingface.co/NousResearch/Hermes-2-Pro-Mistral-7B-GGUF/resolve/main/Hermes-2-Pro-Mistral-7B.Q5_K_M.gguf',
+        size: 5150000000, // ~4.8GB Q5_K_M
+        sha256: 'de765610ba638f55cbb58c8ad543136526cc6573222e5340827e43ccc81206b0',
+        description: 'Function calling specialist - Q5_K_M',
         context: 32768
       }
     };
     
-    // Model directory
-    this.modelsDir = path.join(path.dirname(app.getPath('userData')), 'models');
+    // Model directory - Use hardcoded path for macOS
+    // app.getPath('userData') returns: /Users/ndting/Library/Application Support/onlyjobs-desktop
+    // But models are in: /Users/ndting/Library/Application Support/models
+    this.modelsDir = '/Users/ndting/Library/Application Support/models';
     
     // Track downloads in progress
     this.downloads = new Map();
@@ -79,12 +67,19 @@ class ModelManager {
   
   async getModelStatus(modelId) {
     const model = this.models[modelId];
-    if (!model) throw new Error(`Unknown model: ${modelId}`);
+    if (!model) {
+      console.error(`[ModelManager] Unknown model: ${modelId}`);
+      throw new Error(`Unknown model: ${modelId}`);
+    }
     
     const modelPath = this.getModelPath(modelId);
+    // Less verbose logging
+    console.log(`[ModelManager] Checking status for ${modelId}`);
     
     try {
+      // 1. Check if file exists
       const stats = await fs.stat(modelPath);
+      // File exists, proceed with checks
       
       // Check if download is in progress
       if (this.downloads.has(modelId)) {
@@ -97,32 +92,50 @@ class ModelManager {
         };
       }
       
-      // Check if file size matches expected (with 10% tolerance)
-      const sizeTolerance = 0.10; // 10% tolerance
-      const sizeMatch = stats.size === model.size || 
-                       (stats.size > model.size * (1 - sizeTolerance) && 
-                        stats.size < model.size * (1 + sizeTolerance));
+      // 2. SHA256 verification - if it passes, model is ready!
+      if (model.sha256) {
+        try {
+          const isValid = await this.verifySHA256(modelPath, model.sha256);
+          if (isValid) {
+            return {
+              status: 'ready',
+              size: stats.size,
+              path: modelPath
+            };
+          } else {
+            return {
+              status: 'corrupt',
+              size: stats.size,
+              error: 'SHA256 verification failed - file may be corrupted'
+            };
+          }
+        } catch (error) {
+          console.error(`[ModelManager] SHA256 verification error:`, error);
+          // Fall through to size check
+        }
+      }
       
-      if (sizeMatch) {
+      // If no SHA256 hash available, just check if file exists with reasonable size
+      if (stats.size > 1e9) { // File is > 1GB, probably valid
         return {
           status: 'ready',
           size: stats.size,
           path: modelPath
         };
-      } else {
-        const sizeDiff = stats.size - model.size;
-        const sizeDiffPercent = ((sizeDiff / model.size) * 100).toFixed(1);
-        return {
-          status: 'corrupt',
-          size: stats.size,
-          expectedSize: model.size,
-          error: `Size mismatch: ${sizeDiffPercent}% difference (expected ${(model.size / 1e9).toFixed(2)}GB, got ${(stats.size / 1e9).toFixed(2)}GB)`
-        };
       }
+      
+      // File too small to be a valid model
+      return {
+        status: 'corrupt',
+        size: stats.size,
+        error: 'File size too small to be a valid model'
+      };
+      
     } catch (error) {
       if (error.code === 'ENOENT') {
         return { status: 'not_installed' };
       }
+      console.error(`[ModelManager] Unexpected error:`, error);
       throw error;
     }
   }
@@ -160,17 +173,13 @@ class ModelManager {
       
       const file = require('fs').createWriteStream(tempPath);
       
-      https.get(model.url, (response) => {
-        if (response.statusCode === 302 || response.statusCode === 301) {
-          // Handle redirect
-          file.close();
-          https.get(response.headers.location, (redirectResponse) => {
-            handleResponse(redirectResponse);
-          }).on('error', handleError);
-        } else {
-          handleResponse(response);
-        }
-      }).on('error', handleError);
+      // Define handlers before using them
+      const handleError = (error) => {
+        file.close();
+        fs.unlink(tempPath).catch(() => {}); // Clean up temp file
+        this.downloads.delete(modelId);
+        reject(error);
+      };
       
       const handleResponse = (response) => {
         const totalSize = parseInt(response.headers['content-length'], 10) || model.size;
@@ -215,14 +224,20 @@ class ModelManager {
         });
       };
       
-      const handleError = (error) => {
-        file.close();
-        fs.unlink(tempPath).catch(() => {}); // Clean up temp file
-        this.downloads.delete(modelId);
-        reject(error);
-      };
-      
       file.on('error', handleError);
+      
+      // Now make the actual request
+      https.get(model.url, (response) => {
+        if (response.statusCode === 302 || response.statusCode === 301) {
+          // Handle redirect
+          file.close();
+          https.get(response.headers.location, (redirectResponse) => {
+            handleResponse(redirectResponse);
+          }).on('error', handleError);
+        } else {
+          handleResponse(response);
+        }
+      }).on('error', handleError);
     });
   }
   
@@ -370,6 +385,63 @@ class ModelManager {
     console.log('Using local computation instead');
     return this.computeAllChecksums();
   }
+  
+  // Verify SHA256 hash of a file with caching
+  async verifySHA256(filepath, expectedHash) {
+    try {
+      // Check cache first
+      const cacheKey = `${filepath}:${expectedHash}`;
+      if (this.sha256Cache.has(cacheKey)) {
+        const cached = this.sha256Cache.get(cacheKey);
+        console.log(`[ModelManager] Using cached SHA256 result for ${filepath.split('/').pop()}: ${cached}`);
+        return cached;
+      }
+      
+      // Check if verification is already in progress
+      if (this.sha256InProgress.has(cacheKey)) {
+        console.log(`[ModelManager] SHA256 verification already in progress for ${filepath.split('/').pop()}, waiting...`);
+        return this.sha256InProgress.get(cacheKey);
+      }
+      
+      // Start new verification
+      console.log(`[ModelManager] Starting new SHA256 verification for ${filepath.split('/').pop()}`);
+      const verificationPromise = new Promise((resolve, reject) => {
+        const hash = crypto.createHash('sha256');
+        const stream = createReadStream(filepath);
+        
+        stream.on('data', (data) => {
+          hash.update(data);
+        });
+        
+        stream.on('end', () => {
+          const computedHash = hash.digest('hex');
+          const matches = computedHash.toLowerCase() === expectedHash.toLowerCase();
+          console.log(`[ModelManager] SHA256 verification completed for ${filepath.split('/').pop()}: ${matches}`);
+          
+          // Cache the result
+          this.sha256Cache.set(cacheKey, matches);
+          this.sha256InProgress.delete(cacheKey);
+          
+          resolve(matches);
+        });
+        
+        stream.on('error', (error) => {
+          console.error(`[ModelManager] Error reading file for SHA256: ${error}`);
+          this.sha256InProgress.delete(cacheKey);
+          reject(error);
+        });
+      });
+      
+      // Store the promise so other calls can wait for it
+      this.sha256InProgress.set(cacheKey, verificationPromise);
+      
+      return verificationPromise;
+    } catch (error) {
+      console.error(`[ModelManager] SHA256 verification error: ${error}`);
+      return false;
+    }
+  }
+  
 }
 
 module.exports = ModelManager;

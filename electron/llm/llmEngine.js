@@ -307,7 +307,7 @@ async function checkLLMHealth() {
             
             health.canLoad = true;
             health.status = 'healthy';
-            console.log('Health check: Model is healthy');
+            // console.log('Health check: Model is healthy');
         } else {
             health.status = 'unhealthy';
             health.error = 'Model file not found';
@@ -316,7 +316,7 @@ async function checkLLMHealth() {
         health.status = 'unhealthy';
         health.canLoad = false;
         health.error = error.message;
-        console.error('Health check failed:', error);
+        // console.error('Health check failed:', error);
     }
     
     return health;

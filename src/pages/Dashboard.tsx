@@ -20,7 +20,6 @@ import TopBar from "../components/layout/TopBar";
 import { LookerDashboard } from "../components/LookerDashboard";
 import { GmailMultiAccount } from "../components/GmailMultiAccount";
 import JobsList from "../components/JobsList";
-import { MLStatusIndicator } from "../components/MLStatusIndicator";
 
 // Import analytics components
 import QuickStats from "../components/analytics/QuickStats";
@@ -146,11 +145,6 @@ export default function Dashboard() {
               onLogout={handleLogout}
               title="Dashboard"
             />
-            {isElectron && (
-              <Box sx={{ mt: 2 }}>
-                <MLStatusIndicator />
-              </Box>
-            )}
           </Box>
 
           {/* Main Content */}

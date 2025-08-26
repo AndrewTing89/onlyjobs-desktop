@@ -27,8 +27,6 @@ import { onlyJobsTheme } from '../theme';
 // Import layout components
 import Sidebar from '../components/layout/Sidebar';
 import TopBar from '../components/layout/TopBar';
-import { LLMHealthCard } from '../components/LLMHealthCard';
-import { MLStatsCard } from '../components/MLStatsCard';
 
 // Import auth contexts
 import { useAuth } from "../contexts/ElectronAuthContext";
@@ -166,39 +164,6 @@ export default function Settings() {
 
           {/* Main Content */}
           <Box sx={{ flexGrow: 1, p: 3, pt: 1, overflow: 'auto' }}>
-            {/* LLM Health Status */}
-            <LLMHealthCard />
-            
-            {/* Model Testing Card */}
-            {isElectron && (
-              <Card sx={{ borderRadius: 3, boxShadow: 2, mb: 3 }}>
-                <CardContent sx={{ p: 4 }}>
-                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <Box>
-                      <Typography variant="h5" sx={{ fontWeight: 600, mb: 1 }}>
-                        Model Testing & Comparison
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Compare different LLM models to find the best one for job email classification
-                      </Typography>
-                    </Box>
-                    <Button
-                      variant="contained"
-                      onClick={() => navigate('/model-testing')}
-                      sx={{
-                        borderRadius: 2,
-                        px: 3,
-                        py: 1,
-                        textTransform: "none",
-                      }}
-                    >
-                      Open Model Testing
-                    </Button>
-                  </Box>
-                </CardContent>
-              </Card>
-            )}
-            
             {/* Status Messages */}
             {message && (
               <Alert severity="success" sx={{ mb: 3, borderRadius: 2 }}>
@@ -215,11 +180,6 @@ export default function Settings() {
 
 
             {/* ML Classifier Section - Electron Only */}
-            {isElectron && (
-              <Box sx={{ mb: 3 }}>
-                <MLStatsCard />
-              </Box>
-            )}
 
             {/* Database Management Section - Electron Only */}
             {isElectron && (

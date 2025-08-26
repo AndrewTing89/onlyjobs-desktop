@@ -1,6 +1,7 @@
 interface ElectronAPI {
   // Database operations
   getJobs: (filters?: any) => Promise<any>;
+  getJobsForModel: (modelId: string, filters?: any) => Promise<any>;
   getJob: (id: string) => Promise<any>;
   getJobEmail: (id: string) => Promise<{ success: boolean; emailContent?: string; emailHistory?: any[]; error?: string }>;
   createJob: (job: any) => Promise<any>;
@@ -146,14 +147,15 @@ interface ElectronAPI {
     getAuthStatus: () => Promise<any>;
     fetchEmails: (options?: any) => Promise<any>;
     disconnect: () => Promise<any>;
-    sync: (options?: { daysToSync?: number; maxEmails?: number }) => Promise<any>;
+    sync: (options?: { daysToSync?: number; maxEmails?: number; modelId?: string }) => Promise<any>;
+    cancelSync: () => Promise<{ success: boolean }>;
     fetch: (options?: { daysToSync?: number; maxEmails?: number }) => Promise<any>;
     getSyncStatus: () => Promise<any>;
     // Multi-account operations
     getAccounts: () => Promise<{ success: boolean; accounts: any[] }>;
     addAccount: () => Promise<{ success: boolean; account: { email: string } }>;
     removeAccount: (email: string) => Promise<{ success: boolean }>;
-    syncAll: (options?: { daysToSync?: number; maxEmails?: number }) => Promise<any>;
+    syncAll: (options?: { daysToSync?: number; maxEmails?: number; modelId?: string }) => Promise<any>;
   };
   
   // Email operations
@@ -277,6 +279,104 @@ interface ElectronAPI {
   initiateOAuth: () => Promise<any>;
   notifyOAuthCompleted: (data: any) => Promise<any>;
   
+  // Two-Stage LLM Classification (now with Stage 3 for job matching)
+  twoStage: {
+    getPrompts: (modelId: string) => Promise<{
+      success: boolean;
+      prompts?: {
+        stage1: string;
+        stage2: string;
+        stage3: string;
+      };
+      error?: string;
+    }>;
+    saveStage1: (modelId: string, prompt: string) => Promise<{
+      success: boolean;
+      error?: string;
+    }>;
+    saveStage2: (modelId: string, prompt: string) => Promise<{
+      success: boolean;
+      error?: string;
+    }>;
+    saveStage3: (modelId: string, prompt: string) => Promise<{
+      success: boolean;
+      error?: string;
+    }>;
+    resetPrompts: (modelId: string) => Promise<{
+      success: boolean;
+      error?: string;
+    }>;
+    classify: (modelId: string, modelPath: string, emailSubject: string, emailBody: string) => Promise<{
+      success: boolean;
+      result?: {
+        is_job_related: boolean;
+        company: string | null;
+        position: string | null;
+        status: string | null;
+        modelId: string;
+        totalTime: number;
+        stage1Time: number;
+        stage2Time: number;
+        stage1Response?: string;
+        stage2Response?: string;
+      };
+      error?: string;
+    }>;
+    classifyAndSaveTest: (modelId: string, modelPath: string, email: {
+      id?: string;
+      subject: string;
+      body: string;
+      from?: string;
+      date?: string;
+      accountEmail?: string;
+    }) => Promise<{
+      success: boolean;
+      result?: {
+        is_job_related: boolean;
+        company: string | null;
+        position: string | null;
+        status: string | null;
+        confidence?: number;
+        stage1Time: number;
+        stage2Time: number;
+        stage1Response?: string;
+        stage2Response?: string;
+      };
+      testId?: string;
+      tableName?: string;
+      error?: string;
+    }>;
+    getTestResults: (modelId: string) => Promise<{
+      success: boolean;
+      results: Array<{
+        id: string;
+        gmail_message_id: string;
+        company: string | null;
+        position: string | null;
+        status: string | null;
+        applied_date: string;
+        account_email: string;
+        from_address: string;
+        subject: string;
+        confidence_score: number;
+        stage1_result: number;
+        stage1_time_ms: number;
+        stage2_time_ms: number;
+        total_time_ms: number;
+        raw_stage1_response: string;
+        raw_stage2_response: string;
+        tested_at: string;
+      }>;
+      tableName?: string;
+      error?: string;
+    }>;
+    clearTestResults: (modelId: string) => Promise<{
+      success: boolean;
+      tableName?: string;
+      error?: string;
+    }>;
+  };
+
   // Generic event listeners
   on: (channel: string, callback: (...args: any[]) => void) => void;
   
