@@ -5,7 +5,7 @@ const twoStage = require('./llm/two-stage-classifier');
 function getClassifierProvider() {
   return {
     // Main classification method used by sync process
-    parse: async ({ subject, plaintext, modelId = null }) => {
+    parse: async ({ subject, plaintext, sender = '', modelId = null }) => {
       try {
         // Use provided model or default to Llama
         const defaultModelId = 'llama-3-8b-instruct-q5_k_m';
@@ -16,8 +16,8 @@ function getClassifierProvider() {
         
         console.log(`[Classifier] Using model: ${selectedModelId}`);
         
-        // Perform two-stage classification
-        const result = await twoStage.classifyTwoStage(selectedModelId, modelPath, subject, plaintext);
+        // Perform two-stage classification (now with ML Stage 0)
+        const result = await twoStage.classifyTwoStage(selectedModelId, modelPath, subject, plaintext, sender);
         
         // Map the result to expected format
         return {

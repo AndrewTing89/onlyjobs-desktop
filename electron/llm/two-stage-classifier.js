@@ -19,6 +19,7 @@ const {
   STAGE2_MAX_TOKENS,
   STAGE3_MAX_TOKENS
 } = require('./config');
+const { getMLClassifier } = require('../ml-classifier-bridge');
 
 // Store for saving model-specific prompts
 const promptStore = new Store({ name: 'model-prompts' });
@@ -490,8 +491,45 @@ Job 2: ${job2.company} - ${job2.position}`;
 /**
  * Full two-stage classification (optimized)
  */
-async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody) {
+async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, emailSender = '') {
   const startTime = Date.now();
+  
+  // Stage 0: ML Pre-classification (1ms)
+  const mlClassifier = getMLClassifier();
+  const mlResult = await mlClassifier.classify(emailSubject, emailBody, emailSender);
+  
+  // If ML has high confidence, skip LLM Stage 1
+  if (mlResult.confidence >= 0.9) {
+    console.log(`🚀 ML Stage 0: High confidence (${mlResult.confidence.toFixed(2)}) - ${mlResult.is_job_related ? 'Job' : 'Not job'}`);
+    
+    if (!mlResult.is_job_related) {
+      // High confidence non-job - skip all LLM stages
+      return {
+        is_job: false,
+        company: null,
+        position: null,
+        status: null,
+        totalTime: Date.now() - startTime,
+        mlSkipped: true,
+        confidence: mlResult.confidence
+      };
+    }
+    
+    // High confidence job - skip Stage 1, go directly to Stage 2
+    console.log(`⚡ ML detected job email with high confidence - skipping LLM Stage 1`);
+    const stage2Result = await extractStage2(modelId, modelPath, emailSubject, emailBody);
+    
+    return {
+      is_job: true,
+      ...stage2Result,
+      totalTime: Date.now() - startTime,
+      mlSkipped: true,
+      confidence: mlResult.confidence
+    };
+  }
+  
+  // Low/medium confidence - use LLM Stage 1 for verification
+  console.log(`🤔 ML Stage 0: Medium confidence (${mlResult.confidence.toFixed(2)}) - using LLM verification`);
   
   // Stage 1: Fast binary classification
   const stage1Result = await classifyStage1(modelId, modelPath, emailSubject, emailBody);

@@ -145,6 +145,7 @@ class ThreadAwareProcessor {
         // Build combined context: latest email + thread context
         const lastSubject = this.extractSubject(lastEmail);
         const lastBody = this.extractBody(lastEmail);
+        const lastSender = this.extractFrom(lastEmail); // Extract sender for ML classification
         const firstSubject = this.extractSubject(firstEmail);
         
         // Skip if no content
@@ -193,6 +194,7 @@ class ThreadAwareProcessor {
           const classification = await this.classifier.parse({
             subject: lastSubject,
             plaintext: enhancedBody,
+            sender: lastSender,
             modelId
           });
           
@@ -332,6 +334,7 @@ class ThreadAwareProcessor {
       for (const email of batch) {
         const subject = this.extractSubject(email);
         const body = this.extractBody(email);
+        const sender = this.extractFrom(email);
         
         if (!subject && !body) continue;
         
@@ -356,6 +359,7 @@ class ThreadAwareProcessor {
           const classification = await this.classifier.parse({
             subject,
             plaintext: body,
+            sender,
             modelId
           });
           
