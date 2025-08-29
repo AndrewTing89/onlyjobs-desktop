@@ -12,6 +12,7 @@ interface ElectronAPI {
   clearAllRecords: () => Promise<{ success: boolean; message: string; details: any }>;
   clearEmailSync: () => Promise<{ success: boolean; message: string; recordsDeleted: number }>;
   clearJobData: () => Promise<{ success: boolean; message: string; emailSyncDeleted: number; jobsDeleted: number; gmailAccountsKept: number }>;
+  clearClassifications: () => Promise<{ success: boolean; message: string; classificationQueueDeleted: number; trainingFeedbackDeleted: number; llmCacheDeleted: number }>;
   
   // Email operations for compatibility
   getJobInbox?: (jobId: string) => Promise<any>;
@@ -19,6 +20,8 @@ interface ElectronAPI {
   
   // Email classification
   classifyEmail: (input: string | { subject: string; plaintext: string }) => Promise<any>;
+  getClassificationQueue: (filters?: any) => Promise<{ success: boolean; emails: any[]; stats: any; error?: string }>;
+  updateClassification: (id: string, isJobRelated: boolean, notes?: string) => Promise<any>;
   
   // LLM Health Check
   checkLLMHealth: () => Promise<{
