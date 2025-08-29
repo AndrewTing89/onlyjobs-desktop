@@ -10,6 +10,8 @@ const { getClassifierProvider } = require('./classifier');
 const classifier = getClassifierProvider();
 const { PromptManager } = require('./llm/promptManager');
 const promptManager = new PromptManager();
+const DatabaseInitializer = require('./database/db-init');
+const { addHumanInLoopTables } = require('./database/migrations/add_human_in_loop_tables');
 
 // Store for saving custom prompt
 const promptStore = new Store({ name: 'prompt-settings' });
@@ -40,34 +42,49 @@ function getStore() {
 // Initialize database - defer until needed
 let db = null;
 let initialized = false;
+let dbInitializer = null;
+
 function getDb() {
   if (!db) {
     const dbPath = path.join(app.getPath('userData'), 'jobs.db');
     db = new Database(dbPath);
+    
     if (!initialized) {
-      initializeDatabase();
-      
-      // Run thread support migration
       try {
-        const tableInfo = db.pragma('table_info(jobs)');
-        const columnNames = tableInfo.map(col => col.name);
+        // Use the new database initializer
+        dbInitializer = new DatabaseInitializer(dbPath);
         
-        // Add thread support columns if they don't exist
-        if (!columnNames.includes('thread_id')) {
-          console.log('Adding thread_id column to jobs table...');
-          db.exec(`ALTER TABLE jobs ADD COLUMN thread_id TEXT`);
-          db.exec(`CREATE INDEX IF NOT EXISTS idx_thread_id ON jobs(thread_id)`);
+        // Initialize the complete schema
+        const initResult = dbInitializer.initializeDatabase();
+        if (!initResult.success) {
+          console.error('Database initialization failed:', initResult.error);
         }
         
-        if (!columnNames.includes('email_thread_ids')) {
-          console.log('Adding email_thread_ids column to jobs table...');
-          db.exec(`ALTER TABLE jobs ADD COLUMN email_thread_ids TEXT`);
+        // Run all migrations
+        const migrationResult = dbInitializer.runMigrations();
+        if (!migrationResult.success) {
+          console.error('Database migration failed:', migrationResult.error);
         }
-      } catch (migrationError) {
-        console.error('Thread migration error:', migrationError);
+        
+        // Run human-in-the-loop migration specifically
+        try {
+          const humanInLoopResult = addHumanInLoopTables();
+          if (!humanInLoopResult.success) {
+            console.error('Human-in-the-loop migration failed:', humanInLoopResult.error);
+          }
+        } catch (migrationError) {
+          console.error('Human-in-the-loop migration error:', migrationError);
+        }
+        
+        initialized = true;
+        console.log('Database initialization and migrations completed successfully');
+        
+      } catch (error) {
+        console.error('Error during database initialization:', error);
+        // Fall back to legacy initialization
+        initializeDatabase();
+        initialized = true;
       }
-      
-      initialized = true;
     }
   }
   return db;
@@ -1129,9 +1146,128 @@ ipcMain.handle('ml:initialize', async () => {
   }
 });
 
-// ML handlers removed - using pure LLM approach
+// Training Data Collection Handlers
+const { getTrainingDataCollector } = require('./ml-training/training-data-collector');
+const { getTrainingDataExporter } = require('./ml-training/training-data-exporter');
 
-// ML feedback handler removed - using pure LLM approach
+// Get training data statistics
+ipcMain.handle('training:get-stats', async () => {
+  try {
+    const collector = getTrainingDataCollector();
+    const stats = collector.getStats();
+    console.log('📊 Training data stats retrieved:', stats);
+    return stats;
+  } catch (error) {
+    console.error('Error getting training stats:', error);
+    throw new Error('Failed to get training statistics');
+  }
+});
+
+// Get training data patterns and analysis
+ipcMain.handle('training:get-patterns', async () => {
+  try {
+    const collector = getTrainingDataCollector();
+    const patterns = collector.getPatterns();
+    console.log('📊 Training data patterns retrieved');
+    return patterns;
+  } catch (error) {
+    console.error('Error getting training patterns:', error);
+    throw new Error('Failed to get training patterns');
+  }
+});
+
+// Get export statistics
+ipcMain.handle('training:get-export-stats', async () => {
+  try {
+    const exporter = getTrainingDataExporter();
+    const stats = exporter.getExportStats();
+    console.log('📊 Export stats retrieved:', stats);
+    return stats;
+  } catch (error) {
+    console.error('Error getting export stats:', error);
+    throw new Error('Failed to get export statistics');
+  }
+});
+
+// Export training data
+ipcMain.handle('training:export', async (event, options = {}) => {
+  try {
+    const exporter = getTrainingDataExporter();
+    let result;
+
+    console.log('📊 Exporting training data with options:', options);
+
+    switch (options.format) {
+      case 'csv':
+        result = await exporter.exportCSV(options);
+        break;
+      case 'json':
+        result = await exporter.exportJSON(options);
+        break;
+      case 'ml':
+        result = await exporter.exportForMLTraining(options);
+        break;
+      default:
+        throw new Error('Invalid export format. Must be: csv, json, or ml');
+    }
+
+    if (result.success) {
+      console.log('📊 Training data export completed:', result);
+    } else {
+      console.error('📊 Training data export failed:', result.message);
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Error exporting training data:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to export training data'
+    };
+  }
+});
+
+// Capture user correction (called when user manually corrects a classification)
+ipcMain.handle('training:capture-correction', async (event, correctionData) => {
+  try {
+    const collector = getTrainingDataCollector();
+    const success = await collector.captureCorrection(correctionData);
+    
+    console.log('📊 User correction captured:', {
+      success,
+      emailHash: correctionData.emailHash,
+      userClassification: correctionData.userClassification,
+      originalPrediction: correctionData.originalPrediction
+    });
+
+    return { success };
+  } catch (error) {
+    console.error('Error capturing correction:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Capture low confidence prediction for review
+ipcMain.handle('training:capture-low-confidence', async (event, predictionData) => {
+  try {
+    const collector = getTrainingDataCollector();
+    const success = await collector.captureLowConfidence(predictionData);
+    
+    console.log('📊 Low confidence prediction captured:', {
+      success,
+      confidence: predictionData.originalConfidence
+    });
+
+    return { success };
+  } catch (error) {
+    console.error('Error capturing low confidence prediction:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ML handlers removed - using pure LLM approach with training data collection
+
+// ML feedback handler removed - using pure LLM approach with training data collection
 
 // Simple mock auth for desktop app (no real authentication needed)
 const mockUser = {
@@ -2540,6 +2676,120 @@ ipcMain.handle('db:clear-email-sync', async () => {
   }
 });
 
+// Clear job data but keep Gmail accounts
+ipcMain.handle('db:clear-job-data', async () => {
+  try {
+    console.log('🗑️ Clearing job data (keeping Gmail accounts)...');
+    
+    const db = getDb();
+    
+    // Check current counts before clearing
+    const beforeCounts = {
+      emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
+      jobs: db.prepare('SELECT COUNT(*) as count FROM jobs').get().count,
+      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0,
+      trainingFeedback: db.prepare('SELECT COUNT(*) as count FROM training_feedback').get()?.count || 0,
+      llmCache: db.prepare('SELECT COUNT(*) as count FROM llm_cache').get()?.count || 0,
+      gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count
+    };
+    console.log('📊 Current record counts:', beforeCounts);
+    
+    // Clear all job-related data, but NOT gmail_accounts
+    const emailSyncDeleted = db.prepare('DELETE FROM email_sync').run().changes;
+    console.log(`Deleted ${emailSyncDeleted} email_sync records`);
+    
+    const jobsDeleted = db.prepare('DELETE FROM jobs').run().changes;
+    console.log(`Deleted ${jobsDeleted} jobs records`);
+    
+    // Clear classification-related tables
+    const classificationQueueDeleted = db.prepare('DELETE FROM classification_queue').run().changes;
+    console.log(`Deleted ${classificationQueueDeleted} classification_queue records`);
+    
+    const trainingFeedbackDeleted = db.prepare('DELETE FROM training_feedback').run().changes;
+    console.log(`Deleted ${trainingFeedbackDeleted} training_feedback records`);
+    
+    const llmCacheDeleted = db.prepare('DELETE FROM llm_cache').run().changes;
+    console.log(`Deleted ${llmCacheDeleted} llm_cache records`);
+    
+    // Reset sync status but keep account info
+    db.prepare('UPDATE sync_status SET total_emails_fetched = 0, total_emails_classified = 0, last_sync_status = NULL WHERE id = 1').run();
+    console.log('Reset sync status');
+    
+    // Update last_sync dates for gmail accounts but keep them connected
+    db.prepare('UPDATE gmail_accounts SET last_sync = NULL').run();
+    console.log('Reset Gmail account sync dates');
+    
+    // Check counts after clearing
+    const afterCounts = {
+      emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
+      jobs: db.prepare('SELECT COUNT(*) as count FROM jobs').get().count,
+      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0,
+      trainingFeedback: db.prepare('SELECT COUNT(*) as count FROM training_feedback').get()?.count || 0,
+      llmCache: db.prepare('SELECT COUNT(*) as count FROM llm_cache').get()?.count || 0,
+      gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count
+    };
+    console.log('📊 After clearing - record counts:', afterCounts);
+    
+    return {
+      success: true,
+      message: `Job data cleared successfully. ${beforeCounts.gmailAccounts} Gmail account(s) remain connected.`,
+      emailSyncDeleted,
+      jobsDeleted,
+      classificationQueueDeleted,
+      trainingFeedbackDeleted,
+      llmCacheDeleted,
+      gmailAccountsKept: beforeCounts.gmailAccounts
+    };
+  } catch (error) {
+    console.error('❌ Error clearing job data:', error);
+    console.error('Error stack:', error.stack);
+    throw error;
+  }
+});
+
+// Clear classifications only (keeps email sync and jobs)
+ipcMain.handle('db:clear-classifications', async () => {
+  try {
+    console.log('🗑️ Clearing classification data only...');
+    
+    const db = getDb();
+    
+    // Check current counts before clearing
+    const beforeCounts = {
+      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0,
+      trainingFeedback: db.prepare('SELECT COUNT(*) as count FROM training_feedback').get()?.count || 0,
+      llmCache: db.prepare('SELECT COUNT(*) as count FROM llm_cache').get()?.count || 0
+    };
+    console.log('📊 Current classification counts:', beforeCounts);
+    
+    // Clear classification-related tables only
+    const classificationQueueDeleted = db.prepare('DELETE FROM classification_queue').run().changes;
+    console.log(`Deleted ${classificationQueueDeleted} classification_queue records`);
+    
+    const trainingFeedbackDeleted = db.prepare('DELETE FROM training_feedback').run().changes;
+    console.log(`Deleted ${trainingFeedbackDeleted} training_feedback records`);
+    
+    const llmCacheDeleted = db.prepare('DELETE FROM llm_cache').run().changes;
+    console.log(`Deleted ${llmCacheDeleted} llm_cache records`);
+    
+    // Update sync status for classification count
+    db.prepare('UPDATE sync_status SET total_emails_classified = 0 WHERE id = 1').run();
+    console.log('Reset classification count in sync status');
+    
+    return {
+      success: true,
+      message: 'Classification data cleared successfully. Email sync history and job records remain intact.',
+      classificationQueueDeleted,
+      trainingFeedbackDeleted,
+      llmCacheDeleted
+    };
+  } catch (error) {
+    console.error('❌ Error clearing classification data:', error);
+    console.error('Error stack:', error.stack);
+    throw error;
+  }
+});
+
 // Get email content for a job
 ipcMain.handle('get-job-email', async (event, jobId) => {
   try {
@@ -3179,6 +3429,464 @@ ipcMain.handle('two-stage:clear-test-results', async (event, modelId) => {
     return { success: false, error: error.message };
   }
 });
+
+// ===== HUMAN-IN-THE-LOOP CLASSIFICATION HANDLERS =====
+
+// Classification-only sync (ML only, no LLM parsing)
+ipcMain.handle('sync:classify-only', async (event, options = {}) => {
+  try {
+    const ClassificationOnlyProcessor = require('./processors/classification-only-processor');
+    const processor = new ClassificationOnlyProcessor(event.sender);
+    
+    const { accountEmail, ...processOptions } = options;
+    const account = { email: accountEmail };
+    
+    const result = await processor.processEmails(account, processOptions);
+    
+    return {
+      success: true,
+      ...result
+    };
+  } catch (error) {
+    console.error('Classification-only sync error:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// Update classification from user review
+ipcMain.handle('classification:update', async (event, id, isJobRelated, notes = '') => {
+  try {
+    const ClassificationOnlyProcessor = require('./processors/classification-only-processor');
+    const processor = new ClassificationOnlyProcessor();
+    
+    const result = await processor.updateClassification(id, isJobRelated, notes);
+    
+    return {
+      success: true,
+      ...result
+    };
+  } catch (error) {
+    console.error('Classification update error:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// Add items to parse queue (mark for LLM parsing)
+ipcMain.handle('parse:queue', async (event, items) => {
+  try {
+    const Database = require('better-sqlite3');
+    const path = require('path');
+    const { app } = require('electron');
+    
+    const dbPath = path.join(app.getPath('userData'), 'jobs.db');
+    const db = new Database(dbPath);
+    
+    try {
+      const updateStmt = db.prepare(`
+        UPDATE classification_queue 
+        SET parse_status = 'pending', updated_at = CURRENT_TIMESTAMP 
+        WHERE id IN (${items.map(() => '?').join(',')})
+      `);
+      
+      const result = updateStmt.run(...items);
+      
+      return {
+        success: true,
+        updated: result.changes
+      };
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    console.error('Parse queue error:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// Process parse queue (LLM parsing)
+ipcMain.handle('parse:batch', async (event, options = {}) => {
+  try {
+    const ParseQueueWorker = require('./processors/parse-queue-worker');
+    const worker = new ParseQueueWorker(event.sender);
+    
+    const result = await worker.processParseQueue(options);
+    
+    return {
+      success: true,
+      ...result
+    };
+  } catch (error) {
+    console.error('Parse batch error:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// Get items needing review (low confidence classifications)
+ipcMain.handle('classification:get-pending', async (event, accountEmail = null) => {
+  try {
+    const ClassificationOnlyProcessor = require('./processors/classification-only-processor');
+    const processor = new ClassificationOnlyProcessor();
+    
+    const items = await processor.getPendingReview(accountEmail);
+    
+    return {
+      success: true,
+      items
+    };
+  } catch (error) {
+    console.error('Get pending review error:', error);
+    return {
+      success: false,
+      error: error.message,
+      items: []
+    };
+  }
+});
+
+// Save user corrections for ML training
+ipcMain.handle('training:save-feedback', async (event, feedbackData) => {
+  try {
+    const Database = require('better-sqlite3');
+    const path = require('path');
+    const { app } = require('electron');
+    
+    const dbPath = path.join(app.getPath('userData'), 'jobs.db');
+    const db = new Database(dbPath);
+    
+    try {
+      const insertTraining = db.prepare(`
+        INSERT INTO classification_training (
+          gmail_message_id,
+          original_classification,
+          user_correction,
+          confidence,
+          subject,
+          body_snippet,
+          from_address,
+          feedback_notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      
+      const result = insertTraining.run(
+        feedbackData.gmailMessageId,
+        feedbackData.originalClassification ? 1 : 0,
+        feedbackData.userCorrection ? 1 : 0,
+        feedbackData.confidence || 0,
+        feedbackData.subject || '',
+        feedbackData.bodySnippet || '',
+        feedbackData.fromAddress || '',
+        feedbackData.notes || ''
+      );
+      
+      return {
+        success: true,
+        id: result.lastInsertRowid
+      };
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    console.error('Training feedback save error:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// Get parse queue statistics
+ipcMain.handle('parse:get-stats', async (event, accountEmail = null) => {
+  try {
+    const ParseQueueWorker = require('./processors/parse-queue-worker');
+    const worker = new ParseQueueWorker();
+    
+    const stats = await worker.getParseQueueStats(accountEmail);
+    
+    return {
+      success: true,
+      stats
+    };
+  } catch (error) {
+    console.error('Parse stats error:', error);
+    return {
+      success: false,
+      error: error.message,
+      stats: {
+        pending: 0,
+        parsing: 0,
+        parsed: 0,
+        failed: 0,
+        skip: 0,
+        total: 0
+      }
+    };
+  }
+});
+
+// Retry failed parse items
+ipcMain.handle('parse:retry-failed', async (event, options = {}) => {
+  try {
+    const ParseQueueWorker = require('./processors/parse-queue-worker');
+    const worker = new ParseQueueWorker(event.sender);
+    
+    const result = await worker.retryFailedItems(
+      options.maxRetries || 50,
+      options.modelId || 'llama-3-8b-instruct-q5_k_m'
+    );
+    
+    return {
+      success: true,
+      ...result
+    };
+  } catch (error) {
+    console.error('Parse retry error:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// Get classification queue summary
+ipcMain.handle('classification:get-queue-summary', async (event, accountEmail = null) => {
+  try {
+    const Database = require('better-sqlite3');
+    const path = require('path');
+    const { app } = require('electron');
+    
+    const dbPath = path.join(app.getPath('userData'), 'jobs.db');
+    const db = new Database(dbPath);
+    
+    try {
+      let query = `
+        SELECT 
+          classification_status,
+          parse_status,
+          is_job_related,
+          needs_review,
+          COUNT(*) as count,
+          AVG(confidence) as avg_confidence
+        FROM classification_queue
+      `;
+      
+      const params = [];
+      if (accountEmail) {
+        query += ' WHERE account_email = ?';
+        params.push(accountEmail);
+      }
+      
+      query += ' GROUP BY classification_status, parse_status, is_job_related, needs_review';
+      
+      const stmt = db.prepare(query);
+      const results = stmt.all(...params);
+      
+      // Calculate summary stats
+      const summary = {
+        total: 0,
+        classified: 0,
+        jobRelated: 0,
+        needsReview: 0,
+        pendingParse: 0,
+        parsed: 0,
+        failed: 0,
+        avgConfidence: 0
+      };
+      
+      let totalConfidence = 0;
+      let confidenceCount = 0;
+      
+      for (const row of results) {
+        summary.total += row.count;
+        
+        if (row.classification_status === 'classified' || row.classification_status === 'reviewed') {
+          summary.classified += row.count;
+        }
+        
+        if (row.is_job_related === 1) {
+          summary.jobRelated += row.count;
+        }
+        
+        if (row.needs_review === 1) {
+          summary.needsReview += row.count;
+        }
+        
+        if (row.parse_status === 'pending' && row.is_job_related === 1) {
+          summary.pendingParse += row.count;
+        }
+        
+        if (row.parse_status === 'parsed') {
+          summary.parsed += row.count;
+        }
+        
+        if (row.parse_status === 'failed') {
+          summary.failed += row.count;
+        }
+        
+        if (row.avg_confidence) {
+          totalConfidence += row.avg_confidence * row.count;
+          confidenceCount += row.count;
+        }
+      }
+      
+      if (confidenceCount > 0) {
+        summary.avgConfidence = totalConfidence / confidenceCount;
+      }
+      
+      return {
+        success: true,
+        summary,
+        details: results
+      };
+      
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    console.error('Classification queue summary error:', error);
+    return {
+      success: false,
+      error: error.message,
+      summary: {
+        total: 0,
+        classified: 0,
+        jobRelated: 0,
+        needsReview: 0,
+        pendingParse: 0,
+        parsed: 0,
+        failed: 0,
+        avgConfidence: 0
+      }
+    };
+  }
+});
+
+// Get all classification queue items for review
+ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
+  try {
+    const db = getDb();
+    
+    let query = `
+      SELECT 
+        cq.id,
+        cq.gmail_message_id as email_id,
+        cq.thread_id,
+        cq.subject,
+        cq.sender as from_address,
+        cq.received_date,
+        cq.ml_classification as is_job_related,
+        cq.ml_confidence,
+        cq.needs_review,
+        cq.user_classification,
+        cq.status as review_status,
+        cq.created_at,
+        cq.updated_at,
+        es.account_email
+      FROM classification_queue cq
+      LEFT JOIN email_sync es ON cq.gmail_message_id = es.gmail_message_id
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    
+    // Apply filters
+    if (filters.accountEmail) {
+      query += ' AND es.account_email = ?';
+      params.push(filters.accountEmail);
+    }
+    
+    if (filters.needsReview !== undefined) {
+      query += ' AND cq.needs_review = ?';
+      params.push(filters.needsReview ? 1 : 0);
+    }
+    
+    if (filters.isJobRelated !== undefined) {
+      query += ' AND cq.ml_classification = ?';
+      params.push(filters.isJobRelated ? 1 : 0);
+    }
+    
+    if (filters.status) {
+      query += ' AND cq.status = ?';
+      params.push(filters.status);
+    }
+    
+    // Order by date descending
+    query += ' ORDER BY cq.received_date DESC';
+    
+    if (filters.limit) {
+      query += ' LIMIT ?';
+      params.push(filters.limit);
+    }
+    
+    const stmt = db.prepare(query);
+    const results = stmt.all(...params);
+    
+    // Transform results to match frontend expectations
+    const emails = results.map(row => ({
+      id: row.id,
+      email_id: row.email_id,
+      thread_id: row.thread_id,
+      subject: row.subject || '',
+      from_address: row.from_address || '',
+      received_date: row.received_date || new Date().toISOString(),
+      account_email: row.account_email || '',
+      ml_confidence: row.ml_confidence || 0,
+      is_job_related: Boolean(row.is_job_related),
+      needs_review: Boolean(row.needs_review),
+      user_classification: row.user_classification !== null ? Boolean(row.user_classification) : null,
+      review_status: row.review_status || 'pending',
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
+    
+    // Calculate stats
+    const stats = {
+      total_emails: emails.length,
+      needs_review: emails.filter(e => e.needs_review).length,
+      high_confidence_jobs: emails.filter(e => e.ml_confidence > 70 && e.is_job_related).length,
+      rejected: emails.filter(e => e.review_status === 'rejected' || e.is_job_related === false).length,
+      queued_for_parsing: emails.filter(e => e.review_status === 'queued_for_parsing').length,
+      avg_confidence: emails.length > 0 
+        ? emails.reduce((sum, e) => sum + (e.ml_confidence || 0), 0) / emails.length 
+        : 0
+    };
+    
+    return {
+      success: true,
+      emails,
+      stats
+    };
+    
+  } catch (error) {
+    console.error('Error fetching classification queue:', error);
+    return {
+      success: false,
+      error: error.message,
+      emails: [],
+      stats: {
+        total_emails: 0,
+        needs_review: 0,
+        high_confidence_jobs: 0,
+        rejected: 0,
+        queued_for_parsing: 0,
+        avg_confidence: 0
+      }
+    };
+  }
+});
+
+// ===== END HUMAN-IN-THE-LOOP HANDLERS =====
 
 // Cleanup on app quit
 app.on('before-quit', () => {

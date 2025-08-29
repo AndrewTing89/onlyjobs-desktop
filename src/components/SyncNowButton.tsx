@@ -31,8 +31,8 @@ export const SyncNowButton: React.FC<SyncNowButtonProps> = ({
 
     setLoading(true);
     try {
-      // Call the Electron IPC handler for syncing all Gmail accounts
-      const result = await window.electronAPI.gmail.syncAll();
+      // Call the Electron IPC handler for classification-only sync (HIL workflow)
+      const result = await window.electronAPI.gmail.syncClassifyOnly();
       if (result && result.success) {
         onSyncComplete?.();
       } else if (result && result.error) {

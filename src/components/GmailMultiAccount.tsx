@@ -163,7 +163,8 @@ export const GmailMultiAccount: React.FC = () => {
     setSyncActivityLog([]); // Clear previous activity log
     
     try {
-      await window.electronAPI.gmail.syncAll({
+      // Use classification-only sync for HIL workflow
+      await window.electronAPI.gmail.syncClassifyOnly({
         daysToSync: daysToSync,
         maxEmails: 1000  // Maximum allowed per sync
       });
@@ -181,14 +182,26 @@ export const GmailMultiAccount: React.FC = () => {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h5" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <EmailIcon />
-        Gmail Accounts
-      </Typography>
-      
-      <Typography variant="body2" color="text.secondary" paragraph>
-        Connect multiple Gmail accounts to sync job applications from all your email addresses.
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+        <Box>
+          <Typography variant="h5" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <EmailIcon />
+            Gmail Accounts
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            Connect multiple Gmail accounts to sync job applications from all your email addresses.
+          </Typography>
+        </Box>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={handleAddAccount}
+          disabled={loading || syncing}
+          sx={{ flexShrink: 0 }}
+        >
+          {loading ? 'Connecting...' : 'Add Gmail Account'}
+        </Button>
+      </Box>
 
       {error && (
         <Alert severity="error" onClose={() => setError(null)} sx={{ mb: 2 }}>
@@ -245,62 +258,60 @@ export const GmailMultiAccount: React.FC = () => {
         </List>
       </Paper>
 
-      {/* Settings Accordion */}
-      <Accordion sx={{ mb: 3 }}>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <SettingsIcon />
-            <Typography variant="h6">Sync Settings</Typography>
-          </Box>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <TextField
-              label="Days to sync"
-              type="number"
-              value={daysToSync}
-              onChange={(e) => setDaysToSync(Math.max(1, Math.min(3650, parseInt(e.target.value) || 1)))}
-              inputProps={{
-                min: 1,
-                max: 3650,
-                step: 30,
-                onKeyDown: (e: React.KeyboardEvent) => {
-                  // Enable Cmd+A (Mac) and Ctrl+A (Windows/Linux) to select all
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
-                    e.preventDefault();
-                    const target = e.target as HTMLInputElement;
-                    target.select();
+      {/* Sync Controls Row */}
+      <Box sx={{ mb: 3, display: 'flex', gap: 2 }}>
+        {/* Settings Accordion */}
+        <Accordion sx={{ flex: 1 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <SettingsIcon />
+              <Typography variant="h6">Sync Settings</Typography>
+            </Box>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <TextField
+                label="Days to sync"
+                type="number"
+                value={daysToSync}
+                onChange={(e) => setDaysToSync(Math.max(1, Math.min(3650, parseInt(e.target.value) || 1)))}
+                inputProps={{
+                  min: 1,
+                  max: 3650,
+                  step: 30,
+                  onKeyDown: (e: React.KeyboardEvent) => {
+                    // Enable Cmd+A (Mac) and Ctrl+A (Windows/Linux) to select all
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+                      e.preventDefault();
+                      const target = e.target as HTMLInputElement;
+                      target.select();
+                    }
                   }
-                }
-              }}
-              helperText="How many days back to search (1-3650 days / ~10 years)"
-              sx={{ maxWidth: 300 }}
-            />
-            <Typography variant="body2" color="text.secondary">
-              <strong>Tip:</strong> Try 365 days (1 year) to catch all recent job applications. Already processed emails are automatically skipped.
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Note: Each sync fetches up to 1,000 emails per account. Emails already in the database are skipped.
-            </Typography>
-          </Box>
-        </AccordionDetails>
-      </Accordion>
+                }}
+                helperText="How many days back to search (1-3650 days / ~10 years)"
+                sx={{ maxWidth: 300 }}
+              />
+              <Typography variant="body2" color="text.secondary">
+                <strong>Tip:</strong> Try 365 days (1 year) to catch all recent job applications. Already processed emails are automatically skipped.
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Note: Each sync fetches up to 1,000 emails per account. Emails already in the database are skipped.
+              </Typography>
+            </Box>
+          </AccordionDetails>
+        </Accordion>
 
-      <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
+        {/* Sync Button */}
         <Button
           variant="contained"
-          startIcon={<AddIcon />}
-          onClick={handleAddAccount}
-          disabled={loading || syncing}
-        >
-          {loading ? 'Connecting...' : 'Add Gmail Account'}
-        </Button>
-        
-        <Button
-          variant="outlined"
           startIcon={<SyncIcon />}
           onClick={handleSyncAll}
           disabled={syncing || accounts.length === 0}
+          sx={{ 
+            height: 'fit-content',
+            minWidth: 200,
+            alignSelf: 'flex-start'
+          }}
         >
           Sync All Accounts ({daysToSync} days)
         </Button>

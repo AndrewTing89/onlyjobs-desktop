@@ -18,7 +18,9 @@ import {
   DeleteForever,
   Storage,
   Clear,
-  History
+  History,
+  Work,
+  RateReview
 } from "@mui/icons-material";
 import { useNavigate, useLocation } from "react-router-dom";
 import { ThemeProvider } from '@mui/material/styles';
@@ -44,8 +46,12 @@ export default function Settings() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [clearAllDialogOpen, setClearAllDialogOpen] = useState(false);
   const [clearEmailSyncDialogOpen, setClearEmailSyncDialogOpen] = useState(false);
+  const [clearClassificationsDialogOpen, setClearClassificationsDialogOpen] = useState(false);
+  const [clearJobDataDialogOpen, setClearJobDataDialogOpen] = useState(false);
   const [clearingAllRecords, setClearingAllRecords] = useState(false);
   const [clearingEmailSync, setClearingEmailSync] = useState(false);
+  const [clearingClassifications, setClearingClassifications] = useState(false);
+  const [clearingJobData, setClearingJobData] = useState(false);
 
   // Handle logout
   const handleLogout = async () => {
@@ -82,6 +88,14 @@ export default function Settings() {
 
   const handleClearEmailSync = () => {
     setClearEmailSyncDialogOpen(true);
+  };
+
+  const handleClearClassifications = () => {
+    setClearClassificationsDialogOpen(true);
+  };
+
+  const handleClearJobData = () => {
+    setClearJobDataDialogOpen(true);
   };
 
   const confirmClearAllRecords = async () => {
@@ -137,6 +151,62 @@ export default function Settings() {
       setError("Error clearing email sync history: " + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
       setClearingEmailSync(false);
+    }
+  };
+
+  const confirmClearClassifications = async () => {
+    setClearClassificationsDialogOpen(false);
+    
+    // Check if we're in Electron environment
+    if (!window.electronAPI) {
+      setError("Database management is only available in the desktop application");
+      return;
+    }
+
+    try {
+      setClearingClassifications(true);
+      setError("");
+      setMessage("");
+
+      const result = await window.electronAPI.clearClassifications();
+      
+      if (result.success) {
+        setMessage(result.message);
+      } else {
+        setError("Failed to clear classification data");
+      }
+    } catch (err) {
+      setError("Error clearing classification data: " + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setClearingClassifications(false);
+    }
+  };
+
+  const confirmClearJobData = async () => {
+    setClearJobDataDialogOpen(false);
+    
+    // Check if we're in Electron environment
+    if (!window.electronAPI) {
+      setError("Database management is only available in the desktop application");
+      return;
+    }
+
+    try {
+      setClearingJobData(true);
+      setError("");
+      setMessage("");
+
+      const result = await window.electronAPI.clearJobData();
+      
+      if (result.success) {
+        setMessage("Job data cleared successfully. Gmail accounts remain connected.");
+      } else {
+        setError("Failed to clear job data");
+      }
+    } catch (err) {
+      setError("Error clearing job data: " + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setClearingJobData(false);
     }
   };
 
@@ -214,14 +284,16 @@ export default function Settings() {
                           px: 3,
                           py: 1,
                           textTransform: "none",
-                          minWidth: "160px",
+                          width: "200px",
+                          justifyContent: "center",
+                          flexShrink: 0,
                         }}
                       >
                         {clearingEmailSync ? "Clearing..." : "Clear Sync History"}
                       </Button>
                     </Box>
 
-                    {/* Clear All Records */}
+                    {/* Clear Classifications Only */}
                     <Box sx={{ 
                       display: "flex", 
                       alignItems: "center", 
@@ -232,10 +304,84 @@ export default function Settings() {
                     }}>
                       <Box>
                         <Typography variant="body1" sx={{ mb: 1, fontWeight: 500 }}>
-                          Clear All Database Records
+                          Clear Classifications Only
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
-                          Reset the entire database to a clean state. This removes all jobs, email sync history, and Gmail account connections.
+                          Remove pending classifications and training data. Emails can be re-classified without re-fetching.
+                        </Typography>
+                      </Box>
+                      <Button
+                        variant="outlined"
+                        onClick={handleClearClassifications}
+                        disabled={clearingClassifications}
+                        startIcon={clearingClassifications ? <CircularProgress size={20} /> : <RateReview />}
+                        color="warning"
+                        sx={{
+                          borderRadius: 2,
+                          px: 3,
+                          py: 1,
+                          textTransform: "none",
+                          width: "200px",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {clearingClassifications ? "Clearing..." : "Clear Classifications"}
+                      </Button>
+                    </Box>
+
+                    {/* Clear Job Data Only */}
+                    <Box sx={{ 
+                      display: "flex", 
+                      alignItems: "center", 
+                      justifyContent: "space-between", 
+                      pt: 2, 
+                      borderTop: "1px solid", 
+                      borderColor: "divider" 
+                    }}>
+                      <Box>
+                        <Typography variant="body1" sx={{ mb: 1, fontWeight: 500 }}>
+                          Clear Job Data
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Remove all job applications and email sync history, but keep Gmail account connections intact.
+                        </Typography>
+                      </Box>
+                      <Button
+                        variant="outlined"
+                        onClick={handleClearJobData}
+                        disabled={clearingJobData}
+                        startIcon={clearingJobData ? <CircularProgress size={20} /> : <Work />}
+                        color="warning"
+                        sx={{
+                          borderRadius: 2,
+                          px: 3,
+                          py: 1,
+                          textTransform: "none",
+                          width: "200px",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {clearingJobData ? "Clearing..." : "Clear Job Data"}
+                      </Button>
+                    </Box>
+
+                    {/* Clear Everything Including Gmail Accounts */}
+                    <Box sx={{ 
+                      display: "flex", 
+                      alignItems: "center", 
+                      justifyContent: "space-between", 
+                      pt: 2, 
+                      borderTop: "1px solid", 
+                      borderColor: "divider" 
+                    }}>
+                      <Box>
+                        <Typography variant="body1" sx={{ mb: 1, fontWeight: 500 }}>
+                          Clear Everything (Including Gmail Accounts)
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Reset the entire database to a clean state. This removes all data AND Gmail account connections.
                         </Typography>
                       </Box>
                       <Button
@@ -249,10 +395,12 @@ export default function Settings() {
                           px: 3,
                           py: 1,
                           textTransform: "none",
-                          minWidth: "160px",
+                          width: "200px",
+                          justifyContent: "center",
+                          flexShrink: 0,
                         }}
                       >
-                        {clearingAllRecords ? "Clearing..." : "Clear All Records"}
+                        {clearingAllRecords ? "Clearing..." : "Clear Everything"}
                       </Button>
                     </Box>
                   </Box>
@@ -413,6 +561,84 @@ export default function Settings() {
             color="warning"
           >
             Clear Sync History
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Clear Classifications Confirmation Dialog */}
+      <Dialog
+        open={clearClassificationsDialogOpen}
+        onClose={() => setClearClassificationsDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ color: "warning.main" }}>
+          Clear Classifications Only
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to clear classification data? This will:
+            <br />• Remove all pending classifications from the queue
+            <br />• Clear ML/LLM training feedback data
+            <br />• Delete cached classification results
+            <br /><br />
+            Your email sync history and job records will remain intact. Emails can be re-classified without re-fetching.
+            <br /><br />
+            <strong>This action cannot be undone.</strong>
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ p: 3 }}>
+          <Button 
+            onClick={() => setClearClassificationsDialogOpen(false)}
+            color="inherit"
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={confirmClearClassifications}
+            variant="contained"
+            color="warning"
+          >
+            Clear Classifications
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Clear Job Data Confirmation Dialog */}
+      <Dialog
+        open={clearJobDataDialogOpen}
+        onClose={() => setClearJobDataDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ color: "warning.main" }}>
+          Clear Job Data
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to clear all job data? This will:
+            <br />• Remove all job applications and their details
+            <br />• Clear email sync tracking history  
+            <br />• Reset sync statistics
+            <br /><br />
+            <strong>Gmail account connections will be preserved.</strong> You won't need to sign in again.
+            <br /><br />
+            This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ p: 3 }}>
+          <Button 
+            onClick={() => setClearJobDataDialogOpen(false)}
+            color="inherit"
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={confirmClearJobData}
+            variant="contained"
+            color="warning"
+          >
+            Clear Job Data
           </Button>
         </DialogActions>
       </Dialog>

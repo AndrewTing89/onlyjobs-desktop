@@ -11,6 +11,7 @@ interface ElectronAPI {
   // Database management operations
   clearAllRecords: () => Promise<{ success: boolean; message: string; details: any }>;
   clearEmailSync: () => Promise<{ success: boolean; message: string; recordsDeleted: number }>;
+  clearJobData: () => Promise<{ success: boolean; message: string; emailSyncDeleted: number; jobsDeleted: number; gmailAccountsKept: number }>;
   
   // Email operations for compatibility
   getJobInbox?: (jobId: string) => Promise<any>;
@@ -148,6 +149,7 @@ interface ElectronAPI {
     fetchEmails: (options?: any) => Promise<any>;
     disconnect: () => Promise<any>;
     sync: (options?: { daysToSync?: number; maxEmails?: number; modelId?: string }) => Promise<any>;
+    syncClassifyOnly: (options?: { daysToSync?: number; maxEmails?: number; accountEmail?: string }) => Promise<any>;
     cancelSync: () => Promise<{ success: boolean }>;
     fetch: (options?: { daysToSync?: number; maxEmails?: number }) => Promise<any>;
     getSyncStatus: () => Promise<any>;

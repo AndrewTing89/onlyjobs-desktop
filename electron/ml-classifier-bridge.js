@@ -1,5 +1,6 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const { getTrainingDataCollector } = require('./ml-training/training-data-collector');
 
 /**
  * ML Classifier Bridge for Node.js/Electron
@@ -59,7 +60,11 @@ class MLClassifierBridge {
         });
 
         python.stderr.on('data', (data) => {
-          errorOutput += data.toString();
+          // Suppress debug output from stderr
+          const msg = data.toString();
+          if (!msg.includes('===') && !msg.includes('Extracting') && !msg.includes('Processing')) {
+            errorOutput += msg;
+          }
         });
 
         python.on('close', (code) => {
@@ -75,7 +80,22 @@ class MLClassifierBridge {
           }
 
           try {
-            const result = JSON.parse(output.trim());
+            // Extract only JSON from output (last line starting with {)
+            const lines = output.trim().split('\n');
+            let jsonOutput = '';
+            for (let i = lines.length - 1; i >= 0; i--) {
+              const line = lines[i].trim();
+              if (line.startsWith('{') && line.endsWith('}')) {
+                jsonOutput = line;
+                break;
+              }
+            }
+            
+            if (!jsonOutput) {
+              throw new Error('No JSON output found');
+            }
+            
+            const result = JSON.parse(jsonOutput);
             
             // Cache the result
             this.classificationCache.set(cacheKey, {
@@ -86,13 +106,31 @@ class MLClassifierBridge {
             const elapsed = Date.now() - startTime;
             console.log(`📊 ML Classification completed in ${elapsed}ms - Job: ${result.is_job_related} (confidence: ${result.confidence.toFixed(2)})`);
             
+            // Capture low-confidence predictions for training data collection
+            if (result.confidence < 0.7) {
+              try {
+                const collector = getTrainingDataCollector();
+                collector.captureLowConfidence({
+                  subject: subject || '',
+                  body: body || '',
+                  sender: sender || '',
+                  originalPrediction: result.is_job_related,
+                  originalConfidence: result.confidence,
+                  modelVersion: 'xgboost_v1'
+                });
+              } catch (trainingError) {
+                console.warn('Failed to capture low-confidence prediction for training:', trainingError);
+              }
+            }
+            
             resolve(result);
           } catch (parseError) {
             console.error('Failed to parse ML result:', parseError, 'Output:', output);
             resolve({
               is_job_related: false,
               confidence: 0,
-              error: 'Parse error'
+              error: 'Parse error',
+              model_type: 'rule_based'
             });
           }
         });
@@ -155,6 +193,30 @@ class MLClassifierBridge {
     const size = this.classificationCache.size;
     this.classificationCache.clear();
     console.log(`📊 ML Cache cleared (${size} entries)`);
+  }
+
+  /**
+   * Capture user correction for training data
+   * @param {Object} correctionData - Correction information
+   */
+  async captureUserCorrection(correctionData) {
+    try {
+      const collector = getTrainingDataCollector();
+      const success = await collector.captureCorrection({
+        ...correctionData,
+        modelVersion: 'xgboost_v1',
+        correctionType: 'manual_correction'
+      });
+      
+      if (success) {
+        console.log('📊 User correction captured for training data');
+      }
+      
+      return success;
+    } catch (error) {
+      console.error('Failed to capture user correction:', error);
+      return false;
+    }
   }
 }
 

@@ -39,6 +39,42 @@ class ModelManager {
         sha256: 'de765610ba638f55cbb58c8ad543136526cc6573222e5340827e43ccc81206b0',
         description: 'Function calling specialist - Q5_K_M',
         context: 32768
+      },
+      'llama-3.2-3b-instruct-q5_k_m': {
+        name: 'Llama-3.2-3B-Instruct',
+        filename: 'llama-3.2-3b-instruct-q5_k_m.gguf',
+        url: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q5_K_M.gguf',
+        size: 2100000000, // ~2.1GB Q5_K_M
+        sha256: null, // Will be computed after download
+        description: 'Compact 3B model - Q5_K_M quantization',
+        context: 8192
+      },
+      'qwen2.5-3b-instruct-q5_k_m': {
+        name: 'Qwen2.5-3B-Instruct',
+        filename: 'qwen2.5-3b-instruct-q5_k_m.gguf',
+        url: 'https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q5_K_M.gguf',
+        size: 2000000000, // ~2.0GB Q5_K_M
+        sha256: null, // Will be computed after download
+        description: 'Efficient 3B Qwen model - Q5_K_M quantization',
+        context: 32768
+      },
+      'phi-3.5-mini-instruct-q5_k_m': {
+        name: 'Phi-3.5-mini-instruct',
+        filename: 'phi-3.5-mini-instruct-q5_k_m.gguf',
+        url: 'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q5_K_M.gguf',
+        size: 2500000000, // ~2.5GB Q5_K_M
+        sha256: null, // Will be computed after download
+        description: 'Microsoft Phi-3.5 mini (3.8B) - Q5_K_M quantization',
+        context: 4096
+      },
+      'gemma-2-2b-it-q5_k_m': {
+        name: 'Gemma-2-2B-it',
+        filename: 'gemma-2-2b-it-q5_k_m.gguf',
+        url: 'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q5_K_M.gguf',
+        size: 1500000000, // ~1.5GB Q5_K_M
+        sha256: null, // Will be computed after download
+        description: 'Google Gemma-2 2B instruction tuned - Q5_K_M quantization',
+        context: 8192
       }
     };
     

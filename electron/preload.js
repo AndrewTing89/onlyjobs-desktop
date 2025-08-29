@@ -15,9 +15,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Database management operations
   clearAllRecords: () => ipcRenderer.invoke('db:clear-all-records'),
   clearEmailSync: () => ipcRenderer.invoke('db:clear-email-sync'),
+  clearJobData: () => ipcRenderer.invoke('db:clear-job-data'),
+  clearClassifications: () => ipcRenderer.invoke('db:clear-classifications'),
   
   // Email classification
   classifyEmail: (content) => ipcRenderer.invoke('classify-email', content),
+  getClassificationQueue: (filters) => ipcRenderer.invoke('classification:get-queue', filters),
+  updateClassification: (id, isJobRelated, notes) => ipcRenderer.invoke('classification:update', id, isJobRelated, notes),
   
   // LLM Health Check
   checkLLMHealth: () => ipcRenderer.invoke('llm:health-check'),
@@ -79,6 +83,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     addAccount: () => ipcRenderer.invoke('gmail:add-account'),
     removeAccount: (email) => ipcRenderer.invoke('gmail:remove-account', email),
     syncAll: (options) => ipcRenderer.invoke('gmail:sync-all', options),
+    syncClassifyOnly: (options) => ipcRenderer.invoke('sync:classify-only', options),
   },
   
   // Email operations

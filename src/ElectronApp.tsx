@@ -7,16 +7,15 @@ import { Box, Button, Typography, CircularProgress } from '@mui/material';
 import { onlyJobsTheme } from './theme';
 
 // Lazy load only the pages we need for Electron
+const Jobs = lazy(() => import('./pages/Jobs'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Settings = lazy(() => import('./pages/Settings'));
 const AnalyticsDashboard = lazy(() => import('./pages/AnalyticsDashboard'));
-const PromptEditor = lazy(() => import('./pages/PromptEditor'));
-const ModelTestingPage = lazy(() => import('./pages/ModelTestingPage'));
-const ModelDashboard = lazy(() => import('./pages/ModelDashboard'));
-// Model-specific pages
-const LlamaModelPage = lazy(() => import('./pages/models/LlamaModelPage'));
-const Qwen7BModelPage = lazy(() => import('./pages/models/Qwen7BModelPage'));
-const HermesModelPage = lazy(() => import('./pages/models/HermesModelPage'));
+const TrainingDataDashboard = lazy(() => import('./pages/TrainingDataDashboard'));
+const ClassificationReview = lazy(() => import('./pages/ClassificationReview'));
+// Workflow pages
+const GmailFetchPage = lazy(() => import('./pages/GmailFetchPage'));
+const ExtractionPage = lazy(() => import('./pages/ExtractionPage'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TestIPC = lazy(() => import('./pages/TestIPC'));
@@ -101,19 +100,19 @@ function ElectronApp() {
           <ElectronAuthGuard>
             <Suspense fallback={<LoadingSpinner fullScreen />}>
               <Routes>
-                {/* Default route - go to dashboard */}
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                {/* Default route - go to jobs */}
+                <Route path="/" element={<Navigate to="/jobs" replace />} />
+                
+                {/* Workflow routes */}
+                <Route path="/gmail-fetch" element={<GmailFetchPage />} />
+                <Route path="/extraction" element={<ExtractionPage />} />
                 
                 {/* Main app routes */}
+                <Route path="/jobs" element={<Jobs />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/analytics" element={<AnalyticsDashboard />} />
-                <Route path="/prompt-editor" element={<PromptEditor />} />
-                <Route path="/model-testing" element={<ModelTestingPage />} />
-                <Route path="/model-testing/:modelId" element={<ModelDashboard />} />
-                {/* Model-specific testing pages */}
-                <Route path="/models/llama-3-8b-instruct-q5_k_m" element={<LlamaModelPage />} />
-                <Route path="/models/qwen2.5-7b-instruct-q5_k_m" element={<Qwen7BModelPage />} />
-                <Route path="/models/hermes-2-pro-mistral-7b-q5_k_m" element={<HermesModelPage />} />
+                <Route path="/training-data" element={<TrainingDataDashboard />} />
+                <Route path="/classification-review" element={<ClassificationReview />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/about" element={<About />} />
                 
