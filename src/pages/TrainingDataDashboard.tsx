@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useLocation } from 'react-router-dom';
 import {
   Box,
   CssBaseline,
@@ -110,6 +111,7 @@ interface ExportResult {
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
 export default function TrainingDataDashboard() {
+  const location = useLocation();
   const isElectron = !!window.electronAPI;
   
   const [stats, setStats] = useState<TrainingStats | null>(null);
@@ -269,7 +271,7 @@ export default function TrainingDataDashboard() {
       <Box sx={{ display: 'flex', minHeight: '100vh' }}>
         <CssBaseline />
         
-        <Sidebar />
+        <Sidebar currentPath={location.pathname} />
         
         <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
           <TopBar title="Training Data Dashboard" onLogout={async () => {}} />

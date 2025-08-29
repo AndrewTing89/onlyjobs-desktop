@@ -106,7 +106,7 @@ export default function About() {
                 </Typography>
                 <Typography variant="body1">
                   A desktop application that intelligently processes your Gmail to automatically track job applications 
-                  using a two-tier classification system that combines machine learning with large language models.
+                  using a Human-in-the-Loop workflow with an optimized 3-stage stateless LLM classification system.
                 </Typography>
               </CardContent>
             </Card>
@@ -115,86 +115,127 @@ export default function About() {
             <Card sx={{ mb: 3 }}>
               <CardContent>
                 <Typography variant="h5" sx={{ fontWeight: 600, mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Psychology /> Two-Tier Classification System
+                  <Psychology /> Human-in-the-Loop Classification System
                 </Typography>
                 
                 <Grid container spacing={3}>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <Paper sx={{ p: 3, height: '100%', bgcolor: '#e8f5e9' }}>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <Paper sx={{ p: 3, height: '100%', bgcolor: '#fff3e0' }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                        <Memory sx={{ color: 'success.main' }} />
+                        <Email sx={{ color: 'warning.main' }} />
                         <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                          Tier 1: ML Classifier
+                          Stage 1: Fetch & Classify
                         </Typography>
                       </Box>
                       <List dense>
                         <ListItem>
-                          <ListItemIcon><Speed color="success" /></ListItemIcon>
+                          <ListItemIcon><Speed color="warning" /></ListItemIcon>
                           <ListItemText 
-                            primary="Lightning Fast"
-                            secondary="~10ms per email"
+                            primary="Ultra-Fast Binary Classification"
+                            secondary="~0.5s per email (512 tokens)"
                           />
                         </ListItem>
                         <ListItem>
-                          <ListItemIcon><Storage color="success" /></ListItemIcon>
+                          <ListItemIcon><Storage color="warning" /></ListItemIcon>
                           <ListItemText 
-                            primary="Local Processing"
-                            secondary="No external API calls"
+                            primary="Stateless Processing"
+                            secondary="Fresh context for each email"
                           />
                         </ListItem>
                         <ListItem>
-                          <ListItemIcon><School color="success" /></ListItemIcon>
+                          <ListItemIcon><FilterAlt color="warning" /></ListItemIcon>
                           <ListItemText 
-                            primary="Random Forest Model"
-                            secondary={`${mlStats?.totalSamples || 0} training samples`}
+                            primary="Early Exit Strategy"
+                            secondary="70% emails filtered out quickly"
                           />
                         </ListItem>
                         <ListItem>
-                          <ListItemIcon><CheckCircle color="success" /></ListItemIcon>
+                          <ListItemIcon><CheckCircle color="warning" /></ListItemIcon>
                           <ListItemText 
-                            primary="85% Confidence Threshold"
-                            secondary="Uses ML when confident"
+                            primary="ML Pre-Classifier"
+                            secondary="Stage 0 for even faster filtering"
                           />
                         </ListItem>
                       </List>
                     </Paper>
                   </Grid>
 
-                  <Grid size={{ xs: 12, md: 6 }}>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <Paper sx={{ p: 3, height: '100%', bgcolor: '#e8f5e9' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                        <CheckCircle sx={{ color: 'success.main' }} />
+                        <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                          Stage 2: Human Review
+                        </Typography>
+                      </Box>
+                      <List dense>
+                        <ListItem>
+                          <ListItemIcon><Psychology color="success" /></ListItemIcon>
+                          <ListItemText 
+                            primary="Review Classifications"
+                            secondary="Verify AI-identified job emails"
+                          />
+                        </ListItem>
+                        <ListItem>
+                          <ListItemIcon><School color="success" /></ListItemIcon>
+                          <ListItemText 
+                            primary="Training Data Collection"
+                            secondary="Corrections improve models"
+                          />
+                        </ListItem>
+                        <ListItem>
+                          <ListItemIcon><Timeline color="success" /></ListItemIcon>
+                          <ListItemText 
+                            primary="Confidence Indicators"
+                            secondary="Visual cues for uncertainty"
+                          />
+                        </ListItem>
+                        <ListItem>
+                          <ListItemIcon><DataUsage color="success" /></ListItemIcon>
+                          <ListItemText 
+                            primary="Bulk Operations"
+                            secondary="Efficient batch processing"
+                          />
+                        </ListItem>
+                      </List>
+                    </Paper>
+                  </Grid>
+
+                  <Grid size={{ xs: 12, md: 4 }}>
                     <Paper sx={{ p: 3, height: '100%', bgcolor: '#e3f2fd' }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                         <CloudQueue sx={{ color: 'primary.main' }} />
                         <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                          Tier 2: LLM Classifier
+                          Stage 3: Extract Details
                         </Typography>
                       </Box>
                       <List dense>
                         <ListItem>
                           <ListItemIcon><Psychology color="primary" /></ListItemIcon>
                           <ListItemText 
-                            primary="High Accuracy"
-                            secondary="Advanced language understanding"
+                            primary="LLM Extraction"
+                            secondary="~1s per email (1024 tokens)"
                           />
                         </ListItem>
                         <ListItem>
                           <ListItemIcon><Timeline color="primary" /></ListItemIcon>
                           <ListItemText 
-                            primary="Detailed Extraction"
+                            primary="Detailed Parsing"
                             secondary="Company, position, status"
                           />
                         </ListItem>
                         <ListItem>
-                          <ListItemIcon><DataUsage color="primary" /></ListItemIcon>
+                          <ListItemIcon><Memory color="primary" /></ListItemIcon>
                           <ListItemText 
-                            primary="2-3 seconds per email"
-                            secondary="More compute intensive"
+                            primary="Job Matching"
+                            secondary="~0.5s orphan detection"
                           />
                         </ListItem>
                         <ListItem>
                           <ListItemIcon><FilterAlt color="primary" /></ListItemIcon>
                           <ListItemText 
-                            primary="Fallback System"
-                            secondary="Used for uncertain cases"
+                            primary="Thread-Aware"
+                            secondary="Groups emails by conversation"
                           />
                         </ListItem>
                       </List>
@@ -208,18 +249,18 @@ export default function About() {
             <Card sx={{ mb: 3 }}>
               <CardContent>
                 <Typography variant="h5" sx={{ fontWeight: 600, mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Timeline /> Classification Flow
+                  <Timeline /> Human-in-the-Loop Workflow
                 </Typography>
                 
                 <Box sx={{ position: 'relative', pl: 4 }}>
                   {[
-                    { icon: <Email />, title: 'Email Arrives', desc: 'New email fetched from Gmail', color: 'text.secondary' },
-                    { icon: <FilterAlt />, title: 'Prefilter Check', desc: 'Quick regex patterns eliminate obvious non-job emails', color: 'warning.main' },
-                    { icon: <Memory />, title: 'ML Classification', desc: 'Random Forest model attempts classification', color: 'success.main' },
-                    { icon: <CheckCircle />, title: 'Confidence Check', desc: 'If confidence > 85%, use ML result', color: 'info.main' },
-                    { icon: <CloudQueue />, title: 'LLM Fallback', desc: 'Low confidence triggers LLM classification', color: 'primary.main' },
-                    { icon: <Storage />, title: 'Database Storage', desc: 'Results stored with deduplication', color: 'text.primary' },
-                    { icon: <School />, title: 'Continuous Learning', desc: 'User feedback improves ML model', color: 'secondary.main' }
+                    { icon: <Email />, title: 'Fetch Emails', desc: 'Connect Gmail accounts and sync emails', color: 'text.secondary' },
+                    { icon: <Memory />, title: 'ML Classification', desc: 'Ultra-fast ML classification (~10ms) identifies job emails', color: 'warning.main' },
+                    { icon: <CheckCircle />, title: 'Human Review', desc: 'User verifies and corrects ML classifications', color: 'info.main' },
+                    { icon: <CloudQueue />, title: 'LLM Extraction', desc: 'Extract job details from confirmed emails (~1s, 1024 tokens)', color: 'primary.main' },
+                    { icon: <FilterAlt />, title: 'LLM Job Matching', desc: 'Match orphan emails to existing jobs (~0.5s, 512 tokens)', color: 'secondary.main' },
+                    { icon: <Storage />, title: 'Database Storage', desc: 'Store jobs with thread grouping and deduplication', color: 'text.primary' },
+                    { icon: <School />, title: 'Model Training', desc: 'User feedback continuously improves ML model', color: 'success.main' }
                   ].map((step, index) => (
                     <Box key={index} sx={{ display: 'flex', alignItems: 'flex-start', mb: 3, position: 'relative' }}>
                       {index < 6 && (
@@ -264,7 +305,7 @@ export default function About() {
             </Card>
 
             {/* Database Schema */}
-            <Card sx={{ mb: 3 }}>
+            <Card>
               <CardContent>
                 <Typography variant="h5" sx={{ fontWeight: 600, mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Storage /> Database Schema
@@ -274,26 +315,51 @@ export default function About() {
                   {[
                     {
                       table: 'jobs',
-                      desc: 'Stores classified job applications',
-                      fields: ['id', 'company', 'position', 'status', 'applied_date', 'gmail_message_id']
-                    },
-                    {
-                      table: 'email_sync',
-                      desc: 'Tracks processed emails',
-                      fields: ['gmail_message_id', 'account_email', 'processed_at', 'is_job_related']
-                    },
-                    {
-                      table: 'ml_feedback',
-                      desc: 'User corrections for training',
-                      fields: ['email_id', 'is_job_related', 'company', 'position', 'confidence']
+                      desc: 'Main job applications table with HIL status',
+                      fields: ['id', 'company', 'position', 'status', 'thread_id', 'email_thread_ids', 'classification_status', 'parse_status']
                     },
                     {
                       table: 'gmail_accounts',
-                      desc: 'Multi-account management',
-                      fields: ['email', 'refresh_token', 'added_at', 'is_active']
+                      desc: 'Multi-account OAuth management',
+                      fields: ['email', 'access_token', 'refresh_token', 'last_sync', 'is_active']
+                    },
+                    {
+                      table: 'email_sync',
+                      desc: 'Tracks all processed emails',
+                      fields: ['gmail_message_id', 'account_email', 'processed_at', 'is_job_related']
+                    },
+                    {
+                      table: 'classification_queue',
+                      desc: 'Human-in-the-Loop review queue',
+                      fields: ['gmail_message_id', 'thread_id', 'ml_classification', 'ml_confidence', 'user_classification', 'status']
+                    },
+                    {
+                      table: 'training_feedback',
+                      desc: 'User corrections for ML training',
+                      fields: ['gmail_message_id', 'ml_predicted_label', 'human_label', 'correction_reason', 'feature_hash']
+                    },
+                    {
+                      table: 'llm_cache',
+                      desc: 'Caches LLM results (7-day TTL)',
+                      fields: ['input_hash', 'stage', 'model_name', 'result', 'expires_at']
+                    },
+                    {
+                      table: 'model_prompts',
+                      desc: 'Custom prompts per model/stage',
+                      fields: ['model_name', 'stage', 'prompt_text', 'is_active']
+                    },
+                    {
+                      table: 'sync_status',
+                      desc: 'Global sync statistics',
+                      fields: ['last_fetch_time', 'total_emails_fetched', 'total_jobs_found']
+                    },
+                    {
+                      table: 'sync_history',
+                      desc: 'Historical sync logs',
+                      fields: ['sync_date', 'accounts_synced', 'emails_fetched', 'jobs_found', 'duration_ms']
                     }
                   ].map((table) => (
-                    <Grid size={{ xs: 12, sm: 6 }} key={table.table}>
+                    <Grid size={{ xs: 12, sm: 6, md: 4 }} key={table.table}>
                       <Paper sx={{ p: 2, height: '100%' }}>
                         <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
                           {table.table}
@@ -310,69 +376,6 @@ export default function About() {
                     </Grid>
                   ))}
                 </Grid>
-              </CardContent>
-            </Card>
-
-            {/* Performance Metrics */}
-            <Card>
-              <CardContent>
-                <Typography variant="h5" sx={{ fontWeight: 600, mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <TrendingUp /> Performance Metrics
-                </Typography>
-                
-                <Grid container spacing={3}>
-                  <Grid size={{ xs: 12, sm: 4 }}>
-                    <Box sx={{ textAlign: 'center' }}>
-                      <Typography variant="h4" color="primary" sx={{ fontWeight: 600 }}>
-                        200x
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Faster than LLM
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        ML: 10ms vs LLM: 2000ms
-                      </Typography>
-                    </Box>
-                  </Grid>
-                  
-                  <Grid size={{ xs: 12, sm: 4 }}>
-                    <Box sx={{ textAlign: 'center' }}>
-                      <Typography variant="h4" color="success.main" sx={{ fontWeight: 600 }}>
-                        {mlStats ? `${(mlStats.accuracy * 100).toFixed(1)}%` : 'N/A'}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        ML Accuracy
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Improves with feedback
-                      </Typography>
-                    </Box>
-                  </Grid>
-                  
-                  <Grid size={{ xs: 12, sm: 4 }}>
-                    <Box sx={{ textAlign: 'center' }}>
-                      <Typography variant="h4" color="warning.main" sx={{ fontWeight: 600 }}>
-                        60-70%
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Emails Prefiltered
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Reduced processing load
-                      </Typography>
-                    </Box>
-                  </Grid>
-                </Grid>
-
-                {mlStats && mlStats.totalSamples < 100 && (
-                  <Alert severity="info" sx={{ mt: 3 }}>
-                    <Typography variant="body2">
-                      Your ML model currently has {mlStats.totalSamples} training samples. 
-                      Continue syncing emails and providing feedback to improve accuracy. 
-                      The model needs at least 100 samples to be fully effective.
-                    </Typography>
-                  </Alert>
-                )}
               </CardContent>
             </Card>
 

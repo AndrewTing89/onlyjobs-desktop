@@ -18,8 +18,8 @@ import {
   Info,
   ModelTraining,
   Email,
-  SmartToy,
-  Assignment,
+  RateReview,
+  Psychology,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '@mui/material/styles';
@@ -46,8 +46,8 @@ const sidebarSections: SidebarSection[] = [
     title: 'Workflow',
     items: [
       { text: 'Fetch Emails', icon: <Email />, path: '/gmail-fetch', active: false },
-      { text: 'Classify', icon: <SmartToy />, path: '/classification-review', active: false },
-      { text: 'Extract', icon: <Assignment />, path: '/extraction', active: false },
+      { text: 'Classify', icon: <RateReview />, path: '/classification-review', active: false },
+      { text: 'Extract', icon: <Psychology />, path: '/extraction', active: false },
     ]
   },
   {
@@ -78,8 +78,12 @@ export default function Sidebar({ currentPath = '/' }: SidebarProps) {
   };
 
   const isActive = (itemPath: string) => {
+    // Handle root/jobs path
     if (itemPath === '/jobs' && (currentPath === '/' || currentPath === '/jobs')) return true;
-    if (itemPath !== '/jobs' && currentPath.startsWith(itemPath)) return true;
+    // Handle exact match for training-data
+    if (itemPath === '/training-data' && currentPath === '/training-data') return true;
+    // Handle other paths with prefix matching (but not for training-data)
+    if (itemPath !== '/jobs' && itemPath !== '/training-data' && currentPath.startsWith(itemPath)) return true;
     return false;
   };
 

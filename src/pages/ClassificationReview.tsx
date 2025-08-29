@@ -85,7 +85,7 @@ const workflowSteps = [
   },
   {
     label: 'Extract Job Details',
-    description: 'Parse job details from confirmed job emails',
+    description: 'Use LLM models to parse job details from confirmed job emails',
     active: false
   }
 ];
@@ -345,11 +345,24 @@ export default function ClassificationReview() {
               <CardContent>
                 <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <RateReview color="primary" />
-                  Classification Workflow Progress
+                  Workflow
                 </Typography>
                 <Stepper activeStep={1} orientation="horizontal">
                   {workflowSteps.map((step, index) => (
-                    <Step key={step.label} completed={index < 1}>
+                    <Step 
+                      key={step.label} 
+                      completed={index < 1}
+                      sx={{
+                        '& .MuiStepLabel-root': {
+                          ...(index === 1 && {
+                            padding: '8px',
+                            border: '2px solid #FF7043',
+                            borderRadius: '8px',
+                            backgroundColor: 'rgba(255, 112, 67, 0.04)'
+                          })
+                        }
+                      }}
+                    >
                       <StepLabel>
                         <Box>
                           <Typography variant="subtitle2">{step.label}</Typography>

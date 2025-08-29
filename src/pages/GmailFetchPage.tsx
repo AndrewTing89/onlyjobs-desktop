@@ -47,7 +47,7 @@ const workflowSteps = [
   },
   {
     label: 'Extract Job Details',
-    description: 'Parse job details from confirmed job emails',
+    description: 'Use LLM models to parse job details from confirmed job emails',
     active: false
   }
 ];
@@ -165,11 +165,24 @@ export default function GmailFetchPage() {
               <CardContent>
                 <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <EmailIcon color="primary" />
-                  Email Workflow Progress
+                  Workflow
                 </Typography>
                 <Stepper activeStep={0} orientation="horizontal">
                   {workflowSteps.map((step, index) => (
-                    <Step key={step.label} completed={index === 0 && (syncStats.processed !== undefined && syncStats.processed > 0)}>
+                    <Step 
+                      key={step.label} 
+                      completed={index === 0 && (syncStats.processed !== undefined && syncStats.processed > 0)}
+                      sx={{
+                        '& .MuiStepLabel-root': {
+                          ...(index === 0 && {
+                            padding: '8px',
+                            border: '2px solid #FF7043',
+                            borderRadius: '8px',
+                            backgroundColor: 'rgba(255, 112, 67, 0.04)'
+                          })
+                        }
+                      }}
+                    >
                       <StepLabel>
                         <Box>
                           <Typography variant="subtitle2">{step.label}</Typography>

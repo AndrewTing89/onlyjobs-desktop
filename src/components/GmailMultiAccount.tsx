@@ -17,9 +17,6 @@ import {
   DialogActions,
   LinearProgress,
   TextField,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -27,8 +24,6 @@ import {
   Sync as SyncIcon,
   Email as EmailIcon,
   CheckCircle as CheckCircleIcon,
-  ExpandMore as ExpandMoreIcon,
-  Settings as SettingsIcon,
 } from '@mui/icons-material';
 import { SyncActivityLog, SyncLogEntry } from './SyncActivityLog';
 
@@ -259,58 +254,47 @@ export const GmailMultiAccount: React.FC = () => {
       </Paper>
 
       {/* Sync Controls Row */}
-      <Box sx={{ mb: 3, display: 'flex', gap: 2 }}>
-        {/* Settings Accordion */}
-        <Accordion sx={{ flex: 1 }}>
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <SettingsIcon />
-              <Typography variant="h6">Sync Settings</Typography>
-            </Box>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <TextField
-                label="Days to sync"
-                type="number"
-                value={daysToSync}
-                onChange={(e) => setDaysToSync(Math.max(1, Math.min(3650, parseInt(e.target.value) || 1)))}
-                inputProps={{
-                  min: 1,
-                  max: 3650,
-                  step: 30,
-                  onKeyDown: (e: React.KeyboardEvent) => {
-                    // Enable Cmd+A (Mac) and Ctrl+A (Windows/Linux) to select all
-                    if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
-                      e.preventDefault();
-                      const target = e.target as HTMLInputElement;
-                      target.select();
-                    }
-                  }
-                }}
-                helperText="How many days back to search (1-3650 days / ~10 years)"
-                sx={{ maxWidth: 300 }}
-              />
-              <Typography variant="body2" color="text.secondary">
-                <strong>Tip:</strong> Try 365 days (1 year) to catch all recent job applications. Already processed emails are automatically skipped.
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Note: Each sync fetches up to 1,000 emails per account. Emails already in the database are skipped.
-              </Typography>
-            </Box>
-          </AccordionDetails>
-        </Accordion>
-
-        {/* Sync Button */}
+      <Box sx={{ mb: 3, display: 'flex', gap: 2, alignItems: 'center' }}>
+        <TextField
+          label="Days to sync"
+          type="number"
+          value={daysToSync}
+          onChange={(e) => setDaysToSync(Math.max(1, Math.min(3650, parseInt(e.target.value) || 1)))}
+          inputProps={{
+            min: 1,
+            max: 3650,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              // Enable Cmd+A (Mac) and Ctrl+A (Windows/Linux) to select all
+              if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+                e.preventDefault();
+                const target = e.target as HTMLInputElement;
+                target.select();
+              }
+            }
+          }}
+          size="small"
+          sx={{ width: 200 }}
+        />
+        
         <Button
-          variant="contained"
+          variant="outlined"
           startIcon={<SyncIcon />}
           onClick={handleSyncAll}
           disabled={syncing || accounts.length === 0}
+          size="medium"
           sx={{ 
-            height: 'fit-content',
+            height: '40px',
             minWidth: 200,
-            alignSelf: 'flex-start'
+            color: '#FF7043',
+            borderColor: '#FF7043',
+            '&:hover': {
+              borderColor: '#FF7043',
+              backgroundColor: 'rgba(255, 112, 67, 0.04)'
+            },
+            '&:disabled': {
+              borderColor: 'rgba(0, 0, 0, 0.12)',
+              color: 'rgba(0, 0, 0, 0.26)'
+            }
           }}
         >
           Sync All Accounts ({daysToSync} days)

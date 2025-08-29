@@ -20,7 +20,6 @@ import {
   Button,
   Alert,
   Snackbar,
-  Divider,
   Stack,
   LinearProgress,
   Table,
@@ -98,7 +97,7 @@ const workflowSteps = [
   },
   {
     label: 'Extract Job Details',
-    description: 'Parse job details from confirmed job emails',
+    description: 'Use LLM models to parse job details from confirmed job emails',
     active: true
   }
 ];
@@ -230,62 +229,10 @@ Format the response as JSON.`);
     try {
       setLoading(true);
       
-      // Mock data - in real implementation this would load confirmed job emails
-      const mockEmails: EmailClassification[] = [
-        {
-          id: '1',
-          email_id: 'email_1',
-          from_address: 'noreply@google.com',
-          subject: 'Application received for Software Engineer position',
-          received_date: new Date(Date.now() - 86400000).toISOString(),
-          account_email: 'user@example.com',
-          thread_id: 'thread_1',
-          ml_confidence: 95,
-          is_job_related: true,
-          review_status: 'approved',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        },
-        {
-          id: '2',
-          email_id: 'email_2',
-          from_address: 'careers@microsoft.com',
-          subject: 'Interview invitation - Senior Developer Role',
-          received_date: new Date(Date.now() - 172800000).toISOString(),
-          account_email: 'user@example.com',
-          ml_confidence: 87,
-          is_job_related: true,
-          review_status: 'approved',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        },
-        {
-          id: '3',
-          email_id: 'email_3',
-          from_address: 'jobs@apple.com',
-          subject: 'Thank you for your application to Apple',
-          received_date: new Date(Date.now() - 259200000).toISOString(),
-          account_email: 'user@example.com',
-          ml_confidence: 78,
-          is_job_related: true,
-          review_status: 'approved',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }
-      ];
-
-      setEmails(mockEmails);
-      
-      // Initialize extraction results
-      const results: Record<string, ExtractionResult> = {};
-      mockEmails.forEach(email => {
-        results[email.id] = {
-          id: email.id,
-          email_id: email.email_id,
-          extraction_status: 'pending'
-        };
-      });
-      setExtractionResults(results);
+      // TODO: Fetch real confirmed job emails from the database
+      // For now, set empty array
+      setEmails([]);
+      setExtractionResults({});
       
     } catch (error) {
       console.error('Error loading job emails:', error);
@@ -521,14 +468,24 @@ Format the response as JSON.`);
               <CardContent>
                 <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Psychology color="primary" />
-                  Job Detail Extraction Workflow
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Use LLM models to parse job details from confirmed job emails
+                  Workflow
                 </Typography>
                 <Stepper activeStep={2} orientation="horizontal">
                   {workflowSteps.map((step, index) => (
-                    <Step key={step.label} completed={index < 2}>
+                    <Step 
+                      key={step.label} 
+                      completed={index < 2}
+                      sx={{
+                        '& .MuiStepLabel-root': {
+                          ...(index === 2 && {
+                            padding: '8px',
+                            border: '2px solid #FF7043',
+                            borderRadius: '8px',
+                            backgroundColor: 'rgba(255, 112, 67, 0.04)'
+                          })
+                        }
+                      }}
+                    >
                       <StepLabel>
                         <Box>
                           <Typography variant="subtitle2">{step.label}</Typography>
@@ -540,58 +497,6 @@ Format the response as JSON.`);
                     </Step>
                   ))}
                 </Stepper>
-              </CardContent>
-            </Card>
-          </Box>
-
-          {/* Model Selection - Full Width */}
-          <Box sx={{ px: 3, py: 1 }}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Psychology sx={{ color: accent }} />
-                  Model Selection
-                </Typography>
-                <FormControl fullWidth sx={{ mb: 2 }}>
-                  <InputLabel>Choose Model</InputLabel>
-                  <Select
-                    value={selectedModel}
-                    onChange={(e) => handleModelChange(e.target.value)}
-                    disabled={progress.isRunning}
-                    label="Choose Model"
-                  >
-                    {availableModels.map(model => (
-                      <MenuItem key={model.id} value={model.id}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                          <Box sx={{ flexGrow: 1 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                              {model.name}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {model.description}
-                            </Typography>
-                          </Box>
-                          <Chip 
-                            label={model.size}
-                            size="small"
-                            sx={{ 
-                              backgroundColor: model.color,
-                              color: 'white',
-                              ml: 1
-                            }}
-                          />
-                        </Box>
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                
-                <Alert severity="info">
-                  <Typography variant="body2">
-                    <strong>Selected:</strong> {selectedModelInfo.name}<br/>
-                    <strong>Size:</strong> {selectedModelInfo.size} | Real-time switching supported
-                  </Typography>
-                </Alert>
               </CardContent>
             </Card>
           </Box>
@@ -654,148 +559,190 @@ Format the response as JSON.`);
             </Card>
           </Box>
 
-          {/* Batch Operations and Extraction Progress - Side by Side */}
+          {/* Model Selection, Processing, and Progress - Three equal cards */}
           <Box sx={{ px: 3, py: 1 }}>
             <Grid container spacing={2}>
-              {/* Batch Operations */}
-              <Grid size={{ xs: 12, md: 6 }}>
+              {/* Model Selection - Left */}
+              <Grid size={{ xs: 12, md: 4 }}>
                 <Card sx={{ height: '100%' }}>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <PlayArrow sx={{ color: accent }} />
-                      Batch Operations
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                      <Psychology sx={{ color: accent }} />
+                      Model Selection
                     </Typography>
-                    <Stack spacing={2}>
-                      <Button
-                        fullWidth
-                        startIcon={<PlayArrow />}
-                        variant="contained"
-                        onClick={() => startExtraction(selectedEmails)}
-                        disabled={selectedEmails.length === 0 || progress.isRunning}
-                        sx={{ backgroundColor: accent }}
-                      >
-                        Parse Selected ({selectedEmails.length})
-                      </Button>
-                      
-                      <Button
-                        fullWidth
-                        startIcon={<PlayArrow />}
-                        variant="outlined"
-                        onClick={() => startExtraction(emails.map(e => e.id))}
+                    <FormControl fullWidth>
+                      <InputLabel>Choose Model</InputLabel>
+                      <Select
+                        value={selectedModel}
+                        onChange={(e) => handleModelChange(e.target.value)}
                         disabled={progress.isRunning}
+                        label="Choose Model"
+                        size="small"
                       >
-                        Parse All ({emails.length})
-                      </Button>
-                      
-                      {progress.isRunning && (
+                        {availableModels.map(model => (
+                          <MenuItem key={model.id} value={model.id}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                              <Box sx={{ flexGrow: 1 }}>
+                                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                  {model.name}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {model.description}
+                                </Typography>
+                              </Box>
+                              <Chip 
+                                label={model.size}
+                                size="small"
+                                sx={{ 
+                                  backgroundColor: model.color,
+                                  color: 'white',
+                                  ml: 1
+                                }}
+                              />
+                            </Box>
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </CardContent>
+                </Card>
+              </Grid>
+              
+              {/* Processing - Middle */}
+              <Grid size={{ xs: 12, md: 4 }}>
+                <Card sx={{ height: '100%' }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                      <PlayArrow sx={{ color: accent }} />
+                      Processing
+                    </Typography>
+                    
+                    <Stack spacing={1.5}>
+                      {/* Action Buttons - Compact */}
+                      <Box sx={{ display: 'flex', gap: 1 }}>
                         <Button
                           fullWidth
-                          startIcon={<Stop />}
+                          size="small"
+                          startIcon={<PlayArrow sx={{ fontSize: 18 }} />}
+                          variant="contained"
+                          onClick={() => startExtraction(selectedEmails)}
+                          disabled={selectedEmails.length === 0 || progress.isRunning}
+                          sx={{ backgroundColor: accent, py: 0.75 }}
+                        >
+                          Parse Selected ({selectedEmails.length})
+                        </Button>
+                        
+                        <Button
+                          fullWidth
+                          size="small"
+                          startIcon={<PlayArrow sx={{ fontSize: 18 }} />}
+                          variant="outlined"
+                          onClick={() => startExtraction(emails.map(e => e.id))}
+                          disabled={progress.isRunning}
+                          sx={{ py: 0.75 }}
+                        >
+                          Parse All ({emails.length})
+                        </Button>
+                      </Box>
+                      
+                      {/* Stop/Clear Button - Compact */}
+                      {progress.isRunning ? (
+                        <Button
+                          fullWidth
+                          size="small"
+                          startIcon={<Stop sx={{ fontSize: 18 }} />}
                           variant="outlined"
                           color="error"
                           onClick={stopExtraction}
+                          sx={{ py: 0.75 }}
                         >
                           Stop Extraction
                         </Button>
+                      ) : (
+                        <Button
+                          fullWidth
+                          size="small"
+                          startIcon={<Clear sx={{ fontSize: 18 }} />}
+                          variant="text"
+                          onClick={clearCompleted}
+                          disabled={completedExtractions.length === 0}
+                          sx={{ py: 0.5 }}
+                        >
+                          Clear Completed
+                        </Button>
                       )}
-                      
-                      <Button
-                        fullWidth
-                        startIcon={<Clear />}
-                        variant="text"
-                        onClick={clearCompleted}
-                        disabled={completedExtractions.length === 0 || progress.isRunning}
-                      >
-                        Clear Completed
-                      </Button>
-
-                      <Divider />
-                      
-                      <Box sx={{ display: 'flex', gap: 1 }}>
-                        <Button
-                          size="small"
-                          fullWidth
-                          startIcon={<SelectAll />}
-                          onClick={handleSelectAll}
-                        >
-                          Select All
-                        </Button>
-                        <Button
-                          size="small"
-                          fullWidth
-                          startIcon={<IndeterminateCheckBox />}
-                          onClick={handleDeselectAll}
-                        >
-                          Deselect All
-                        </Button>
-                      </Box>
                     </Stack>
                   </CardContent>
                 </Card>
               </Grid>
-
-              {/* Extraction Progress */}
-              <Grid size={{ xs: 12, md: 6 }}>
+              
+              {/* Progress - Right */}
+              <Grid size={{ xs: 12, md: 4 }}>
                 <Card sx={{ height: '100%' }}>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CardContent sx={{ py: 2 }}>
+                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                       <Speed sx={{ color: accent }} />
-                      Extraction Progress
+                      Progress
                     </Typography>
                     
                     {progress.isRunning ? (
-                      <Box>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                          <Typography variant="body2">
-                            Processing {progress.current} of {progress.total}
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            {Math.round((progress.current / progress.total) * 100)}%
+                      <Stack spacing={1.5}>
+                        <Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+                            <Typography variant="body2">
+                              Processing
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              {Math.round((progress.current / progress.total) * 100)}%
+                            </Typography>
+                          </Box>
+                          <LinearProgress 
+                            variant="determinate" 
+                            value={(progress.current / progress.total) * 100}
+                            sx={{ height: 6, borderRadius: 3 }}
+                          />
+                          <Typography variant="caption" color="text.secondary">
+                            {progress.current} of {progress.total} emails
                           </Typography>
                         </Box>
-                        <LinearProgress 
-                          variant="determinate" 
-                          value={(progress.current / progress.total) * 100}
-                          sx={{ mb: 2, height: 8, borderRadius: 4 }}
-                        />
                         
                         {progress.currentEmail && (
-                          <Box sx={{ mb: 2, p: 2, backgroundColor: 'grey.50', borderRadius: 1 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                              Current: {progress.currentEmail.subject}
+                          <Box sx={{ p: 1, backgroundColor: 'grey.50', borderRadius: 1 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.875rem' }} noWrap>
+                              {progress.currentEmail.subject}
                             </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              From: {progress.currentEmail.from_address}
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                              {progress.currentEmail.from_address}
                             </Typography>
                           </Box>
                         )}
                         
-                        <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                        <Box sx={{ display: 'flex', gap: 2 }}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <Speed sx={{ fontSize: 16, color: 'text.secondary' }} />
-                            <Typography variant="caption">
+                            <Speed sx={{ fontSize: 14, color: 'text.secondary' }} />
+                            <Typography variant="caption" sx={{ fontSize: '0.75rem' }}>
                               {progress.speed} emails/min
                             </Typography>
                           </Box>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <Timer sx={{ fontSize: 16, color: 'text.secondary' }} />
-                            <Typography variant="caption">
+                            <Timer sx={{ fontSize: 14, color: 'text.secondary' }} />
+                            <Typography variant="caption" sx={{ fontSize: '0.75rem' }}>
                               ETA: {formatTime(progress.estimatedTimeRemaining)}
                             </Typography>
                           </Box>
                         </Box>
-                      </Box>
+                      </Stack>
                     ) : (
-                      <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <Stack spacing={1.5}>
                         <Typography variant="body2" color="text.secondary">
                           Ready to start extraction
                         </Typography>
-                        <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mt: 2 }}>
-                          <Chip icon={<CheckCircle />} label={`${completedExtractions.length} Completed`} color="success" size="small" />
-                          <Chip icon={<ErrorIcon />} label={`${failedExtractions.length} Failed`} color="error" size="small" />
-                          <Chip icon={<Pending />} label={`${pendingExtractions.length} Pending`} color="default" size="small" />
+                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                          <Chip icon={<CheckCircle sx={{ fontSize: 16 }} />} label={`${completedExtractions.length} Completed`} color="success" size="small" />
+                          <Chip icon={<ErrorIcon sx={{ fontSize: 16 }} />} label={`${failedExtractions.length} Failed`} color="error" size="small" />
+                          <Chip icon={<Pending sx={{ fontSize: 16 }} />} label={`${pendingExtractions.length} Pending`} color="default" size="small" />
                         </Box>
-                      </Box>
+                      </Stack>
                     )}
                   </CardContent>
                 </Card>
@@ -819,27 +766,47 @@ Format the response as JSON.`);
                   
                   {/* Search and Filters */}
                   <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      placeholder="Search emails..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      InputProps={{
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <Search />
-                          </InputAdornment>
-                        ),
-                        endAdornment: (
-                          <InputAdornment position="end">
-                            <IconButton size="small" onClick={loadJobEmails}>
-                              <Refresh />
-                            </IconButton>
-                          </InputAdornment>
-                        )
-                      }}
-                    />
+                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        placeholder="Search emails..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        InputProps={{
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <Search />
+                            </InputAdornment>
+                          ),
+                          endAdornment: (
+                            <InputAdornment position="end">
+                              <IconButton size="small" onClick={loadJobEmails}>
+                                <Refresh />
+                              </IconButton>
+                            </InputAdornment>
+                          )
+                        }}
+                      />
+                      <Button
+                        size="small"
+                        variant="text"
+                        onClick={handleSelectAll}
+                        disabled={progress.isRunning}
+                        sx={{ minWidth: 'auto', px: 1.5 }}
+                      >
+                        Select All
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="text"
+                        onClick={handleDeselectAll}
+                        disabled={progress.isRunning}
+                        sx={{ minWidth: 'auto', px: 1.5 }}
+                      >
+                        Deselect All
+                      </Button>
+                    </Box>
                   </Box>
 
                   {/* Email List */}
