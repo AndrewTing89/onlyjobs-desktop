@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import DOMPurify from 'dompurify';
 import {
   Box,
   Card,
@@ -31,7 +32,8 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogActions
+  DialogActions,
+  Tooltip
 } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import {
@@ -49,7 +51,8 @@ import {
   Visibility,
   ArrowForward,
   RateReview,
-  Close
+  Close,
+  Download
 } from '@mui/icons-material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
@@ -118,6 +121,7 @@ export default function ClassificationReview() {
   // State management
   const [emails, setEmails] = useState<EmailClassification[]>([]);
   const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [selectedEmailForPreview, setSelectedEmailForPreview] = useState<EmailClassification | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -126,6 +130,7 @@ export default function ClassificationReview() {
   const [currentTab, setCurrentTab] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [filters, setFilters] = useState<ClassificationFilters>({});
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({ 
     open: false, 
     message: '', 
@@ -197,6 +202,16 @@ export default function ClassificationReview() {
     }
   };
 
+  // Calculate tab counts based on actual email data
+  const tabCounts = useMemo(() => {
+    return {
+      needsReview: emails.filter(email => email.needs_review === true).length,
+      jobRelated: emails.filter(email => email.job_probability > 0.9 && email.is_job_related).length,
+      rejected: emails.filter(email => email.is_job_related === false).length,
+      all: emails.length
+    };
+  }, [emails]);
+
   // Filter emails based on current tab and search/filters
   const filteredEmails = useMemo(() => {
     let filtered = emails;
@@ -206,7 +221,7 @@ export default function ClassificationReview() {
       case 0: // Needs Review
         filtered = filtered.filter(email => email.needs_review === true);
         break;
-      case 1: // High Confidence Jobs
+      case 1: // Job Related (High Confidence)
         filtered = filtered.filter(email => email.job_probability > 0.9 && email.is_job_related);
         break;
       case 2: // Rejected (non-job emails)
@@ -313,6 +328,34 @@ export default function ClassificationReview() {
     setSnackbar({ open: true, message, severity });
   };
 
+  const handleExportTrainingData = async (format: 'json' | 'csv') => {
+    try {
+      setProcessing(true);
+      setExportDialogOpen(false);
+      
+      if (window.electronAPI && window.electronAPI.exportTrainingData) {
+        const result = await window.electronAPI.exportTrainingData(format);
+        
+        if (result.success) {
+          const formatLabel = format.toUpperCase();
+          showSnackbar(
+            `Successfully exported ${result.recordCount} records as ${formatLabel} to ${result.filePath}`, 
+            'success'
+          );
+        } else {
+          showSnackbar(result.error || 'Export failed', 'error');
+        }
+      } else {
+        showSnackbar('Export functionality not available', 'error');
+      }
+    } catch (error) {
+      console.error('Export error:', error);
+      showSnackbar('Failed to export training data', 'error');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await authData.signOut();
@@ -410,7 +453,7 @@ export default function ClassificationReview() {
                         {stats.high_confidence_jobs}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        High Job Probability
+                        Job Related
                       </Typography>
                     </CardContent>
                   </Card>
@@ -457,21 +500,33 @@ export default function ClassificationReview() {
                     >
                       <Tab 
                         label={
-                          <Badge badgeContent={stats?.needs_review} color="warning">
+                          <Badge 
+                            badgeContent={tabCounts.needsReview} 
+                            color="warning"
+                            max={999}
+                          >
                             Needs Review
                           </Badge>
                         } 
                       />
                       <Tab 
                         label={
-                          <Badge badgeContent={stats?.high_confidence_jobs} color="success">
-                            High Confidence
+                          <Badge 
+                            badgeContent={tabCounts.jobRelated} 
+                            color="success"
+                            max={999}
+                          >
+                            Job Related
                           </Badge>
                         } 
                       />
                       <Tab 
                         label={
-                          <Badge badgeContent={stats?.rejected} color="error">
+                          <Badge 
+                            badgeContent={tabCounts.rejected} 
+                            color="error"
+                            max={999}
+                          >
                             Rejected
                           </Badge>
                         } 
@@ -482,27 +537,45 @@ export default function ClassificationReview() {
 
                   {/* Search and Filters */}
                   <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      placeholder="Search emails..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      InputProps={{
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <Search />
-                          </InputAdornment>
-                        ),
-                        endAdornment: (
-                          <InputAdornment position="end">
-                            <IconButton size="small" onClick={loadClassificationData}>
-                              <Refresh />
-                            </IconButton>
-                          </InputAdornment>
-                        )
-                      }}
-                    />
+                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        placeholder="Search emails..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        InputProps={{
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <Search />
+                            </InputAdornment>
+                          ),
+                          endAdornment: (
+                            <InputAdornment position="end">
+                              <IconButton size="small" onClick={loadClassificationData}>
+                                <Refresh />
+                              </IconButton>
+                            </InputAdornment>
+                          )
+                        }}
+                      />
+                      <Tooltip title="Export all classified emails with ML predictions and human corrections for training data">
+                        <span>
+                          <Button
+                            variant="outlined"
+                            startIcon={<Download />}
+                            onClick={() => setExportDialogOpen(true)}
+                            disabled={processing || emails.length === 0}
+                            sx={{ 
+                              minWidth: 150,
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            Export Data
+                          </Button>
+                        </span>
+                      </Tooltip>
+                    </Box>
                   </Box>
 
                   {/* Bulk Operations Toolbar */}
@@ -550,17 +623,51 @@ export default function ClassificationReview() {
                                 }
                               }}
                             >
-                              <Box sx={{ mr: 1 }} className="checkbox-wrapper" onClick={(e) => e.stopPropagation()}>
+                              <Box 
+                                sx={{ 
+                                  mr: 2, 
+                                  display: 'flex', 
+                                  alignItems: 'center',
+                                  '& input[type="checkbox"]': {
+                                    width: '20px',
+                                    height: '20px',
+                                    cursor: 'pointer'
+                                  }
+                                }} 
+                                className="checkbox-wrapper" 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const currentIndex = filteredEmails.findIndex(e => e.id === email.id);
+                                  
+                                  if ((e as any).shiftKey && lastSelectedIndex !== null) {
+                                    // Shift+click: select range
+                                    const start = Math.min(lastSelectedIndex, currentIndex);
+                                    const end = Math.max(lastSelectedIndex, currentIndex);
+                                    const rangeIds = filteredEmails
+                                      .slice(start, end + 1)
+                                      .map(e => e.id);
+                                    
+                                    setSelectedEmails(prev => {
+                                      const newSelection = new Set(prev);
+                                      rangeIds.forEach(id => newSelection.add(id));
+                                      return Array.from(newSelection);
+                                    });
+                                  } else {
+                                    // Regular click: toggle single selection
+                                    if (selectedEmails.includes(email.id)) {
+                                      setSelectedEmails(prev => prev.filter(id => id !== email.id));
+                                    } else {
+                                      setSelectedEmails(prev => [...prev, email.id]);
+                                    }
+                                    setLastSelectedIndex(currentIndex);
+                                  }
+                                }}
+                              >
                                 <input
                                   type="checkbox"
                                   checked={selectedEmails.includes(email.id)}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      setSelectedEmails(prev => [...prev, email.id]);
-                                    } else {
-                                      setSelectedEmails(prev => prev.filter(id => id !== email.id));
-                                    }
-                                  }}
+                                  onChange={() => {}}
+                                  style={{ pointerEvents: 'none' }}
                                 />
                               </Box>
 
@@ -770,9 +877,56 @@ export default function ClassificationReview() {
                             Email Content
                           </Typography>
                           <Paper sx={{ p: 2, backgroundColor: 'grey.50', maxHeight: 300, overflow: 'auto' }}>
-                            <Typography variant="body2" sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-                              {selectedEmailForPreview.body || 'Email content not available'}
-                            </Typography>
+                            {(() => {
+                              const body = selectedEmailForPreview.body || 'Email content not available';
+                              // Check if the body contains HTML
+                              const isHtml = body.includes('<html') || body.includes('<!DOCTYPE') || 
+                                           (body.includes('<div') && body.includes('</div>')) ||
+                                           (body.includes('<p>') && body.includes('</p>')) ||
+                                           (body.includes('<br') || body.includes('<table'));
+                              
+                              if (isHtml) {
+                                // Sanitize and render HTML
+                                const cleanHtml = DOMPurify.sanitize(body, {
+                                  ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'i', 'em', 'u', 'a', 'ul', 'ol', 'li', 
+                                               'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span',
+                                               'table', 'thead', 'tbody', 'tr', 'td', 'th', 'img', 'hr'],
+                                  ALLOWED_ATTR: ['href', 'target', 'src', 'alt', 'style'],
+                                  ALLOW_DATA_ATTR: false
+                                });
+                                
+                                return (
+                                  <Box 
+                                    dangerouslySetInnerHTML={{ __html: cleanHtml }}
+                                    sx={{
+                                      '& a': { color: 'primary.main', textDecoration: 'underline' },
+                                      '& p': { margin: '0.5em 0' },
+                                      '& ul, & ol': { paddingLeft: '1.5em' },
+                                      '& li': { margin: '0.25em 0' },
+                                      '& blockquote': { 
+                                        borderLeft: '3px solid #ccc', 
+                                        paddingLeft: '1em', 
+                                        margin: '1em 0',
+                                        color: 'text.secondary'
+                                      },
+                                      '& img': { maxWidth: '100%', height: 'auto' },
+                                      '& table': { borderCollapse: 'collapse', width: '100%' },
+                                      '& td, & th': { border: '1px solid #ddd', padding: '8px' },
+                                      fontSize: '14px',
+                                      lineHeight: 1.6,
+                                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif'
+                                    }}
+                                  />
+                                );
+                              } else {
+                                // Display plain text
+                                return (
+                                  <Typography variant="body2" sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                                    {body}
+                                  </Typography>
+                                );
+                              }
+                            })()}
                           </Paper>
                         </Box>
                       </Box>
@@ -866,6 +1020,72 @@ export default function ClassificationReview() {
             </Card>
           </Box>
         </Box>
+
+        {/* Export Format Selection Dialog */}
+        <Dialog
+          open={exportDialogOpen}
+          onClose={() => setExportDialogOpen(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>
+            <Typography variant="h6" component="div">
+              Select Export Format
+            </Typography>
+          </DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" sx={{ mb: 3 }}>
+              Choose the format for exporting your classified email data:
+            </Typography>
+            <Stack spacing={2}>
+              <Card 
+                sx={{ 
+                  p: 2, 
+                  cursor: 'pointer',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  '&:hover': {
+                    borderColor: 'primary.main',
+                    bgcolor: 'action.hover'
+                  }
+                }}
+                onClick={() => handleExportTrainingData('json')}
+              >
+                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                  JSON Format
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Complete data with all metadata, nested structure, ideal for programmatic processing
+                </Typography>
+              </Card>
+              <Card 
+                sx={{ 
+                  p: 2, 
+                  cursor: 'pointer',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  '&:hover': {
+                    borderColor: 'primary.main',
+                    bgcolor: 'action.hover'
+                  }
+                }}
+                onClick={() => handleExportTrainingData('csv')}
+              >
+                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                  CSV Format
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Simplified tabular format, easy to open in Excel, ideal for ML training
+                </Typography>
+              </Card>
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setExportDialogOpen(false)} color="inherit">
+              Cancel
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {/* Snackbar for notifications */}
         <Snackbar

@@ -3757,6 +3757,285 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
   }
 });
 
+// Export classification data for training
+ipcMain.handle('classification:export-training-data', async (event, format = 'json') => {
+  try {
+    // Minimal logging to avoid EPIPE errors
+    
+    const db = getDb();
+    const fs = require('fs');
+    const path = require('path');
+    
+    // Simplified query matching actual database schema
+    const query = `
+      SELECT 
+        cq.id,
+        cq.gmail_message_id,
+        cq.thread_id,
+        cq.subject,
+        cq.from_address,
+        cq.body,
+        cq.created_at as received_date,
+        cq.account_email,
+        cq.is_job_related as human_classification,
+        cq.job_probability as ml_confidence,
+        cq.user_feedback,
+        cq.needs_review,
+        cq.classification_status,
+        cq.updated_at as reviewed_at,
+        cq.company,
+        cq.position,
+        cq.status as job_status,
+        cq.parse_status,
+        cq.raw_email_data
+      FROM classification_queue cq
+      WHERE cq.subject IS NOT NULL
+      ORDER BY cq.created_at DESC
+    `;
+    
+    let rows;
+    try {
+      rows = db.prepare(query).all();
+      // Don't log row count to avoid potential EPIPE errors
+    } catch (queryError) {
+      console.error('Query error:', queryError);
+      return {
+        success: false,
+        error: `Database query failed: ${queryError.message}`
+      };
+    }
+    
+    if (!rows || rows.length === 0) {
+      return { 
+        success: false, 
+        error: 'No classified data available for export' 
+      };
+    }
+    
+    // Helper function to calculate ML accuracy
+    function calculateAccuracy(rows) {
+      const validRows = rows.filter(r => 
+        r.ml_confidence !== null && 
+        r.human_classification !== null
+      );
+      
+      if (validRows.length === 0) return null;
+      
+      const correct = validRows.filter(r => {
+        const mlPrediction = r.ml_confidence > 0.5 ? 1 : 0;
+        return mlPrediction === r.human_classification;
+      }).length;
+      
+      return (correct / validRows.length * 100).toFixed(2);
+    }
+    
+    // Helper function to escape CSV values
+    function escapeCSV(value) {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    }
+    
+    // Helper function to convert rows to CSV
+    function convertToCSV(rows) {
+      if (rows.length === 0) return '';
+      
+      // Define the columns we want to export
+      const columns = [
+        'id', 'gmail_message_id', 'thread_id', 'subject', 'from_address',
+        'received_date', 'account_email', 'human_classification', 'ml_confidence',
+        'user_feedback', 'needs_review', 'classification_status', 'company',
+        'position', 'job_status', 'body'
+      ];
+      
+      // Create header row
+      const header = columns.join(',');
+      
+      // Create data rows
+      const dataRows = rows.map(row => {
+        return columns.map(col => {
+          let value = row[col];
+          // Convert boolean values to 0/1 for better ML compatibility
+          if (col === 'human_classification' || col === 'needs_review') {
+            value = value === true ? 1 : value === false ? 0 : '';
+          }
+          return escapeCSV(value);
+        }).join(',');
+      });
+      
+      return [header, ...dataRows].join('\n');
+    }
+    
+    let fileContent;
+    let defaultExtension;
+    let fileFilter;
+    
+    if (format === 'csv') {
+      fileContent = convertToCSV(rows);
+      defaultExtension = 'csv';
+      fileFilter = { name: 'CSV Files', extensions: ['csv'] };
+    } else {
+      // Prepare JSON export data
+      const exportData = {
+        export_metadata: {
+          export_date: new Date().toISOString(),
+          export_version: '2.0',
+          total_records: rows.length,
+          job_related_count: rows.filter(r => r.human_classification === 1).length,
+          non_job_count: rows.filter(r => r.human_classification === 0).length,
+          uncertain_count: rows.filter(r => r.human_classification === null).length,
+          ml_accuracy: calculateAccuracy(rows),
+          application_version: '1.0.0',  // Using static version to avoid potential app reference issues
+          platform: process.platform
+        },
+        classifications: rows.map(row => ({
+          id: row.id,
+          message_id: row.gmail_message_id,
+          thread_id: row.thread_id,
+          subject: row.subject,
+          from_address: row.from_address,
+          body_text: row.body,
+          received_date: row.received_date,
+          account_email: row.account_email,
+          human_classification: row.human_classification,
+          ml_confidence: row.ml_confidence,
+          user_feedback: row.user_feedback,
+          needs_review: row.needs_review,
+          classification_status: row.classification_status,
+          reviewed_at: row.reviewed_at,
+          company: row.company,
+          position: row.position,
+          job_status: row.job_status,
+          parse_status: row.parse_status,
+          raw_email_data: row.raw_email_data
+        }))
+      };
+      fileContent = JSON.stringify(exportData, null, 2);
+      defaultExtension = 'json';
+      fileFilter = { name: 'JSON Files', extensions: ['json'] };
+    }
+    
+    // Save dialog for export location
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const downloadsPath = require('os').homedir() + '/Downloads';  // Fallback to user's Downloads folder
+    const defaultFileName = `onlyjobs_training_data_${timestamp}.${defaultExtension}`;
+    
+    const result = await dialog.showSaveDialog({
+      defaultPath: path.join(downloadsPath, defaultFileName),
+      filters: [
+        fileFilter,
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+    
+    if (result.canceled) {
+      return { success: false, error: 'Export cancelled' };
+    }
+    
+    // Write the export file
+    try {
+      await fs.promises.writeFile(
+        result.filePath, 
+        fileContent,
+        'utf8'
+      );
+      // Success - file written (no console.log to avoid EPIPE)
+    } catch (writeError) {
+      // Use safer error logging
+      try {
+        console.error('File write error:', writeError.message);
+      } catch (e) {
+        // Ignore console errors
+      }
+      return {
+        success: false,
+        error: `Failed to write file: ${writeError.message}`
+      };
+    }
+    
+    // Optionally mark records as exported (only for classified records)
+    try {
+      const updateExportStmt = db.prepare(`
+        INSERT INTO training_feedback (
+          gmail_message_id, subject, body, sender, received_date,
+          ml_predicted_label, ml_confidence, human_label,
+          exported, exported_at, feature_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, ?)
+        ON CONFLICT(feature_hash) DO UPDATE SET
+          exported = 1,
+          exported_at = CURRENT_TIMESTAMP
+      `);
+      
+      const updateTransaction = db.transaction((rows) => {
+        for (const row of rows) {
+          if (row.human_classification !== null) {
+            const featureHash = require('crypto')
+              .createHash('md5')
+              .update(`${row.gmail_message_id}_${row.subject}_${row.from_address}`)
+              .digest('hex');
+            
+            try {
+              const mlPrediction = row.ml_confidence > 0.5 ? 1 : 0;
+              updateExportStmt.run(
+                row.gmail_message_id,
+                row.subject,
+                row.body?.substring(0, 5000) || '',  // Limit body size
+                row.from_address,
+                row.received_date,
+                mlPrediction,
+                row.ml_confidence,
+                row.human_classification,
+                featureHash
+              );
+            } catch (insertError) {
+              // Silently continue with other records to avoid EPIPE
+            }
+          }
+        }
+      });
+      
+      updateTransaction(rows);
+    } catch (updateError) {
+      // This is not critical, continue with successful export
+      // No console logging to avoid EPIPE
+    }
+    
+    return {
+      success: true,
+      filePath: result.filePath,
+      recordCount: rows.length,
+      format: format,
+      stats: {
+        total_records: rows.length,
+        job_related_count: rows.filter(r => r.human_classification === 1).length,
+        non_job_count: rows.filter(r => r.human_classification === 0).length,
+        uncertain_count: rows.filter(r => r.human_classification === null).length,
+        ml_accuracy: calculateAccuracy(rows)
+      }
+    };
+    
+  } catch (error) {
+    // Safely handle errors without crashing due to console issues
+    let errorMessage = 'Unknown error occurred during export';
+    try {
+      errorMessage = error.message || errorMessage;
+      // Only log to console if it's safe
+      if (process.stderr && process.stderr.writable) {
+        console.error('Export error:', errorMessage);
+      }
+    } catch (e) {
+      // Ignore console errors
+    }
+    return {
+      success: false,
+      error: errorMessage
+    };
+  }
+});
+
 // Bulk operation handler for classification review
 ipcMain.handle('classification:bulk-operation', async (event, request) => {
   try {

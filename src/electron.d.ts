@@ -23,6 +23,14 @@ interface ElectronAPI {
   getClassificationQueue: (filters?: any) => Promise<{ success: boolean; emails: any[]; stats: any; error?: string }>;
   updateClassification: (id: string, isJobRelated: boolean, notes?: string) => Promise<any>;
   classificationBulkOperation: (data: { operation: string; emailIds?: string[]; filterOptions?: any }) => Promise<any>;
+  exportTrainingData: (format?: 'json' | 'csv') => Promise<{ 
+    success: boolean; 
+    filePath?: string; 
+    recordCount?: number; 
+    format?: string;
+    stats?: any; 
+    error?: string; 
+  }>;
   
   // LLM Health Check
   checkLLMHealth: () => Promise<{
