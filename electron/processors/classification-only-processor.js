@@ -11,12 +11,30 @@
 
 const { getMLClassifier } = require('../ml-classifier-bridge');
 const GmailMultiAuth = require('../gmail-multi-auth');
+const Database = require('better-sqlite3');
+const path = require('path');
+const { app } = require('electron');
+
+// Shared database connection for this processor
+let sharedDb = null;
+
+function getSharedDb() {
+  if (!sharedDb) {
+    const dbPath = path.join(app.getPath('userData'), 'jobs.db');
+    sharedDb = new Database(dbPath);
+    // Enable foreign key constraints
+    sharedDb.pragma('foreign_keys = ON');
+  }
+  return sharedDb;
+}
 
 class ClassificationOnlyProcessor {
-  constructor(mainWindow = null) {
-    this.mainWindow = mainWindow;
+  constructor(webContents = null) {
+    this.webContents = webContents;
     this.mlClassifier = getMLClassifier();
     this.gmailAuth = new GmailMultiAuth();
+    this.db = getSharedDb(); // Use shared connection
+    this.BATCH_SAVE_SIZE = 50; // Save every 50 emails
   }
 
   /**
@@ -72,96 +90,110 @@ class ClassificationOnlyProcessor {
     const { daysToSync, query, maxResults } = options;
     
     this.sendProgress('Fetching emails from Gmail...', 0);
+    this.sendActivity('fetch', `🔍 Starting email fetch for ${account.email}`, {
+      account: account.email,
+      maxResults: maxResults,
+      daysToSync: daysToSync
+    });
 
     try {
-      // Use existing Gmail auth to fetch emails
-      const authClient = await this.gmailAuth.getAuthenticatedClient(account.email);
+      // Use GmailMultiAuth's built-in method to fetch emails
+      console.log(`Fetching emails for ${account.email} with options:`, options);
       
-      if (!authClient) {
-        throw new Error(`Failed to get authenticated client for ${account.email}`);
-      }
-
-      // Calculate date range
-      const since = new Date();
-      since.setDate(since.getDate() - daysToSync);
-      const sinceString = since.toISOString().split('T')[0].replace(/-/g, '/');
-
-      // Build Gmail query
-      let gmailQuery = `after:${sinceString}`;
-      if (query && query !== 'all') {
-        gmailQuery += ` ${query}`;
-      }
-
-      console.log(`Fetching emails with query: ${gmailQuery}`);
-
-      // Fetch messages using Gmail API
-      const gmail = require('googleapis').google.gmail({ version: 'v1', auth: authClient });
-      
-      const response = await gmail.users.messages.list({
-        userId: 'me',
-        q: gmailQuery,
-        maxResults
+      const startTime = Date.now();
+      const result = await this.gmailAuth.fetchEmailsFromAccount(account.email, {
+        query: query || 'in:inbox',
+        maxResults: maxResults || 50
       });
 
-      if (!response.data.messages) {
+      // Extract messages from the result object
+      const emails = result?.messages || [];
+      
+      const fetchTime = Date.now() - startTime;
+      
+      if (emails.length === 0) {
         console.log('No messages found');
+        this.sendActivity('fetch', '📭 No emails found matching criteria', {});
         return [];
       }
 
-      const messages = response.data.messages;
-      console.log(`Found ${messages.length} messages to process`);
-
-      // Fetch full message details in batches
-      const emails = [];
-      const batchSize = 50; // Reasonable batch size for API limits
-
-      for (let i = 0; i < messages.length; i += batchSize) {
-        const batch = messages.slice(i, i + batchSize);
-        this.sendProgress(`Fetching email details (${i + 1}-${Math.min(i + batchSize, messages.length)} of ${messages.length})`, 
-          Math.round((i / messages.length) * 50)); // 0-50% for fetching
-
-        const batchEmails = await Promise.all(
-          batch.map(async (message) => {
-            try {
-              const fullMessage = await gmail.users.messages.get({
-                userId: 'me',
-                id: message.id,
-                format: 'full'
-              });
-
-              return this.parseGmailMessage(fullMessage.data);
-            } catch (error) {
-              console.error(`Error fetching message ${message.id}:`, error);
-              return null;
-            }
-          })
-        );
-
-        emails.push(...batchEmails.filter(email => email !== null));
-      }
-
+      console.log(`Fetched ${emails.length} emails successfully`);
+      this.sendActivity('fetch', `✅ Successfully fetched ${emails.length} emails in ${fetchTime}ms`, {
+        emailCount: emails.length,
+        duration: fetchTime
+      });
       this.sendProgress(`Fetched ${emails.length} emails successfully`, 50);
-      return emails;
+      
+      // Parse the Gmail messages into our format
+      console.log('Starting to parse Gmail messages...');
+      this.sendActivity('parse', '🔄 Starting to parse email metadata...', {});
+      
+      const parseStartTime = Date.now();
+      const parsedEmails = [];
+      for (let i = 0; i < emails.length; i++) {
+        if (i % 50 === 0) {
+          console.log(`Parsing email ${i + 1} of ${emails.length}...`);
+          this.sendActivity('parse', `📝 Parsing batch: ${i + 1}-${Math.min(i + 50, emails.length)} of ${emails.length}`, {
+            current: i + 1,
+            total: emails.length
+          });
+          this.sendProgress(`Parsing emails (${i + 1} of ${emails.length})...`, 20 + Math.round((i / emails.length) * 30));
+        }
+        const parsed = this.parseGmailMessage(emails[i]);
+        if (parsed) {
+          parsedEmails.push(parsed);
+        }
+      }
+      
+      const parseTime = Date.now() - parseStartTime;
+      console.log(`Finished parsing ${parsedEmails.length} emails`);
+      this.sendActivity('parse', `✅ Parsed ${parsedEmails.length} emails in ${parseTime}ms`, {
+        emailCount: parsedEmails.length,
+        duration: parseTime
+      });
+      
+      return parsedEmails;
 
     } catch (error) {
       console.error('Error fetching emails:', error);
+      this.sendActivity('error', `❌ Error fetching emails: ${error.message}`, {});
       throw error;
     }
   }
 
   /**
-   * Parse Gmail message into our format
+   * Parse Gmail message into our format (MINIMAL for ML classification only)
    */
   parseGmailMessage(message) {
     try {
-      const headers = message.payload.headers;
+      if (!message || !message.payload) {
+        console.warn('Invalid message structure:', message?.id);
+        return null;
+      }
+      
+      const headers = message.payload.headers || [];
       const subject = this.getHeader(headers, 'subject') || '';
       const from = this.getHeader(headers, 'from') || '';
       const to = this.getHeader(headers, 'to') || '';
       const date = this.getHeader(headers, 'date') || '';
 
-      // Extract email body
-      const body = this.extractBody(message.payload);
+      // Extract full body text (plain text preferred, HTML as fallback)
+      let body = '';
+      let bodyIsHtml = false;
+      try {
+        const bodyResult = this.extractLimitedBody(message.payload, null); // null = no limit
+        body = bodyResult.body;
+        bodyIsHtml = bodyResult.isHtml;
+        
+        // If we still have no body, fall back to snippet
+        if (!body) {
+          body = message.snippet || '';
+        }
+      } catch (e) {
+        console.error('Error extracting body:', e);
+        // Fallback to snippet if extraction fails
+        body = message.snippet || '';
+      }
 
       return {
         id: message.id,
@@ -170,9 +202,10 @@ class ClassificationOnlyProcessor {
         from,
         to,
         date,
-        body,
+        body, // Full email body (plain text or HTML)
+        bodyIsHtml, // Flag to indicate if body is HTML
         internalDate: message.internalDate,
-        snippet: message.snippet,
+        snippet: message.snippet || '',
         labelIds: message.labelIds || []
       };
     } catch (error) {
@@ -187,6 +220,58 @@ class ClassificationOnlyProcessor {
   getHeader(headers, name) {
     const header = headers.find(h => h.name.toLowerCase() === name.toLowerCase());
     return header ? header.value : '';
+  }
+
+  /**
+   * Extract limited body text - tries plain text first, falls back to HTML
+   * Returns both the body and a flag indicating if it's HTML
+   */
+  extractLimitedBody(payload, maxLength = null) {
+    if (!payload) return { body: '', isHtml: false };
+
+    // Direct body data (single part email)
+    if (payload.body && payload.body.data) {
+      try {
+        const decoded = Buffer.from(payload.body.data, 'base64').toString('utf-8');
+        const isHtml = payload.mimeType === 'text/html';
+        return {
+          body: maxLength ? decoded.substring(0, maxLength) : decoded,
+          isHtml
+        };
+      } catch (error) {
+        console.error('Error decoding body data:', error);
+        return { body: '', isHtml: false };
+      }
+    }
+
+    // Multipart email - try to find text/plain first
+    if (payload.parts) {
+      // First pass: look for plain text
+      for (const part of payload.parts) {
+        if (part.mimeType === 'text/plain') {
+          const result = this.extractLimitedBody(part, maxLength);
+          if (result.body) return result;
+        }
+      }
+
+      // Second pass: look for HTML if no plain text found
+      for (const part of payload.parts) {
+        if (part.mimeType === 'text/html') {
+          const result = this.extractLimitedBody(part, maxLength);
+          if (result.body) {
+            return { body: result.body, isHtml: true };
+          }
+        }
+      }
+
+      // Recursive search in nested parts
+      for (const part of payload.parts) {
+        const result = this.extractLimitedBody(part, maxLength);
+        if (result.body) return result;
+      }
+    }
+
+    return { body: '', isHtml: false };
   }
 
   /**
@@ -245,13 +330,24 @@ class ClassificationOnlyProcessor {
    */
   async classifyEmailsOnly(emails, account) {
     console.log(`Running ML classification on ${emails.length} emails`);
+    this.sendActivity('ml', `🤖 Starting ML classification for ${emails.length} emails...`, {
+      totalEmails: emails.length
+    });
     
     const results = [];
     const batchSize = 10; // Process in smaller batches for progress updates
+    let savedCount = 0;
+    const classificationStartTime = Date.now();
 
     for (let i = 0; i < emails.length; i += batchSize) {
       const batch = emails.slice(i, i + batchSize);
       const progress = 50 + Math.round(((i + batchSize) / emails.length) * 40); // 50-90% for classification
+      
+      this.sendActivity('ml', `⚙️ Classifying batch: ${i + 1}-${Math.min(i + batchSize, emails.length)} of ${emails.length}`, {
+        current: i + 1,
+        batchEnd: Math.min(i + batchSize, emails.length),
+        total: emails.length
+      });
       
       this.sendProgress(`Classifying emails (${i + 1}-${Math.min(i + batchSize, emails.length)} of ${emails.length})`, progress);
 
@@ -269,6 +365,16 @@ class ClassificationOnlyProcessor {
             );
 
             const processingTime = Date.now() - startTime;
+
+            // Send ML classification activity to UI
+            this.sendActivity('ml', 
+              `ML Classification completed in ${processingTime}ms - Job: ${mlResult.is_job_related ? 'true' : 'false'} (confidence: ${mlResult.confidence.toFixed(2)})`,
+              {
+                isJob: mlResult.is_job_related,
+                confidence: mlResult.confidence,
+                timing: processingTime
+              }
+            );
 
             return {
               email,
@@ -309,30 +415,85 @@ class ClassificationOnlyProcessor {
       const jobCount = batchResults.filter(r => r.classification.is_job_related).length;
       const reviewCount = batchResults.filter(r => r.classification.needs_review).length;
       console.log(`Batch ${Math.floor(i / batchSize) + 1}: ${jobCount} job-related, ${reviewCount} need review`);
+      
+      // Save to database every BATCH_SAVE_SIZE emails
+      if (results.length - savedCount >= this.BATCH_SAVE_SIZE) {
+        const toSave = results.slice(savedCount, savedCount + this.BATCH_SAVE_SIZE);
+        const saveBatchNum = Math.floor(savedCount / this.BATCH_SAVE_SIZE) + 1;
+        const totalBatches = Math.ceil(emails.length / this.BATCH_SAVE_SIZE);
+        
+        this.sendActivity('database', `💾 Saving batch ${saveBatchNum}/${totalBatches} to database...`, {
+          batchNum: saveBatchNum,
+          totalBatches: totalBatches,
+          emailsInBatch: toSave.length
+        });
+        
+        this.sendProgress(`Saving batch ${saveBatchNum} of ${totalBatches} to database...`, progress + 2);
+        
+        const saveStartTime = Date.now();
+        await this.saveBatchToDatabase(toSave, account);
+        const saveTime = Date.now() - saveStartTime;
+        
+        savedCount += toSave.length;
+        console.log(`Saved batch ${saveBatchNum}: ${toSave.length} emails`);
+        
+        this.sendActivity('database', `✅ Saved batch ${saveBatchNum}: ${toSave.length} emails in ${saveTime}ms`, {
+          batchNum: saveBatchNum,
+          emailsSaved: toSave.length,
+          duration: saveTime
+        });
+      }
     }
 
-    this.sendProgress('Classification complete', 90);
+    // Save any remaining results
+    if (savedCount < results.length) {
+      const remaining = results.slice(savedCount);
+      const finalBatchNum = Math.floor(savedCount / this.BATCH_SAVE_SIZE) + 1;
+      
+      this.sendActivity('database', `💾 Saving final batch to database...`, {
+        emailsInBatch: remaining.length
+      });
+      
+      this.sendProgress(`Saving final batch to database...`, 92);
+      
+      const saveStartTime = Date.now();
+      await this.saveBatchToDatabase(remaining, account);
+      const saveTime = Date.now() - saveStartTime;
+      
+      console.log(`Saved final batch: ${remaining.length} emails`);
+      
+      this.sendActivity('database', `✅ Saved final batch: ${remaining.length} emails in ${saveTime}ms`, {
+        emailsSaved: remaining.length,
+        duration: saveTime
+      });
+    }
+
+    const totalClassificationTime = Date.now() - classificationStartTime;
+    const jobRelatedCount = results.filter(r => r.classification.is_job_related).length;
+    const needsReviewCount = results.filter(r => r.classification.needs_review).length;
+    
+    this.sendActivity('ml', `🎯 Classification complete: ${jobRelatedCount} jobs found, ${needsReviewCount} need review (${totalClassificationTime}ms)`, {
+      totalEmails: results.length,
+      jobsFound: jobRelatedCount,
+      needsReview: needsReviewCount,
+      duration: totalClassificationTime
+    });
+    
+    this.sendProgress('Classification complete', 95);
     return results;
   }
 
   /**
-   * Save classification results to database
+   * Save a batch of classification results to database
    */
-  async saveToClassificationQueue(results, account) {
-    console.log(`Saving ${results.length} classification results to database`);
-    
-    this.sendProgress('Saving results to database...', 95);
-
-    const Database = require('better-sqlite3');
-    const path = require('path');
-    const { app } = require('electron');
-    
-    const dbPath = path.join(app.getPath('userData'), 'jobs.db');
-    const db = new Database(dbPath);
+  async saveBatchToDatabase(results, account) {
+    console.log(`saveBatchToDatabase: Starting to save ${results.length} results...`);
+    const db = this.db; // Use shared connection
 
     try {
       // Ensure tables exist
       this.createClassificationTables(db);
+      console.log(`saveBatchToDatabase: Tables verified`);
 
       // Prepare statements
       const insertClassification = db.prepare(`
@@ -386,9 +547,10 @@ class ClassificationOnlyProcessor {
               labelIds: email.labelIds,
               internalDate: email.internalDate,
               date: email.date,
-              to: email.to
+              to: email.to,
+              bodyIsHtml: email.bodyIsHtml || false // Track if body is HTML format
             }),
-            processed_at,
+            new Date().toISOString(), // created_at
             classification.processing_time || 0
           );
 
@@ -402,30 +564,41 @@ class ClassificationOnlyProcessor {
         }
       });
 
+      console.log(`saveBatchToDatabase: Starting transaction for ${results.length} results...`);
       transaction();
-      console.log('Successfully saved classification results');
+      console.log(`saveBatchToDatabase: Successfully saved ${results.length} classification results`);
 
     } catch (error) {
-      console.error('Error saving classification results:', error);
+      console.error('Error saving classification batch:', error);
       throw error;
-    } finally {
-      db.close();
     }
-
-    this.sendProgress('Results saved successfully', 100);
+    // Don't close the shared connection
   }
 
   /**
    * Create classification-related database tables
    */
   createClassificationTables(db) {
+    // Check if account_email column exists and add it if missing
+    try {
+      const tableInfo = db.prepare("PRAGMA table_info(classification_queue)").all();
+      const hasAccountEmail = tableInfo.some(col => col.name === 'account_email');
+      
+      if (tableInfo.length > 0 && !hasAccountEmail) {
+        console.log('Adding missing account_email column to classification_queue table');
+        db.exec(`ALTER TABLE classification_queue ADD COLUMN account_email TEXT`);
+      }
+    } catch (e) {
+      // Table doesn't exist yet, will be created below
+    }
+    
     // Create classification queue table
     db.exec(`
       CREATE TABLE IF NOT EXISTS classification_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         gmail_message_id TEXT UNIQUE NOT NULL,
         thread_id TEXT,
-        account_email TEXT NOT NULL,
+        account_email TEXT,
         subject TEXT,
         from_address TEXT,
         body TEXT,
@@ -441,9 +614,7 @@ class ClassificationOnlyProcessor {
         user_feedback TEXT, -- For training data
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        processing_time INTEGER DEFAULT 0,
-        
-        FOREIGN KEY (account_email) REFERENCES gmail_accounts(email)
+        processing_time INTEGER DEFAULT 0
       )
     `);
 
@@ -505,8 +676,8 @@ class ClassificationOnlyProcessor {
    * Send progress updates to UI
    */
   sendProgress(message, progress) {
-    if (this.mainWindow) {
-      this.mainWindow.webContents.send('sync-progress', {
+    if (this.webContents) {
+      this.webContents.send('sync-progress', {
         stage: message,
         phase: 'classifying',
         progress: Math.min(100, Math.max(0, progress))
@@ -516,15 +687,31 @@ class ClassificationOnlyProcessor {
   }
 
   /**
+   * Send activity log to UI
+   */
+  sendActivity(type, message, details = {}) {
+    console.log(`sendActivity called: type=${type}, hasWebContents=${!!this.webContents}`);
+    if (this.webContents) {
+      try {
+        this.webContents.send('sync-activity', {
+          type,
+          message,
+          details
+        });
+        console.log('sync-activity event sent successfully');
+      } catch (error) {
+        console.error('Error sending sync-activity:', error);
+      }
+    } else {
+      console.log('No webContents available to send activity');
+    }
+  }
+
+  /**
    * Get pending items that need review
    */
   async getPendingReview(accountEmail = null) {
-    const Database = require('better-sqlite3');
-    const path = require('path');
-    const { app } = require('electron');
-    
-    const dbPath = path.join(app.getPath('userData'), 'jobs.db');
-    const db = new Database(dbPath);
+    const db = this.db; // Use shared connection
 
     try {
       let query = `
@@ -568,21 +755,15 @@ class ClassificationOnlyProcessor {
     } catch (error) {
       console.error('Error getting pending review items:', error);
       return [];
-    } finally {
-      db.close();
     }
+    // Don't close the shared connection
   }
 
   /**
    * Update classification based on user review
    */
   async updateClassification(id, isJobRelated, notes = '') {
-    const Database = require('better-sqlite3');
-    const path = require('path');
-    const { app } = require('electron');
-    
-    const dbPath = path.join(app.getPath('userData'), 'jobs.db');
-    const db = new Database(dbPath);
+    const db = this.db; // Use shared connection
 
     try {
       // Begin transaction
@@ -649,9 +830,8 @@ class ClassificationOnlyProcessor {
     } catch (error) {
       console.error('Error updating classification:', error);
       throw error;
-    } finally {
-      db.close();
     }
+    // Don't close the shared connection
   }
 }
 

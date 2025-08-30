@@ -226,21 +226,26 @@ class DatabaseInitializer {
   createClassificationQueueTable(db) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS classification_queue (
-        id TEXT PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         gmail_message_id TEXT UNIQUE NOT NULL,
         thread_id TEXT,
+        account_email TEXT,
         subject TEXT,
-        sender TEXT,
-        received_date TEXT,
-        ml_classification BOOLEAN,
-        ml_confidence REAL,
+        from_address TEXT,
+        body TEXT,
+        is_job_related BOOLEAN DEFAULT 0,
+        confidence REAL DEFAULT 0,
         needs_review BOOLEAN DEFAULT 0,
-        user_classification BOOLEAN,
-        classified_at TIMESTAMP,
-        reviewed_at TIMESTAMP,
-        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'classified', 'reviewed', 'skipped', 'error')),
+        classification_status TEXT DEFAULT 'pending' CHECK(classification_status IN ('pending', 'classified', 'reviewed')),
+        parse_status TEXT DEFAULT 'pending' CHECK(parse_status IN ('pending', 'parsing', 'parsed', 'failed', 'skip')),
+        company TEXT,
+        position TEXT,
+        status TEXT,
+        raw_email_data TEXT,
+        user_feedback TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processing_time INTEGER DEFAULT 0
       )
     `);
   }
@@ -331,7 +336,9 @@ class DatabaseInitializer {
       
       // Classification queue indexes
       'CREATE INDEX IF NOT EXISTS idx_classification_queue_gmail_message_id ON classification_queue(gmail_message_id)',
-      'CREATE INDEX IF NOT EXISTS idx_classification_queue_status ON classification_queue(status)',
+      'CREATE INDEX IF NOT EXISTS idx_classification_queue_account ON classification_queue(account_email)',
+      'CREATE INDEX IF NOT EXISTS idx_classification_queue_status ON classification_queue(classification_status)',
+      'CREATE INDEX IF NOT EXISTS idx_classification_queue_parse_status ON classification_queue(parse_status)',
       'CREATE INDEX IF NOT EXISTS idx_classification_queue_needs_review ON classification_queue(needs_review)',
       'CREATE INDEX IF NOT EXISTS idx_classification_queue_thread_id ON classification_queue(thread_id)',
       

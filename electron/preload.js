@@ -161,7 +161,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'auth-success', 'auth-error', 'sync-progress', 'sync-complete', 'sync-error', 
       'ml-training-complete', 'ml-training-error', 'job-found', 'gmail-authenticated',
       'fetch-progress', 'fetch-complete', 'fetch-error',
-      'classify-progress', 'classify-complete', 'classify-error'
+      'classify-progress', 'classify-complete', 'classify-error',
+      'sync-activity'  // Added for live classification activity logging
     ];
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (event, ...args) => callback(...args));

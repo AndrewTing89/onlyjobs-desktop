@@ -3438,14 +3438,44 @@ ipcMain.handle('sync:classify-only', async (event, options = {}) => {
     const ClassificationOnlyProcessor = require('./processors/classification-only-processor');
     const processor = new ClassificationOnlyProcessor(event.sender);
     
-    const { accountEmail, ...processOptions } = options;
-    const account = { email: accountEmail };
+    // Get all connected Gmail accounts
+    const gmailAuth = require('./gmail-multi-auth');
+    const auth = new gmailAuth();
+    const accounts = auth.getAllAccounts();
     
-    const result = await processor.processEmails(account, processOptions);
+    if (!accounts || accounts.length === 0) {
+      throw new Error('No Gmail accounts connected');
+    }
+    
+    // Process emails for all accounts
+    let totalProcessed = 0;
+    let totalClassified = 0;
+    
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      if (account.is_active) {
+        console.log(`Processing emails for account: ${account.email}`);
+        
+        // Send progress update with account info
+        event.sender.send('sync-progress', {
+          stage: `Processing account ${i + 1} of ${accounts.length}: ${account.email}`,
+          phase: 'classifying',
+          progress: Math.round((i / accounts.length) * 100),
+          accountIndex: i + 1,
+          totalAccounts: accounts.length,
+          currentAccount: account.email
+        });
+        
+        const result = await processor.processEmails(account, options);
+        totalProcessed += result.totalEmails || 0;
+        totalClassified += result.jobRelated || 0;
+      }
+    }
     
     return {
       success: true,
-      ...result
+      emailsProcessed: totalProcessed,
+      jobsFound: totalClassified
     };
   } catch (error) {
     console.error('Classification-only sync error:', error);

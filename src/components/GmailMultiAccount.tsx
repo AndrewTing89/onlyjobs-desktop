@@ -47,6 +47,11 @@ interface SyncProgress {
   };
   phase?: 'fetching' | 'classifying' | 'saving';
   details?: string;
+  accountIndex?: number;
+  totalAccounts?: number;
+  currentAccount?: string;
+  stage?: string;
+  progress?: number;
 }
 
 export const GmailMultiAccount: React.FC = () => {
@@ -332,15 +337,19 @@ export const GmailMultiAccount: React.FC = () => {
           <Box sx={{ mb: 2 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
               <Typography variant="caption" color="text.secondary">
-                Account {syncProgress.current + 1} of {syncProgress.total}
+                {syncProgress.accountIndex && syncProgress.totalAccounts 
+                  ? `Account ${syncProgress.accountIndex} of ${syncProgress.totalAccounts}`
+                  : syncProgress.currentAccount 
+                    ? `Processing ${syncProgress.currentAccount}`
+                    : syncProgress.stage || 'Processing...'}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                {Math.round((syncProgress.current / syncProgress.total) * 100)}%
+                {syncProgress.progress || 0}%
               </Typography>
             </Box>
             <LinearProgress 
               variant="determinate" 
-              value={syncProgress.total > 0 ? (syncProgress.current / syncProgress.total) * 100 : 0}
+              value={syncProgress.progress || 0}
               sx={{ height: 8, borderRadius: 4 }}
             />
           </Box>

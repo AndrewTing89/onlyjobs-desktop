@@ -13,7 +13,7 @@ const formatTime = (date: Date): string => {
 export interface SyncLogEntry {
   id: string;
   timestamp: Date;
-  type: 'fetch' | 'classify' | 'extract' | 'match' | 'job_found' | 'skip' | 'error' | 'batch' | 'stage';
+  type: 'fetch' | 'classify' | 'extract' | 'match' | 'job_found' | 'skip' | 'error' | 'batch' | 'stage' | 'ml' | 'parse' | 'database';
   message: string;
   details?: {
     thread?: string;
@@ -23,6 +23,17 @@ export interface SyncLogEntry {
     company?: string;
     position?: string;
     timing?: number;
+    confidence?: number;
+    isJob?: boolean;
+    emailCount?: number;
+    duration?: number;
+    batchNum?: number;
+    totalBatches?: number;
+    emailsInBatch?: number;
+    emailsSaved?: number;
+    jobsFound?: number;
+    needsReview?: number;
+    totalEmails?: number;
   };
 }
 
@@ -42,6 +53,9 @@ const getIcon = (type: SyncLogEntry['type']) => {
     case 'error': return '❌';
     case 'batch': return '📦';
     case 'stage': return '🎯';
+    case 'ml': return '📊';
+    case 'parse': return '📝';
+    case 'database': return '💾';
     default: return '•';
   }
 };
@@ -54,6 +68,10 @@ const getColor = (type: SyncLogEntry['type']) => {
     case 'classify': return 'info';
     case 'extract': return 'warning';
     case 'match': return 'secondary';
+    case 'parse': return 'info';
+    case 'database': return 'primary';
+    case 'fetch': return 'secondary';
+    case 'ml': return 'warning';
     default: return 'default';
   }
 };
@@ -74,13 +92,15 @@ export const SyncActivityLog: React.FC<SyncActivityLogProps> = ({ entries, maxEn
     <Paper 
       sx={{ 
         p: 2, 
-        height: '300px',
+        height: '400px',
         display: 'flex',
         flexDirection: 'column',
-        bgcolor: 'background.default'
+        bgcolor: '#1e1e1e',
+        border: '1px solid',
+        borderColor: 'divider'
       }}
     >
-      <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600 }}>
+      <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600, color: '#888' }}>
         Live Classification Activity
       </Typography>
       
@@ -90,128 +110,75 @@ export const SyncActivityLog: React.FC<SyncActivityLogProps> = ({ entries, maxEn
           flex: 1,
           overflowY: 'auto',
           overflowX: 'hidden',
-          pr: 1,
+          fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+          fontSize: '12px',
+          lineHeight: '1.4',
+          color: '#d4d4d4',
+          bgcolor: '#1e1e1e',
+          p: 1,
           '&::-webkit-scrollbar': {
             width: '8px',
           },
           '&::-webkit-scrollbar-track': {
-            bgcolor: 'background.paper',
+            bgcolor: '#2e2e2e',
             borderRadius: '4px',
           },
           '&::-webkit-scrollbar-thumb': {
-            bgcolor: 'divider',
+            bgcolor: '#4e4e4e',
             borderRadius: '4px',
             '&:hover': {
-              bgcolor: 'text.disabled',
+              bgcolor: '#5e5e5e',
             },
           },
         }}
       >
-        <Stack spacing={1}>
-          {displayEntries.map((entry) => (
-            <Box
-              key={entry.id}
-              sx={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 1,
-                py: 0.5,
-                borderBottom: 1,
-                borderColor: 'divider',
-                '&:last-child': {
-                  borderBottom: 'none',
-                },
-                animation: 'fadeIn 0.3s ease-in',
-                '@keyframes fadeIn': {
-                  from: { opacity: 0, transform: 'translateY(-10px)' },
-                  to: { opacity: 1, transform: 'translateY(0)' },
-                },
-              }}
-            >
-              <Typography 
-                component="span" 
-                sx={{ 
-                  fontSize: '1.2rem',
-                  minWidth: '24px',
-                  textAlign: 'center'
-                }}
-              >
-                {getIcon(entry.type)}
-              </Typography>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+          {displayEntries.map((entry) => {
+            // Format ML classification log entries in console style
+            if (entry.type === 'ml' && entry.details) {
+              const isJob = entry.details.isJob;
+              const confidence = entry.details.confidence;
+              const timing = entry.details.timing;
               
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                  <Typography 
-                    variant="caption" 
-                    sx={{ 
-                      color: 'text.secondary',
-                      fontFamily: 'monospace',
-                      fontSize: '0.7rem'
-                    }}
-                  >
-                    {formatTime(entry.timestamp)}
-                  </Typography>
-                  
-                  {entry.details?.batch && (
-                    <Chip
-                      label={`Batch ${entry.details.batch.current}/${entry.details.batch.total}`}
-                      size="small"
-                      variant="outlined"
-                      sx={{ height: '16px', fontSize: '0.7rem' }}
-                    />
-                  )}
-                  
-                  {entry.details?.stage && (
-                    <Chip
-                      label={`Stage ${entry.details.stage}`}
-                      size="small"
-                      color={entry.details.stage === 1 ? 'info' : entry.details.stage === 2 ? 'warning' : 'secondary'}
-                      sx={{ height: '16px', fontSize: '0.7rem' }}
-                    />
-                  )}
-                  
-                  {entry.details?.timing && (
-                    <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.7rem' }}>
-                      {(entry.details.timing / 1000).toFixed(1)}s
-                    </Typography>
-                  )}
-                </Box>
-                
-                <Typography 
-                  variant="body2" 
-                  sx={{ 
-                    wordBreak: 'break-word',
-                    color: entry.type === 'error' ? 'error.main' : 
-                           entry.type === 'job_found' ? 'success.main' : 
-                           'text.primary'
+              return (
+                <Box
+                  key={entry.id}
+                  sx={{
+                    fontFamily: 'inherit',
+                    fontSize: 'inherit',
+                    color: isJob ? '#4ec9b0' : '#ce9178',
+                    '&:hover': {
+                      bgcolor: 'rgba(255,255,255,0.05)'
+                    }
                   }}
                 >
-                  {entry.message}
-                </Typography>
-                
-                {entry.details?.company && (
-                  <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-                    {entry.details.company} - {entry.details.position || 'Unknown Position'}
-                  </Typography>
-                )}
+                  {getIcon(entry.type)} ML Classification completed in {timing}ms - Job: {isJob ? 'true' : 'false'} (confidence: {confidence?.toFixed(2)})
+                </Box>
+              );
+            }
+            
+            // Format other entries in a simpler console style
+            return (
+              <Box
+                key={entry.id}
+                sx={{
+                  fontFamily: 'inherit',
+                  fontSize: 'inherit',
+                  color: entry.type === 'error' ? '#f48771' : 
+                         entry.type === 'job_found' ? '#4ec9b0' : 
+                         entry.type === 'skip' ? '#808080' :
+                         '#d4d4d4',
+                  '&:hover': {
+                    bgcolor: 'rgba(255,255,255,0.05)'
+                  }
+                }}
+              >
+                {getIcon(entry.type)} {entry.message}
+                {entry.details?.timing && ` (${(entry.details.timing / 1000).toFixed(1)}s)`}
               </Box>
-              
-              {entry.details?.result && (
-                <Chip
-                  label={entry.details.result === 'job' ? 'JOB' : 'SKIP'}
-                  size="small"
-                  color={entry.details.result === 'job' ? 'success' : 'default'}
-                  sx={{ 
-                    minWidth: '45px',
-                    height: '20px',
-                    fontSize: '0.65rem',
-                    fontWeight: 600
-                  }}
-                />
-              )}
-            </Box>
-          ))}
-        </Stack>
+            );
+          })}
+        </Box>
       </Box>
       
       {entries.length === 0 && (
@@ -221,12 +188,12 @@ export const SyncActivityLog: React.FC<SyncActivityLogProps> = ({ entries, maxEn
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'center',
-            color: 'text.secondary'
+            color: '#808080',
+            fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+            fontSize: '12px'
           }}
         >
-          <Typography variant="body2">
-            Waiting for sync to start...
-          </Typography>
+          Waiting for sync to start...
         </Box>
       )}
     </Paper>
