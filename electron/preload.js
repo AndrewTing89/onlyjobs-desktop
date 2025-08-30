@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   classifyEmail: (content) => ipcRenderer.invoke('classify-email', content),
   getClassificationQueue: (filters) => ipcRenderer.invoke('classification:get-queue', filters),
   updateClassification: (id, isJobRelated, notes) => ipcRenderer.invoke('classification:update', id, isJobRelated, notes),
+  classificationBulkOperation: (request) => ipcRenderer.invoke('classification:bulk-operation', request),
   
   // LLM Health Check
   checkLLMHealth: () => ipcRenderer.invoke('llm:health-check'),

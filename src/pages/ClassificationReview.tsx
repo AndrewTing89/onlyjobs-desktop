@@ -27,7 +27,11 @@ import {
   Badge,
   Stepper,
   Step,
-  StepLabel
+  StepLabel,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import {
@@ -44,7 +48,8 @@ import {
   Work,
   Visibility,
   ArrowForward,
-  RateReview
+  RateReview,
+  Close
 } from '@mui/icons-material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
@@ -114,6 +119,7 @@ export default function ClassificationReview() {
   const [emails, setEmails] = useState<EmailClassification[]>([]);
   const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
   const [selectedEmailForPreview, setSelectedEmailForPreview] = useState<EmailClassification | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [stats, setStats] = useState<ClassificationStats | null>(null);
@@ -143,7 +149,7 @@ export default function ClassificationReview() {
           // Transform the data to match our EmailClassification type
           const transformedEmails: EmailClassification[] = result.emails.map((email: any) => ({
             ...email,
-            ml_confidence: email.ml_confidence || 0,
+            job_probability: email.job_probability || 0,
             company: email.company || undefined,
             position: email.position || undefined,
             status: email.status || undefined
@@ -198,13 +204,13 @@ export default function ClassificationReview() {
     // Filter by tab
     switch (currentTab) {
       case 0: // Needs Review
-        filtered = filtered.filter(email => email.review_status === 'needs_review');
+        filtered = filtered.filter(email => email.needs_review === true);
         break;
       case 1: // High Confidence Jobs
-        filtered = filtered.filter(email => email.ml_confidence > 70 && email.is_job_related);
+        filtered = filtered.filter(email => email.job_probability > 0.9 && email.is_job_related);
         break;
-      case 2: // Rejected
-        filtered = filtered.filter(email => email.review_status === 'rejected');
+      case 2: // Rejected (non-job emails)
+        filtered = filtered.filter(email => email.is_job_related === false);
         break;
       case 3: // All
         break;
@@ -223,10 +229,10 @@ export default function ClassificationReview() {
 
     // Apply additional filters
     if (filters.confidence_min !== undefined) {
-      filtered = filtered.filter(email => email.ml_confidence >= filters.confidence_min!);
+      filtered = filtered.filter(email => email.job_probability >= filters.confidence_min!);
     }
     if (filters.confidence_max !== undefined) {
-      filtered = filtered.filter(email => email.ml_confidence <= filters.confidence_max!);
+      filtered = filtered.filter(email => email.job_probability <= filters.confidence_max!);
     }
 
     return filtered.sort((a, b) => 
@@ -236,54 +242,57 @@ export default function ClassificationReview() {
 
   const handleEmailSelect = (email: EmailClassification) => {
     setSelectedEmailForPreview(email);
+    setModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setModalOpen(false);
   };
 
   const handleBulkOperation = async (request: BulkOperationRequest) => {
     try {
       setProcessing(true);
       
-      // Mock implementation - in real app this would call window.electronAPI
-      console.log('Bulk operation:', request);
+      // If email_ids is empty, we need to filter emails based on confidence for Smart Actions
+      let emailIds = request.email_ids;
       
-      // Simulate processing delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (emailIds.length === 0) {
+        // Smart Actions - filter based on job probability (stored as 0-1 range)
+        if (request.operation === 'approve_as_job') {
+          // Auto-approve high probability (>90% = >0.9)
+          emailIds = filteredEmails
+            .filter(email => email.job_probability > 0.9)
+            .map(email => email.id);
+        } else if (request.operation === 'reject_as_not_job') {
+          // Auto-reject low probability (<30% = <0.3)
+          emailIds = filteredEmails
+            .filter(email => email.job_probability < 0.3)
+            .map(email => email.id);
+        }
+        
+        if (emailIds.length === 0) {
+          showSnackbar('No emails matched the criteria', 'info');
+          return;
+        }
+      }
       
-      // Update local state based on operation
-      setEmails(prevEmails => {
-        return prevEmails.map(email => {
-          if (request.email_ids.includes(email.id)) {
-            const updates: Partial<EmailClassification> = {};
-            
-            switch (request.operation) {
-              case 'approve_as_job':
-                updates.review_status = 'approved';
-                updates.is_job_related = true;
-                if (request.metadata?.company) updates.company = request.metadata.company;
-                if (request.metadata?.position) updates.position = request.metadata.position;
-                if (request.metadata?.status) updates.status = request.metadata.status;
-                break;
-              case 'reject_as_not_job':
-                updates.review_status = 'rejected';
-                updates.is_job_related = false;
-                break;
-              case 'queue_for_parsing':
-                updates.review_status = 'queued_for_parsing';
-                break;
-              case 'mark_needs_review':
-                updates.review_status = 'needs_review';
-                break;
-            }
-            
-            return { ...email, ...updates, updated_at: new Date().toISOString() };
-          }
-          return email;
-        });
+      // Call Electron API to perform bulk operation
+      const result = await window.electronAPI.classificationBulkOperation({
+        ...request,
+        emailIds: emailIds
       });
       
-      // Clear selection
+      if (!result.success) {
+        throw new Error(result.error || 'Bulk operation failed');
+      }
+      
+      // Clear selection after bulk operation
       setSelectedEmails([]);
       
-      showSnackbar(`Successfully processed ${request.email_ids.length} emails`, 'success');
+      // Refresh data
+      await loadClassificationData();
+      
+      showSnackbar(`Successfully processed ${emailIds.length} emails`, 'success');
     } catch (error) {
       console.error('Bulk operation failed:', error);
       showSnackbar('Bulk operation failed', 'error');
@@ -401,7 +410,7 @@ export default function ClassificationReview() {
                         {stats.high_confidence_jobs}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        High Confidence
+                        High Job Probability
                       </Typography>
                     </CardContent>
                   </Card>
@@ -422,10 +431,10 @@ export default function ClassificationReview() {
                   <Card sx={{ textAlign: 'center' }}>
                     <CardContent sx={{ py: 2 }}>
                       <Typography variant="h4" color="primary.main" sx={{ fontWeight: 600 }}>
-                        {Math.round(stats.avg_confidence)}%
+                        {Math.round(stats.avg_confidence * 100)}%
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        Avg Confidence
+                        Avg Job Probability
                       </Typography>
                     </CardContent>
                   </Card>
@@ -434,11 +443,10 @@ export default function ClassificationReview() {
             </Box>
           )}
 
-          {/* Main Content */}
+          {/* Main Content - Full Width Email List */}
           <Box sx={{ flexGrow: 1, px: 3, pb: 3 }}>
-            <Grid container spacing={2} sx={{ height: '100%' }}>
-              {/* Email List Panel */}
-              <Grid size={{ xs: 12, md: 6 }} sx={{ height: '100%' }}>
+            <Grid container sx={{ height: '100%' }}>
+              <Grid size={12} sx={{ height: '100%' }}>
                 <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                   {/* Tabs and Filters */}
                   <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
@@ -534,14 +542,19 @@ export default function ClassificationReview() {
                                   backgroundColor: 'action.hover'
                                 }
                               }}
-                              onClick={() => handleEmailSelect(email)}
+                              onClick={(e) => {
+                                // Don't open modal if clicking on checkbox area
+                                const target = e.target as HTMLElement;
+                                if (target.tagName !== 'INPUT' && !target.closest('.checkbox-wrapper')) {
+                                  handleEmailSelect(email);
+                                }
+                              }}
                             >
-                              <Box sx={{ mr: 1 }}>
+                              <Box sx={{ mr: 1 }} className="checkbox-wrapper" onClick={(e) => e.stopPropagation()}>
                                 <input
                                   type="checkbox"
                                   checked={selectedEmails.includes(email.id)}
                                   onChange={(e) => {
-                                    e.stopPropagation();
                                     if (e.target.checked) {
                                       setSelectedEmails(prev => [...prev, email.id]);
                                     } else {
@@ -553,38 +566,54 @@ export default function ClassificationReview() {
 
                               <ListItemText
                                 primary={
-                                  <Box>
-                                    <Typography variant="subtitle2" noWrap>
-                                      {email.subject}
-                                    </Typography>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                                      <Email sx={{ fontSize: 14 }} />
-                                      <Typography variant="caption" color="text.secondary" noWrap>
-                                        {email.from_address}
+                                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <Box sx={{ flexGrow: 1, mr: 2 }}>
+                                      <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                                        {email.subject}
                                       </Typography>
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0.5 }}>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                          <Person sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                          <Typography variant="body2" color="text.secondary">
+                                            {email.from_address}
+                                          </Typography>
+                                        </Box>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                          <CalendarToday sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                          <Typography variant="body2" color="text.secondary">
+                                            Received: {new Date(email.received_date).toLocaleDateString()}
+                                          </Typography>
+                                        </Box>
+                                        {email.processed_at && (
+                                          <Typography variant="caption" color="text.secondary" sx={{ ml: 2.5 }}>
+                                            Classified: {new Date(email.processed_at).toLocaleDateString()}
+                                          </Typography>
+                                        )}
+                                      </Box>
                                     </Box>
-                                  </Box>
-                                }
-                                secondary={
-                                  <Box sx={{ mt: 1 }}>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                       <ConfidenceIndicator 
-                                        confidence={email.ml_confidence} 
+                                        confidence={email.job_probability} 
                                         variant="chip" 
                                         size="small"
                                         showPercentage
                                       />
-                                      {email.is_job_related && email.company && (
+                                      {email.is_job_related && (
                                         <Chip 
-                                          label={`${email.company}${email.position ? ` - ${email.position}` : ''}`}
+                                          label="Job Related"
+                                          size="small"
+                                          color="success"
+                                          variant="outlined"
+                                        />
+                                      )}
+                                      {email.company && (
+                                        <Chip 
+                                          label={email.company}
                                           size="small"
                                           sx={{ backgroundColor: 'primary.light', color: 'primary.contrastText' }}
                                         />
                                       )}
                                     </Box>
-                                    <Typography variant="caption" color="text.secondary">
-                                      {new Date(email.received_date).toLocaleDateString()}
-                                    </Typography>
                                   </Box>
                                 }
                               />
@@ -625,7 +654,7 @@ export default function ClassificationReview() {
                                     size="small"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      setSelectedEmailForPreview(email);
+                                      handleEmailSelect(email);
                                     }}
                                   >
                                     <Visibility />
@@ -640,23 +669,37 @@ export default function ClassificationReview() {
                   </Box>
                 </Card>
               </Grid>
+            </Grid>
+          </Box>
 
-              {/* Email Preview Panel */}
-              <Grid size={{ xs: 12, md: 6 }} sx={{ height: '100%' }}>
-                <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <CardContent>
+          {/* Email Preview Modal */}
+          <Dialog
+            open={modalOpen}
+            onClose={handleCloseModal}
+            maxWidth="md"
+            fullWidth
+            PaperProps={{
+              sx: { minHeight: '80vh' }
+            }}
+          >
+            <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Typography variant="h6" component="div" sx={{ flexGrow: 1, mr: 2 }}>
+                {selectedEmailForPreview?.subject || 'Email Details'}
+              </Typography>
+              <IconButton onClick={handleCloseModal} size="small">
+                <Close />
+              </IconButton>
+            </DialogTitle>
+            <DialogContent dividers>
                     {selectedEmailForPreview ? (
                       <Box>
                         {/* Email Header */}
                         <Box sx={{ mb: 3 }}>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                            <Typography variant="h6" sx={{ flexGrow: 1, mr: 2 }}>
-                              {selectedEmailForPreview.subject}
-                            </Typography>
+                          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
                             <ConfidenceIndicator 
-                              confidence={selectedEmailForPreview.ml_confidence}
+                              confidence={selectedEmailForPreview.job_probability}
                               variant="detailed"
-                              size="small"
+                              size="medium"
                             />
                           </Box>
 
@@ -665,11 +708,18 @@ export default function ClassificationReview() {
                               <Person sx={{ fontSize: 16, color: 'text.secondary' }} />
                               <Typography variant="body2">{selectedEmailForPreview.from_address}</Typography>
                             </Box>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <CalendarToday sx={{ fontSize: 16, color: 'text.secondary' }} />
-                              <Typography variant="body2">
-                                {new Date(selectedEmailForPreview.received_date).toLocaleString()}
-                              </Typography>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <CalendarToday sx={{ fontSize: 16, color: 'text.secondary' }} />
+                                <Typography variant="body2">
+                                  Received: {new Date(selectedEmailForPreview.received_date).toLocaleString()}
+                                </Typography>
+                              </Box>
+                              {selectedEmailForPreview.processed_at && (
+                                <Typography variant="body2" sx={{ ml: 3 }}>
+                                  Classified: {new Date(selectedEmailForPreview.processed_at).toLocaleString()}
+                                </Typography>
+                              )}
                             </Box>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                               <Email sx={{ fontSize: 16, color: 'text.secondary' }} />
@@ -712,49 +762,7 @@ export default function ClassificationReview() {
                           </Box>
                         )}
 
-                        {/* Action Buttons */}
-                        {selectedEmailForPreview.review_status === 'needs_review' && (
-                          <Box sx={{ display: 'flex', gap: 2, mt: 3 }}>
-                            <Button
-                              variant="contained"
-                              startIcon={<CheckCircle />}
-                              onClick={() => handleBulkOperation({
-                                email_ids: [selectedEmailForPreview.id],
-                                operation: 'approve_as_job'
-                              })}
-                              sx={{ 
-                                backgroundColor: 'success.main',
-                                '&:hover': { backgroundColor: 'success.dark' }
-                              }}
-                            >
-                              Mark as Job
-                            </Button>
-                            <Button
-                              variant="contained"
-                              startIcon={<Cancel />}
-                              onClick={() => handleBulkOperation({
-                                email_ids: [selectedEmailForPreview.id],
-                                operation: 'reject_as_not_job'
-                              })}
-                              sx={{ 
-                                backgroundColor: 'error.main',
-                                '&:hover': { backgroundColor: 'error.dark' }
-                              }}
-                            >
-                              Mark as Not Job
-                            </Button>
-                            <Button
-                              variant="outlined"
-                              startIcon={<Schedule />}
-                              onClick={() => handleBulkOperation({
-                                email_ids: [selectedEmailForPreview.id],
-                                operation: 'queue_for_parsing'
-                              })}
-                            >
-                              Parse Later
-                            </Button>
-                          </Box>
-                        )}
+                        <Divider sx={{ my: 2 }} />
 
                         {/* Email Content Preview */}
                         <Box sx={{ mt: 3 }}>
@@ -763,27 +771,67 @@ export default function ClassificationReview() {
                           </Typography>
                           <Paper sx={{ p: 2, backgroundColor: 'grey.50', maxHeight: 300, overflow: 'auto' }}>
                             <Typography variant="body2" sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-                              {selectedEmailForPreview.raw_content || 'Email content not available'}
+                              {selectedEmailForPreview.body || 'Email content not available'}
                             </Typography>
                           </Paper>
                         </Box>
                       </Box>
                     ) : (
                       <Box sx={{ textAlign: 'center', py: 8 }}>
-                        <Email sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
-                        <Typography variant="h6" color="text.secondary">
-                          Select an email to preview
-                        </Typography>
-                        <Typography variant="body2" color="text.disabled">
-                          Choose an email from the list to see its details and classification results
+                        <Typography variant="body2" color="text.secondary">
+                          Loading email details...
                         </Typography>
                       </Box>
                     )}
-                  </CardContent>
-                </Card>
-              </Grid>
-            </Grid>
-          </Box>
+            </DialogContent>
+            <DialogActions sx={{ p: 2, gap: 1 }}>
+              {selectedEmailForPreview && (
+                <>
+                  <Button
+                    variant="contained"
+                    startIcon={<CheckCircle />}
+                    onClick={() => {
+                      handleBulkOperation({
+                        email_ids: [selectedEmailForPreview.id],
+                        operation: 'approve_as_job'
+                      });
+                      handleCloseModal();
+                    }}
+                    sx={{ 
+                      backgroundColor: 'success.main',
+                      '&:hover': { backgroundColor: 'success.dark' }
+                    }}
+                  >
+                    Mark as Job-Related
+                  </Button>
+                  <Button
+                    variant="contained"
+                    startIcon={<Cancel />}
+                    onClick={() => {
+                      handleBulkOperation({
+                        email_ids: [selectedEmailForPreview.id],
+                        operation: 'reject_as_not_job'
+                      });
+                      handleCloseModal();
+                    }}
+                    sx={{ 
+                      backgroundColor: 'error.main',
+                      '&:hover': { backgroundColor: 'error.dark' }
+                    }}
+                  >
+                    Mark as Not Job-Related
+                  </Button>
+                  <Box sx={{ flexGrow: 1 }} />
+                  <Button
+                    variant="outlined"
+                    onClick={handleCloseModal}
+                  >
+                    Close
+                  </Button>
+                </>
+              )}
+            </DialogActions>
+          </Dialog>
 
           {/* Workflow Actions */}
           <Box sx={{ px: 3, pb: 3 }}>

@@ -8,8 +8,9 @@ export interface EmailClassification {
   thread_id?: string;
   
   // ML Classification results
-  ml_confidence: number; // 0-100
+  job_probability: number; // 0-1 probability that email is job-related
   is_job_related: boolean;
+  needs_review?: boolean;
   
   // Extracted job information (if applicable)
   company?: string;
@@ -24,7 +25,7 @@ export interface EmailClassification {
   // Processing metadata
   created_at: string;
   updated_at: string;
-  raw_content?: string;
+  body: string;
   processed_at?: string;
 }
 
@@ -72,26 +73,26 @@ export const CONFIDENCE_LEVELS: Record<string, ConfidenceLevel> = {
     color: '#f44336',
     backgroundColor: '#f4433620',
     borderColor: '#f4433640',
-    label: 'Low Confidence'
+    label: 'Low Probability'
   },
   medium: {
     level: 'medium',
     color: '#ff9800',
     backgroundColor: '#ff980020',
     borderColor: '#ff980040',
-    label: 'Medium Confidence'
+    label: 'Medium Probability'
   },
   high: {
     level: 'high',
     color: '#4caf50',
     backgroundColor: '#4caf5020',
     borderColor: '#4caf5040',
-    label: 'High Confidence'
+    label: 'High Probability'
   }
 };
 
 export function getConfidenceLevel(confidence: number): ConfidenceLevel {
-  if (confidence < 30) return CONFIDENCE_LEVELS.low;
-  if (confidence < 70) return CONFIDENCE_LEVELS.medium;
+  if (confidence < 0.3) return CONFIDENCE_LEVELS.low;
+  if (confidence < 0.7) return CONFIDENCE_LEVELS.medium;
   return CONFIDENCE_LEVELS.high;
 }

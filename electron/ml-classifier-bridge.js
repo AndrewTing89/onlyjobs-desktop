@@ -1,6 +1,6 @@
 const { spawn } = require('child_process');
 const path = require('path');
-const { getTrainingDataCollector } = require('./ml-training/training-data-collector');
+// Training data collector removed - will export classified data directly instead
 
 /**
  * ML Classifier Bridge for Node.js/Electron
@@ -73,7 +73,8 @@ class MLClassifierBridge {
             // Return neutral result on error
             resolve({
               is_job_related: false,
-              confidence: 0,
+              job_probability: 0,
+              needs_review: false,
               error: errorOutput || `Python exited with code ${code}`
             });
             return;
@@ -97,38 +98,34 @@ class MLClassifierBridge {
             
             const result = JSON.parse(jsonOutput);
             
+            // Convert confidence to job_probability and determine is_job_related based on threshold
+            const job_probability = result.confidence || 0;
+            const processedResult = {
+              job_probability,
+              is_job_related: job_probability >= 0.9,  // Only mark as job if 90%+ probability
+              needs_review: job_probability >= 0.3 && job_probability < 0.9,  // 30-90% needs review
+              model_type: result.model_type,
+              error: result.error
+            };
+            
             // Cache the result
             this.classificationCache.set(cacheKey, {
-              result,
+              result: processedResult,
               timestamp: Date.now()
             });
 
             const elapsed = Date.now() - startTime;
-            console.log(`📊 ML Classification completed in ${elapsed}ms - Job: ${result.is_job_related} (confidence: ${result.confidence.toFixed(2)})`);
+            console.log(`📊 ML Classification completed in ${elapsed}ms - Job: ${processedResult.is_job_related} (probability: ${job_probability.toFixed(2)})`);
             
-            // Capture low-confidence predictions for training data collection
-            if (result.confidence < 0.7) {
-              try {
-                const collector = getTrainingDataCollector();
-                collector.captureLowConfidence({
-                  subject: subject || '',
-                  body: body || '',
-                  sender: sender || '',
-                  originalPrediction: result.is_job_related,
-                  originalConfidence: result.confidence,
-                  modelVersion: 'xgboost_v1'
-                });
-              } catch (trainingError) {
-                console.warn('Failed to capture low-confidence prediction for training:', trainingError);
-              }
-            }
+            // Training data capture removed - will export classified data directly instead
             
-            resolve(result);
+            resolve(processedResult);
           } catch (parseError) {
             console.error('Failed to parse ML result:', parseError, 'Output:', output);
             resolve({
               is_job_related: false,
-              confidence: 0,
+              job_probability: 0,
+              needs_review: false,
               error: 'Parse error',
               model_type: 'rule_based'
             });
@@ -139,7 +136,8 @@ class MLClassifierBridge {
           console.error('Failed to start Python process:', err);
           resolve({
             is_job_related: false,
-            confidence: 0,
+            job_probability: 0,
+            needs_review: false,
             error: err.message
           });
         });
@@ -149,7 +147,8 @@ class MLClassifierBridge {
       console.error('ML Classifier exception:', error);
       return {
         is_job_related: false,
-        confidence: 0,
+        job_probability: 0,
+        needs_review: false,
         error: error.message
       };
     }
@@ -195,29 +194,7 @@ class MLClassifierBridge {
     console.log(`📊 ML Cache cleared (${size} entries)`);
   }
 
-  /**
-   * Capture user correction for training data
-   * @param {Object} correctionData - Correction information
-   */
-  async captureUserCorrection(correctionData) {
-    try {
-      const collector = getTrainingDataCollector();
-      const success = await collector.captureCorrection({
-        ...correctionData,
-        modelVersion: 'xgboost_v1',
-        correctionType: 'manual_correction'
-      });
-      
-      if (success) {
-        console.log('📊 User correction captured for training data');
-      }
-      
-      return success;
-    } catch (error) {
-      console.error('Failed to capture user correction:', error);
-      return false;
-    }
-  }
+  // Training data capture removed - will export classified data directly instead
 }
 
 // Singleton instance

@@ -1146,124 +1146,7 @@ ipcMain.handle('ml:initialize', async () => {
   }
 });
 
-// Training Data Collection Handlers
-const { getTrainingDataCollector } = require('./ml-training/training-data-collector');
-const { getTrainingDataExporter } = require('./ml-training/training-data-exporter');
-
-// Get training data statistics
-ipcMain.handle('training:get-stats', async () => {
-  try {
-    const collector = getTrainingDataCollector();
-    const stats = collector.getStats();
-    console.log('📊 Training data stats retrieved:', stats);
-    return stats;
-  } catch (error) {
-    console.error('Error getting training stats:', error);
-    throw new Error('Failed to get training statistics');
-  }
-});
-
-// Get training data patterns and analysis
-ipcMain.handle('training:get-patterns', async () => {
-  try {
-    const collector = getTrainingDataCollector();
-    const patterns = collector.getPatterns();
-    console.log('📊 Training data patterns retrieved');
-    return patterns;
-  } catch (error) {
-    console.error('Error getting training patterns:', error);
-    throw new Error('Failed to get training patterns');
-  }
-});
-
-// Get export statistics
-ipcMain.handle('training:get-export-stats', async () => {
-  try {
-    const exporter = getTrainingDataExporter();
-    const stats = exporter.getExportStats();
-    console.log('📊 Export stats retrieved:', stats);
-    return stats;
-  } catch (error) {
-    console.error('Error getting export stats:', error);
-    throw new Error('Failed to get export statistics');
-  }
-});
-
-// Export training data
-ipcMain.handle('training:export', async (event, options = {}) => {
-  try {
-    const exporter = getTrainingDataExporter();
-    let result;
-
-    console.log('📊 Exporting training data with options:', options);
-
-    switch (options.format) {
-      case 'csv':
-        result = await exporter.exportCSV(options);
-        break;
-      case 'json':
-        result = await exporter.exportJSON(options);
-        break;
-      case 'ml':
-        result = await exporter.exportForMLTraining(options);
-        break;
-      default:
-        throw new Error('Invalid export format. Must be: csv, json, or ml');
-    }
-
-    if (result.success) {
-      console.log('📊 Training data export completed:', result);
-    } else {
-      console.error('📊 Training data export failed:', result.message);
-    }
-
-    return result;
-  } catch (error) {
-    console.error('Error exporting training data:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to export training data'
-    };
-  }
-});
-
-// Capture user correction (called when user manually corrects a classification)
-ipcMain.handle('training:capture-correction', async (event, correctionData) => {
-  try {
-    const collector = getTrainingDataCollector();
-    const success = await collector.captureCorrection(correctionData);
-    
-    console.log('📊 User correction captured:', {
-      success,
-      emailHash: correctionData.emailHash,
-      userClassification: correctionData.userClassification,
-      originalPrediction: correctionData.originalPrediction
-    });
-
-    return { success };
-  } catch (error) {
-    console.error('Error capturing correction:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-// Capture low confidence prediction for review
-ipcMain.handle('training:capture-low-confidence', async (event, predictionData) => {
-  try {
-    const collector = getTrainingDataCollector();
-    const success = await collector.captureLowConfidence(predictionData);
-    
-    console.log('📊 Low confidence prediction captured:', {
-      success,
-      confidence: predictionData.originalConfidence
-    });
-
-    return { success };
-  } catch (error) {
-    console.error('Error capturing low confidence prediction:', error);
-    return { success: false, error: error.message };
-  }
-});
+// Training Data Collection Handlers removed - will export classified data directly instead
 
 // ML handlers removed - using pure LLM approach with training data collection
 
@@ -3585,56 +3468,7 @@ ipcMain.handle('classification:get-pending', async (event, accountEmail = null) 
   }
 });
 
-// Save user corrections for ML training
-ipcMain.handle('training:save-feedback', async (event, feedbackData) => {
-  try {
-    const Database = require('better-sqlite3');
-    const path = require('path');
-    const { app } = require('electron');
-    
-    const dbPath = path.join(app.getPath('userData'), 'jobs.db');
-    const db = new Database(dbPath);
-    
-    try {
-      const insertTraining = db.prepare(`
-        INSERT INTO classification_training (
-          gmail_message_id,
-          original_classification,
-          user_correction,
-          confidence,
-          subject,
-          body_snippet,
-          from_address,
-          feedback_notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      
-      const result = insertTraining.run(
-        feedbackData.gmailMessageId,
-        feedbackData.originalClassification ? 1 : 0,
-        feedbackData.userCorrection ? 1 : 0,
-        feedbackData.confidence || 0,
-        feedbackData.subject || '',
-        feedbackData.bodySnippet || '',
-        feedbackData.fromAddress || '',
-        feedbackData.notes || ''
-      );
-      
-      return {
-        success: true,
-        id: result.lastInsertRowid
-      };
-    } finally {
-      db.close();
-    }
-  } catch (error) {
-    console.error('Training feedback save error:', error);
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-});
+// Training feedback removed - will export classified data directly instead
 
 // Get parse queue statistics
 ipcMain.handle('parse:get-stats', async (event, accountEmail = null) => {
@@ -3813,18 +3647,21 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
         cq.gmail_message_id as email_id,
         cq.thread_id,
         cq.subject,
-        cq.sender as from_address,
-        cq.received_date,
-        cq.ml_classification as is_job_related,
-        cq.ml_confidence,
+        cq.from_address,
+        cq.body,
+        cq.created_at as received_date,
+        cq.is_job_related,
+        cq.job_probability,
         cq.needs_review,
-        cq.user_classification,
-        cq.status as review_status,
+        cq.user_feedback as user_classification,
+        cq.classification_status as review_status,
+        cq.company,
+        cq.position,
+        cq.status,
         cq.created_at,
         cq.updated_at,
-        es.account_email
+        cq.account_email
       FROM classification_queue cq
-      LEFT JOIN email_sync es ON cq.gmail_message_id = es.gmail_message_id
       WHERE 1=1
     `;
     
@@ -3832,7 +3669,7 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
     
     // Apply filters
     if (filters.accountEmail) {
-      query += ' AND es.account_email = ?';
+      query += ' AND cq.account_email = ?';
       params.push(filters.accountEmail);
     }
     
@@ -3842,17 +3679,17 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
     }
     
     if (filters.isJobRelated !== undefined) {
-      query += ' AND cq.ml_classification = ?';
+      query += ' AND cq.is_job_related = ?';
       params.push(filters.isJobRelated ? 1 : 0);
     }
     
     if (filters.status) {
-      query += ' AND cq.status = ?';
+      query += ' AND cq.classification_status = ?';
       params.push(filters.status);
     }
     
     // Order by date descending
-    query += ' ORDER BY cq.received_date DESC';
+    query += ' ORDER BY cq.created_at DESC';
     
     if (filters.limit) {
       query += ' LIMIT ?';
@@ -3869,13 +3706,17 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
       thread_id: row.thread_id,
       subject: row.subject || '',
       from_address: row.from_address || '',
+      body: row.body || '',
       received_date: row.received_date || new Date().toISOString(),
       account_email: row.account_email || '',
-      ml_confidence: row.ml_confidence || 0,
+      job_probability: row.job_probability || 0,
       is_job_related: Boolean(row.is_job_related),
       needs_review: Boolean(row.needs_review),
       user_classification: row.user_classification !== null ? Boolean(row.user_classification) : null,
       review_status: row.review_status || 'pending',
+      company: row.company || undefined,
+      position: row.position || undefined,
+      status: row.status || undefined,
       created_at: row.created_at,
       updated_at: row.updated_at
     }));
@@ -3884,11 +3725,11 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
     const stats = {
       total_emails: emails.length,
       needs_review: emails.filter(e => e.needs_review).length,
-      high_confidence_jobs: emails.filter(e => e.ml_confidence > 70 && e.is_job_related).length,
-      rejected: emails.filter(e => e.review_status === 'rejected' || e.is_job_related === false).length,
+      high_confidence_jobs: emails.filter(e => e.job_probability > 0.9).length,
+      rejected: emails.filter(e => e.is_job_related === false).length,
       queued_for_parsing: emails.filter(e => e.review_status === 'queued_for_parsing').length,
       avg_confidence: emails.length > 0 
-        ? emails.reduce((sum, e) => sum + (e.ml_confidence || 0), 0) / emails.length 
+        ? emails.reduce((sum, e) => sum + (e.job_probability || 0), 0) / emails.length 
         : 0
     };
     
@@ -3913,6 +3754,97 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
         avg_confidence: 0
       }
     };
+  }
+});
+
+// Bulk operation handler for classification review
+ipcMain.handle('classification:bulk-operation', async (event, request) => {
+  try {
+    const db = getDb();
+    
+    if (!request.email_ids || request.email_ids.length === 0) {
+      return { success: false, error: 'No emails provided' };
+    }
+    
+    let updateQuery = '';
+    let params = [];
+    
+    switch (request.operation) {
+      case 'approve_as_job':
+        updateQuery = `
+          UPDATE classification_queue 
+          SET classification_status = 'approved',
+              is_job_related = 1,
+              needs_review = 0,
+              user_feedback = 'approved',
+              company = COALESCE(?, company),
+              position = COALESCE(?, position),
+              status = COALESCE(?, status),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id IN (${request.email_ids.map(() => '?').join(',')})
+        `;
+        params = [
+          request.metadata?.company || null,
+          request.metadata?.position || null,
+          request.metadata?.status || null,
+          ...request.email_ids
+        ];
+        break;
+        
+      case 'reject_as_not_job':
+        updateQuery = `
+          UPDATE classification_queue 
+          SET classification_status = 'rejected',
+              is_job_related = 0,
+              needs_review = 0,
+              user_feedback = 'rejected',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id IN (${request.email_ids.map(() => '?').join(',')})
+        `;
+        params = request.email_ids;
+        break;
+        
+      case 'queue_for_parsing':
+        updateQuery = `
+          UPDATE classification_queue 
+          SET classification_status = 'queued_for_parsing',
+              parse_status = 'pending',
+              needs_review = 0,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id IN (${request.email_ids.map(() => '?').join(',')})
+        `;
+        params = request.email_ids;
+        break;
+        
+      case 'mark_needs_review':
+        updateQuery = `
+          UPDATE classification_queue 
+          SET needs_review = 1,
+              classification_status = 'pending',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id IN (${request.email_ids.map(() => '?').join(',')})
+        `;
+        params = request.email_ids;
+        break;
+        
+      default:
+        return { success: false, error: `Unknown operation: ${request.operation}` };
+    }
+    
+    const stmt = db.prepare(updateQuery);
+    const result = stmt.run(...params);
+    
+    console.log(`Bulk operation ${request.operation} affected ${result.changes} rows`);
+    
+    return { 
+      success: true, 
+      changes: result.changes,
+      message: `Successfully processed ${result.changes} emails`
+    };
+    
+  } catch (error) {
+    console.error('Error in bulk operation:', error);
+    return { success: false, error: error.message };
   }
 });
 

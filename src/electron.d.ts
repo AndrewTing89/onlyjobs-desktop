@@ -22,6 +22,7 @@ interface ElectronAPI {
   classifyEmail: (input: string | { subject: string; plaintext: string }) => Promise<any>;
   getClassificationQueue: (filters?: any) => Promise<{ success: boolean; emails: any[]; stats: any; error?: string }>;
   updateClassification: (id: string, isJobRelated: boolean, notes?: string) => Promise<any>;
+  classificationBulkOperation: (data: { operation: string; emailIds?: string[]; filterOptions?: any }) => Promise<any>;
   
   // LLM Health Check
   checkLLMHealth: () => Promise<{

@@ -44,12 +44,12 @@ const ConfidenceIndicator: React.FC<ConfidenceIndicatorProps> = ({
   const tooltipContent = (
     <Box>
       <Typography variant="body2" sx={{ fontWeight: 500 }}>
-        {level.label}: {confidence}%
+        {level.label}: {(confidence * 100).toFixed(1)}%
       </Typography>
       <Typography variant="caption" sx={{ opacity: 0.8 }}>
-        {level.level === 'high' && 'High confidence - likely accurate'}
-        {level.level === 'medium' && 'Medium confidence - may need review'}
-        {level.level === 'low' && 'Low confidence - requires review'}
+        {level.level === 'high' && 'High probability - likely job-related'}
+        {level.level === 'medium' && 'Medium probability - may need review'}
+        {level.level === 'low' && 'Low probability - likely not job-related'}
       </Typography>
     </Box>
   );
@@ -61,7 +61,7 @@ const ConfidenceIndicator: React.FC<ConfidenceIndicatorProps> = ({
           icon={showIcon ? getIcon(level) : undefined}
           label={
             showPercentage 
-              ? `${confidence}%` 
+              ? `${(confidence * 100).toFixed(2)}%` 
               : level.label
           }
           size={size === 'large' ? 'medium' : size}
@@ -96,7 +96,7 @@ const ConfidenceIndicator: React.FC<ConfidenceIndicatorProps> = ({
           <Box sx={{ width: '100%', mr: 1 }}>
             <LinearProgress
               variant="determinate"
-              value={confidence}
+              value={confidence * 100}
               sx={{
                 height: size === 'small' ? 6 : size === 'medium' ? 8 : 10,
                 borderRadius: 4,
@@ -118,7 +118,7 @@ const ConfidenceIndicator: React.FC<ConfidenceIndicatorProps> = ({
                 textAlign: 'right'
               }}
             >
-              {confidence}%
+              {(confidence * 100).toFixed(1)}%
             </Typography>
           )}
         </Box>
@@ -157,7 +157,7 @@ const ConfidenceIndicator: React.FC<ConfidenceIndicatorProps> = ({
         
         <LinearProgress
           variant="determinate"
-          value={confidence}
+          value={confidence * 100}
           sx={{
             height: size === 'small' ? 4 : size === 'medium' ? 6 : 8,
             borderRadius: 2,
@@ -177,9 +177,9 @@ const ConfidenceIndicator: React.FC<ConfidenceIndicatorProps> = ({
             display: 'block'
           }}
         >
-          {level.level === 'high' && 'Classification is likely accurate'}
-          {level.level === 'medium' && 'May require human verification'}
-          {level.level === 'low' && 'Requires manual review'}
+          {level.level === 'high' && 'Very likely job-related'}
+          {level.level === 'medium' && 'May be job-related - needs review'}
+          {level.level === 'low' && 'Unlikely to be job-related'}
         </Typography>
       </Box>
     );

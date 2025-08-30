@@ -50,7 +50,7 @@ class DatabaseInitializer {
       
       // Create human-in-the-loop tables
       this.createClassificationQueueTable(db);
-      this.createTrainingFeedbackTable(db);
+      // Training feedback table removed
       
       // Create test tables (for model testing)
       this.createTestTables(db);
@@ -236,7 +236,7 @@ class DatabaseInitializer {
         is_job_related BOOLEAN DEFAULT 0,
         confidence REAL DEFAULT 0,
         needs_review BOOLEAN DEFAULT 0,
-        classification_status TEXT DEFAULT 'pending' CHECK(classification_status IN ('pending', 'classified', 'reviewed')),
+        classification_status TEXT DEFAULT 'pending' CHECK(classification_status IN ('pending', 'classified', 'approved', 'rejected', 'queued_for_parsing', 'reviewed')),
         parse_status TEXT DEFAULT 'pending' CHECK(parse_status IN ('pending', 'parsing', 'parsed', 'failed', 'skip')),
         company TEXT,
         position TEXT,
@@ -250,33 +250,7 @@ class DatabaseInitializer {
     `);
   }
 
-  /**
-   * Create training feedback table for ML model improvements
-   */
-  createTrainingFeedbackTable(db) {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS training_feedback (
-        id TEXT PRIMARY KEY,
-        gmail_message_id TEXT NOT NULL,
-        subject TEXT,
-        body TEXT,
-        sender TEXT,
-        received_date TEXT,
-        ml_predicted_label BOOLEAN,
-        ml_confidence REAL,
-        human_label BOOLEAN NOT NULL,
-        corrected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        corrected_by TEXT,
-        exported BOOLEAN DEFAULT 0,
-        exported_at TIMESTAMP,
-        included_in_model_version TEXT,
-        correction_reason TEXT,
-        feature_hash TEXT UNIQUE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-  }
+  // Training feedback table removed - will export classified data directly instead
 
   /**
    * Create test tables for model evaluation
@@ -370,6 +344,12 @@ class DatabaseInitializer {
       // Run human-in-the-loop migration if needed
       this.addHumanInLoopIfNeeded();
       
+      // Update classification_status constraint to include new statuses
+      this.updateClassificationStatusConstraint();
+      
+      // Rename confidence columns to job_probability
+      this.renameConfidenceToJobProbability();
+      
       return { success: true };
     } catch (error) {
       console.error('Error running migrations:', error);
@@ -424,6 +404,145 @@ class DatabaseInitializer {
       }
     }
   }
+
+  /**
+   * Rename confidence columns to job_probability
+   */
+  renameConfidenceToJobProbability() {
+    const db = this.getDb();
+    
+    try {
+      // Check if classification_queue table exists
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='classification_queue'").all();
+      if (tables.length > 0) {
+        // Check if confidence column exists
+        const tableInfo = db.pragma('table_info(classification_queue)');
+        const columnNames = tableInfo.map(col => col.name);
+        
+        if (columnNames.includes('confidence') && !columnNames.includes('job_probability')) {
+          console.log('Renaming confidence column to job_probability in classification_queue...');
+          
+          // SQLite doesn't support RENAME COLUMN in older versions, so we need to recreate the table
+          db.exec(`
+            -- Create new table with job_probability column
+            CREATE TABLE classification_queue_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              gmail_message_id TEXT UNIQUE NOT NULL,
+              thread_id TEXT,
+              account_email TEXT,
+              subject TEXT,
+              from_address TEXT,
+              body TEXT,
+              is_job_related BOOLEAN DEFAULT 0,
+              job_probability REAL DEFAULT 0,
+              needs_review BOOLEAN DEFAULT 0,
+              classification_status TEXT DEFAULT 'pending',
+              parse_status TEXT DEFAULT 'pending',
+              company TEXT,
+              position TEXT,
+              status TEXT,
+              raw_email_data TEXT,
+              user_feedback TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              processing_time INTEGER DEFAULT 0
+            );
+            
+            -- Copy data from old table
+            INSERT INTO classification_queue_new 
+            SELECT 
+              id, gmail_message_id, thread_id, account_email, subject, from_address, body,
+              is_job_related, confidence as job_probability, needs_review, classification_status,
+              parse_status, company, position, status, raw_email_data, user_feedback,
+              created_at, updated_at, processing_time
+            FROM classification_queue;
+            
+            -- Drop old table
+            DROP TABLE classification_queue;
+            
+            -- Rename new table
+            ALTER TABLE classification_queue_new RENAME TO classification_queue;
+            
+            -- Recreate indexes
+            CREATE INDEX IF NOT EXISTS idx_classification_queue_account ON classification_queue(account_email);
+            CREATE INDEX IF NOT EXISTS idx_classification_queue_status ON classification_queue(classification_status);
+            CREATE INDEX IF NOT EXISTS idx_classification_queue_thread ON classification_queue(thread_id);
+          `);
+        } else if (columnNames.includes('job_probability')) {
+          console.log('classification_queue already has job_probability column');
+        }
+      }
+      
+      // Also update jobs table if needed
+      const jobsTableInfo = db.pragma('table_info(jobs)');
+      const jobsColumnNames = jobsTableInfo.map(col => col.name);
+      
+      if (jobsColumnNames.includes('ml_confidence') && !jobsColumnNames.includes('job_probability')) {
+        console.log('Renaming ml_confidence column to job_probability in jobs table...');
+        
+        // For jobs table, we can try the simpler approach first
+        try {
+          db.exec('ALTER TABLE jobs RENAME COLUMN ml_confidence TO job_probability');
+        } catch (e) {
+          // If that fails, we need to recreate the table
+          console.log('Using table recreation method for jobs table...');
+          // This would be more complex as jobs table has more columns and relationships
+          // For now, just add the new column and copy data
+          db.exec('ALTER TABLE jobs ADD COLUMN job_probability REAL');
+          db.exec('UPDATE jobs SET job_probability = ml_confidence WHERE ml_confidence IS NOT NULL');
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error in renameConfidenceToJobProbability migration:', error);
+      // Non-fatal - continue with other migrations
+    }
+  }
+
+  /**
+   * Update classification_status constraint to include new statuses
+   */
+  updateClassificationStatusConstraint() {
+    const db = this.getDb();
+    
+    try {
+      // Check if we need to update the constraint
+      const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='classification_queue'").get();
+      
+      if (tableInfo && tableInfo.sql) {
+        // Check if the constraint already includes the new statuses
+        if (!tableInfo.sql.includes('approved') || !tableInfo.sql.includes('rejected')) {
+          console.log('Updating classification_status constraint in classification_queue table...');
+          
+          // SQLite doesn't support ALTER CONSTRAINT, so we need to recreate the table
+          // First, rename the old table
+          db.exec('ALTER TABLE classification_queue RENAME TO classification_queue_old');
+          
+          // Create new table with updated constraint
+          this.createClassificationQueueTable(db);
+          
+          // Copy data from old table
+          db.exec(`
+            INSERT INTO classification_queue 
+            SELECT * FROM classification_queue_old
+          `);
+          
+          // Drop old table
+          db.exec('DROP TABLE classification_queue_old');
+          
+          console.log('Successfully updated classification_status constraint');
+        }
+      }
+    } catch (error) {
+      console.log('Note: Could not update classification_status constraint:', error.message);
+      // This is not critical - new databases will have the correct constraint
+    }
+  }
+
+  /**
+   * Update training_feedback table to include missing columns
+   */
+  // Training feedback migration removed - no longer needed
 
   /**
    * Close database connection

@@ -11,7 +11,6 @@ const Jobs = lazy(() => import('./pages/Jobs'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Settings = lazy(() => import('./pages/Settings'));
 const AnalyticsDashboard = lazy(() => import('./pages/AnalyticsDashboard'));
-const TrainingDataDashboard = lazy(() => import('./pages/TrainingDataDashboard'));
 const ClassificationReview = lazy(() => import('./pages/ClassificationReview'));
 // Workflow pages
 const GmailFetchPage = lazy(() => import('./pages/GmailFetchPage'));
@@ -111,7 +110,6 @@ function ElectronApp() {
                 <Route path="/jobs" element={<Jobs />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/analytics" element={<AnalyticsDashboard />} />
-                <Route path="/training-data" element={<TrainingDataDashboard />} />
                 <Route path="/classification-review" element={<ClassificationReview />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/about" element={<About />} />

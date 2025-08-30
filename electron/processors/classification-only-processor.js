@@ -368,10 +368,10 @@ class ClassificationOnlyProcessor {
 
             // Send ML classification activity to UI
             this.sendActivity('ml', 
-              `ML Classification completed in ${processingTime}ms - Job: ${mlResult.is_job_related ? 'true' : 'false'} (confidence: ${mlResult.confidence.toFixed(2)})`,
+              `ML Classification completed in ${processingTime}ms - Job: ${mlResult.is_job_related ? 'true' : 'false'} (probability: ${mlResult.job_probability.toFixed(2)})`,
               {
                 isJob: mlResult.is_job_related,
-                confidence: mlResult.confidence,
+                job_probability: mlResult.job_probability,
                 timing: processingTime
               }
             );
@@ -380,8 +380,8 @@ class ClassificationOnlyProcessor {
               email,
               classification: {
                 is_job_related: mlResult.is_job_related,
-                confidence: mlResult.confidence,
-                needs_review: mlResult.confidence < 0.8,
+                job_probability: mlResult.job_probability,
+                needs_review: mlResult.needs_review || false,
                 ml_only: true,
                 processing_time: processingTime,
                 model_type: mlResult.model_type || 'ml'
@@ -396,7 +396,7 @@ class ClassificationOnlyProcessor {
               email,
               classification: {
                 is_job_related: false,
-                confidence: 0,
+                job_probability: 0,
                 needs_review: true,
                 ml_only: true,
                 processing_time: 0,
@@ -431,7 +431,7 @@ class ClassificationOnlyProcessor {
         this.sendProgress(`Saving batch ${saveBatchNum} of ${totalBatches} to database...`, progress + 2);
         
         const saveStartTime = Date.now();
-        await this.saveBatchToDatabase(toSave, account);
+        await this.saveToClassificationQueue(toSave, account);
         const saveTime = Date.now() - saveStartTime;
         
         savedCount += toSave.length;
@@ -457,7 +457,7 @@ class ClassificationOnlyProcessor {
       this.sendProgress(`Saving final batch to database...`, 92);
       
       const saveStartTime = Date.now();
-      await this.saveBatchToDatabase(remaining, account);
+      await this.saveToClassificationQueue(remaining, account);
       const saveTime = Date.now() - saveStartTime;
       
       console.log(`Saved final batch: ${remaining.length} emails`);
@@ -486,14 +486,14 @@ class ClassificationOnlyProcessor {
   /**
    * Save a batch of classification results to database
    */
-  async saveBatchToDatabase(results, account) {
-    console.log(`saveBatchToDatabase: Starting to save ${results.length} results...`);
+  async saveToClassificationQueue(results, account) {
+    console.log(`saveToClassificationQueue: Starting to save ${results.length} results...`);
     const db = this.db; // Use shared connection
 
     try {
       // Ensure tables exist
       this.createClassificationTables(db);
-      console.log(`saveBatchToDatabase: Tables verified`);
+      console.log(`saveToClassificationQueue: Tables verified`);
 
       // Prepare statements
       const insertClassification = db.prepare(`
@@ -505,7 +505,7 @@ class ClassificationOnlyProcessor {
           from_address,
           body,
           is_job_related,
-          confidence,
+          job_probability,
           needs_review,
           classification_status,
           parse_status,
@@ -538,7 +538,7 @@ class ClassificationOnlyProcessor {
             email.from,
             email.body,
             classification.is_job_related ? 1 : 0,
-            classification.confidence,
+            classification.job_probability,
             classification.needs_review ? 1 : 0,
             'classified',
             classification.is_job_related ? 'pending' : 'skip',
@@ -564,9 +564,9 @@ class ClassificationOnlyProcessor {
         }
       });
 
-      console.log(`saveBatchToDatabase: Starting transaction for ${results.length} results...`);
+      console.log(`saveToClassificationQueue: Starting transaction for ${results.length} results...`);
       transaction();
-      console.log(`saveBatchToDatabase: Successfully saved ${results.length} classification results`);
+      console.log(`saveToClassificationQueue: Successfully saved ${results.length} classification results`);
 
     } catch (error) {
       console.error('Error saving classification batch:', error);
@@ -603,7 +603,7 @@ class ClassificationOnlyProcessor {
         from_address TEXT,
         body TEXT,
         is_job_related BOOLEAN DEFAULT 0,
-        confidence REAL DEFAULT 0,
+        job_probability REAL DEFAULT 0,
         needs_review BOOLEAN DEFAULT 0,
         classification_status TEXT DEFAULT 'pending' CHECK(classification_status IN ('pending', 'classified', 'reviewed')),
         parse_status TEXT DEFAULT 'pending' CHECK(parse_status IN ('pending', 'parsing', 'parsed', 'failed', 'skip')),
@@ -627,23 +627,7 @@ class ClassificationOnlyProcessor {
       CREATE INDEX IF NOT EXISTS idx_classification_queue_thread ON classification_queue(thread_id);
     `);
 
-    // Create training feedback table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS classification_training (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        gmail_message_id TEXT NOT NULL,
-        original_classification BOOLEAN,
-        user_correction BOOLEAN,
-        confidence REAL,
-        subject TEXT,
-        body_snippet TEXT,
-        from_address TEXT,
-        feedback_notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        
-        FOREIGN KEY (gmail_message_id) REFERENCES classification_queue(gmail_message_id)
-      )
-    `);
+    // Training feedback table removed - will export classified data directly instead
 
     console.log('Classification tables created/verified');
   }
@@ -785,21 +769,8 @@ class ClassificationOnlyProcessor {
         WHERE id = ?
       `);
 
-      const insertTraining = db.prepare(`
-        INSERT INTO classification_training (
-          gmail_message_id,
-          original_classification,
-          user_correction,
-          confidence,
-          subject,
-          body_snippet,
-          from_address,
-          feedback_notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
       const transaction = db.transaction(() => {
-        // Get original data for training
+        // Get original data
         const original = getOriginalData.get(id);
         if (!original) {
           throw new Error(`Classification record with ID ${id} not found`);
@@ -807,20 +778,6 @@ class ClassificationOnlyProcessor {
 
         // Update classification
         updateClassification.run(isJobRelated ? 1 : 0, isJobRelated ? 1 : 0, notes, id);
-
-        // Save training data if classification changed
-        if ((original.is_job_related === 1) !== isJobRelated) {
-          insertTraining.run(
-            original.gmail_message_id,
-            original.is_job_related === 1,
-            isJobRelated,
-            original.confidence,
-            original.subject,
-            (original.body || '').substring(0, 500),
-            original.from_address,
-            notes
-          );
-        }
       });
 
       transaction();

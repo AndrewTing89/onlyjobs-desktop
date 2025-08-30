@@ -60,7 +60,6 @@ const sidebarSections: SidebarSection[] = [
   {
     title: 'Configure',
     items: [
-      { text: 'Training Data', icon: <ModelTraining />, path: '/training-data', active: false },
       { text: 'Settings', icon: <Settings />, path: '/settings', active: false },
       { text: 'About', icon: <Info />, path: '/about', active: false },
     ]
@@ -80,10 +79,8 @@ export default function Sidebar({ currentPath = '/' }: SidebarProps) {
   const isActive = (itemPath: string) => {
     // Handle root/jobs path
     if (itemPath === '/jobs' && (currentPath === '/' || currentPath === '/jobs')) return true;
-    // Handle exact match for training-data
-    if (itemPath === '/training-data' && currentPath === '/training-data') return true;
-    // Handle other paths with prefix matching (but not for training-data)
-    if (itemPath !== '/jobs' && itemPath !== '/training-data' && currentPath.startsWith(itemPath)) return true;
+    // Handle other paths with prefix matching
+    if (itemPath !== '/jobs' && currentPath.startsWith(itemPath)) return true;
     return false;
   };
 
