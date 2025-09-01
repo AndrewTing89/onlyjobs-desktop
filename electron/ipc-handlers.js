@@ -2467,17 +2467,28 @@ ipcMain.handle('db:clear-all-records', async () => {
     const beforeCounts = {
       emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
       jobs: db.prepare('SELECT COUNT(*) as count FROM jobs').get().count,
-      gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count
+      gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count,
+      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0,
+      trainingFeedback: db.prepare('SELECT COUNT(*) as count FROM training_feedback').get()?.count || 0
     };
     console.log('📊 Current record counts:', beforeCounts);
     
     // Use a transaction to ensure all operations succeed or fail together
     const clearAll = db.transaction(() => {
       // Clear all tables in the correct order (respecting foreign key constraints if any)
+      const clearClassificationQueue = db.prepare('DELETE FROM classification_queue');
+      const clearTrainingFeedback = db.prepare('DELETE FROM training_feedback');
       const clearEmailSync = db.prepare('DELETE FROM email_sync');
       const clearJobs = db.prepare('DELETE FROM jobs');
       const clearGmailAccounts = db.prepare('DELETE FROM gmail_accounts');
+      const clearLlmCache = db.prepare('DELETE FROM llm_cache');
       const resetSyncStatus = db.prepare('UPDATE sync_status SET last_fetch_time = NULL, last_classify_time = NULL, last_sync_status = NULL, total_emails_fetched = 0, total_emails_classified = 0, total_jobs_found = 0 WHERE id = 1');
+      
+      const classificationQueueResult = clearClassificationQueue.run();
+      console.log(`Deleted ${classificationQueueResult.changes} classification_queue records`);
+      
+      const trainingFeedbackResult = clearTrainingFeedback.run();
+      console.log(`Deleted ${trainingFeedbackResult.changes} training_feedback records`);
       
       const emailSyncResult = clearEmailSync.run();
       console.log(`Deleted ${emailSyncResult.changes} email_sync records`);
@@ -2488,13 +2499,19 @@ ipcMain.handle('db:clear-all-records', async () => {
       const gmailAccountsResult = clearGmailAccounts.run();
       console.log(`Deleted ${gmailAccountsResult.changes} gmail_accounts records`);
       
+      const llmCacheResult = clearLlmCache.run();
+      console.log(`Deleted ${llmCacheResult.changes} llm_cache records`);
+      
       resetSyncStatus.run();
       console.log('Reset sync status');
       
       return {
+        classificationQueueDeleted: classificationQueueResult.changes,
+        trainingFeedbackDeleted: trainingFeedbackResult.changes,
         emailSyncDeleted: emailSyncResult.changes,
         jobsDeleted: jobsResult.changes,
-        gmailAccountsDeleted: gmailAccountsResult.changes
+        gmailAccountsDeleted: gmailAccountsResult.changes,
+        llmCacheDeleted: llmCacheResult.changes
       };
     });
     
@@ -2504,7 +2521,9 @@ ipcMain.handle('db:clear-all-records', async () => {
     const afterCounts = {
       emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
       jobs: db.prepare('SELECT COUNT(*) as count FROM jobs').get().count,
-      gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count
+      gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count,
+      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0,
+      trainingFeedback: db.prepare('SELECT COUNT(*) as count FROM training_feedback').get()?.count || 0
     };
     console.log('📊 After clearing - record counts:', afterCounts);
     
@@ -2512,7 +2531,7 @@ ipcMain.handle('db:clear-all-records', async () => {
     
     return {
       success: true,
-      message: `All database records have been cleared successfully. Deleted: ${result.emailSyncDeleted} email sync records, ${result.jobsDeleted} jobs, ${result.gmailAccountsDeleted} accounts`,
+      message: `All database records have been cleared successfully. Deleted: ${result.classificationQueueDeleted} classifications, ${result.emailSyncDeleted} email sync records, ${result.jobsDeleted} jobs, ${result.gmailAccountsDeleted} accounts`,
       details: result
     };
   } catch (error) {
@@ -2524,17 +2543,26 @@ ipcMain.handle('db:clear-all-records', async () => {
 
 ipcMain.handle('db:clear-email-sync', async () => {
   try {
-    console.log('🗑️ Clearing email sync history...');
+    console.log('🗑️ Clearing email sync history and related classifications...');
     
     const db = getDb();
     
-    // Check current count before clearing
-    const beforeCount = db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count;
-    console.log(`📊 Current email_sync records: ${beforeCount}`);
+    // Check current counts before clearing
+    const beforeCounts = {
+      emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
+      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0
+    };
+    console.log(`📊 Current records - email_sync: ${beforeCounts.emailSync}, classification_queue: ${beforeCounts.classificationQueue}`);
     
-    const stmt = db.prepare('DELETE FROM email_sync');
-    const result = stmt.run();
-    console.log(`Deleted ${result.changes} email_sync records`);
+    // Clear both email_sync and classification_queue since they're related
+    const clearEmailSync = db.prepare('DELETE FROM email_sync');
+    const clearClassificationQueue = db.prepare('DELETE FROM classification_queue');
+    
+    const emailSyncResult = clearEmailSync.run();
+    console.log(`Deleted ${emailSyncResult.changes} email_sync records`);
+    
+    const classificationResult = clearClassificationQueue.run();
+    console.log(`Deleted ${classificationResult.changes} classification_queue records`);
     
     // Reset sync status counters
     const resetStmt = db.prepare('UPDATE sync_status SET total_emails_fetched = 0, total_emails_classified = 0, last_sync_status = NULL WHERE id = 1');
@@ -2542,15 +2570,18 @@ ipcMain.handle('db:clear-email-sync', async () => {
     console.log('Reset sync status counters');
     
     // Verify the deletion
-    const afterCount = db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count;
-    console.log(`📊 After clearing - email_sync records: ${afterCount}`);
+    const afterCounts = {
+      emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
+      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0
+    };
+    console.log(`📊 After clearing - email_sync: ${afterCounts.emailSync}, classification_queue: ${afterCounts.classificationQueue}`);
     
-    console.log(`✅ Cleared ${result.changes} email sync records`);
+    console.log(`✅ Cleared ${emailSyncResult.changes} email sync records and ${classificationResult.changes} classification records`);
     
     return {
       success: true,
-      message: `Email sync history cleared successfully (${result.changes} records deleted)`,
-      recordsDeleted: result.changes
+      message: `Email sync history cleared successfully (${emailSyncResult.changes} email records and ${classificationResult.changes} classification records deleted)`,
+      recordsDeleted: emailSyncResult.changes + classificationResult.changes
     };
   } catch (error) {
     console.error('❌ Error clearing email sync history:', error);
@@ -3355,6 +3386,14 @@ ipcMain.handle('sync:classify-only', async (event, options = {}) => {
       }
     }
     
+    // Send sync complete event
+    event.sender.send('sync-complete', {
+      emailsFetched: totalProcessed,
+      emailsClassified: totalClassified,
+      jobsCreated: 0, // Classification-only doesn't create jobs
+      success: true
+    });
+    
     return {
       success: true,
       emailsProcessed: totalProcessed,
@@ -3362,6 +3401,13 @@ ipcMain.handle('sync:classify-only', async (event, options = {}) => {
     };
   } catch (error) {
     console.error('Classification-only sync error:', error);
+    
+    // Send sync error event
+    event.sender.send('sync-error', {
+      error: error.message,
+      details: error.stack
+    });
+    
     return {
       success: false,
       error: error.message
