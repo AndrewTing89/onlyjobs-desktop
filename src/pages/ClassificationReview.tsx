@@ -224,7 +224,7 @@ export default function ClassificationReview() {
       case 1: // Job Related (High Confidence)
         filtered = filtered.filter(email => email.job_probability > 0.9 && email.is_job_related);
         break;
-      case 2: // Rejected (non-job emails)
+      case 2: // Non-job emails
         filtered = filtered.filter(email => email.is_job_related === false);
         break;
       case 3: // All
@@ -465,7 +465,7 @@ export default function ClassificationReview() {
                         {stats.rejected}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        Rejected
+                        Non-Job
                       </Typography>
                     </CardContent>
                   </Card>
@@ -527,7 +527,7 @@ export default function ClassificationReview() {
                             color="error"
                             max={999}
                           >
-                            Rejected
+                            Non-Job
                           </Badge>
                         } 
                       />

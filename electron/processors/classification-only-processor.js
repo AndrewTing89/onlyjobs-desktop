@@ -14,6 +14,7 @@ const GmailMultiAuth = require('../gmail-multi-auth');
 const Database = require('better-sqlite3');
 const path = require('path');
 const { app } = require('electron');
+const DigestDetector = require('../digest-detector');
 
 // Shared database connection for this processor
 let sharedDb = null;
@@ -35,6 +36,7 @@ class ClassificationOnlyProcessor {
     this.gmailAuth = new GmailMultiAuth();
     this.db = getSharedDb(); // Use shared connection
     this.BATCH_SAVE_SIZE = 50; // Save every 50 emails
+    this.digestDetector = new DigestDetector(); // Initialize digest detector
   }
 
   /**
@@ -62,18 +64,50 @@ class ClassificationOnlyProcessor {
         return {
           totalEmails: 0,
           classified: 0,
-          needsReview: 0
+          needsReview: 0,
+          digestsFiltered: 0
         };
       }
 
-      // Step 2: Run ML classification only
-      const results = await this.classifyEmailsOnly(emails, account);
+      // Step 2: Filter out job digests/newsletters
+      const { filteredEmails, digestEmails, digestCount } = this.filterDigests(emails);
+      console.log(`Filtered ${digestCount} digest emails out of ${emails.length} total emails`);
+      
+      // Step 3: Process digest emails as rejected classifications
+      const digestResults = digestEmails.map(digest => ({
+        email: digest.email,
+        classification: {
+          is_job_related: false,
+          job_probability: 0,
+          needs_review: false,
+          ml_only: false,  // This was filtered, not ML classified
+          processing_time: 0,
+          model_type: 'digest_filter',
+          filter_reason: digest.filterReason,
+          filter_confidence: digest.filterConfidence
+        },
+        account_email: account.email,
+        processed_at: new Date().toISOString()
+      }));
 
-      // Step 3: Save to classification queue
-      await this.saveToClassificationQueue(results, account);
+      // Step 4: Run ML classification only on non-digest emails
+      let mlResults = [];
+      if (filteredEmails.length > 0) {
+        mlResults = await this.classifyEmailsOnly(filteredEmails, account);
+      }
 
-      const stats = this.calculateStats(results);
-      console.log(`Classification complete: ${stats.classified} classified, ${stats.needsReview} need review`);
+      // Step 5: Combine all results (ML classified + digest filtered)
+      const allResults = [...mlResults, ...digestResults];
+
+      // Step 6: Save everything to classification queue
+      if (allResults.length > 0) {
+        await this.saveToClassificationQueue(allResults, account);
+      }
+
+      const stats = this.calculateStats(mlResults);
+      stats.digestsFiltered = digestCount;
+      stats.totalEmails = emails.length;
+      console.log(`Classification complete: ${stats.classified} ML classified, ${digestCount} digests filtered, ${stats.needsReview} need review`);
 
       return stats;
 
@@ -326,6 +360,86 @@ class ClassificationOnlyProcessor {
   }
 
   /**
+   * Filter out digest/newsletter emails
+   * @param {Array} emails - Array of email objects
+   * @returns {Object} - {filteredEmails: Array, digestEmails: Array, digestCount: number}
+   */
+  filterDigests(emails) {
+    const filteredEmails = [];
+    const digestEmails = [];
+    let digestCount = 0;
+    const digestDetails = [];
+
+    for (const email of emails) {
+      const digestResult = this.digestDetector.detectDigest({
+        subject: email.subject,
+        from: email.from,
+        body: email.body
+      });
+
+      if (digestResult.is_digest) {
+        digestCount++;
+        
+        // Store the digest email with filter metadata
+        digestEmails.push({
+          email,
+          filterReason: digestResult.reason,
+          filterConfidence: digestResult.confidence
+        });
+        
+        digestDetails.push({
+          subject: email.subject,
+          from: email.from,
+          reason: digestResult.reason,
+          confidence: digestResult.confidence
+        });
+        
+        // Send activity for each filtered digest (users like seeing the progress!)
+        this.sendActivity('filter', 
+          `🚫 Filtered digest: "${email.subject.substring(0, 50)}..." (${digestResult.reason})`,
+          {
+            emailId: email.id,
+            reason: digestResult.reason,
+            confidence: digestResult.confidence
+          }
+        );
+      } else {
+        filteredEmails.push(email);
+      }
+    }
+
+    // Log digest statistics summary
+    if (digestCount > 0) {
+      // Group by reason for statistics
+      const reasonCounts = {};
+      for (const detail of digestDetails) {
+        const baseReason = detail.reason.split(':')[0]; // Extract base reason without domain
+        reasonCounts[baseReason] = (reasonCounts[baseReason] || 0) + 1;
+      }
+      
+      // Console logging
+      console.log(`Digest Filter Statistics:`);
+      console.log(`  Total digests filtered: ${digestCount}`);
+      console.log(`  By reason:`);
+      for (const [reason, count] of Object.entries(reasonCounts)) {
+        console.log(`    ${reason}: ${count}`);
+      }
+      
+      // Show sample filtered emails
+      console.log(`  Sample filtered emails:`);
+      digestDetails.slice(0, 3).forEach(detail => {
+        console.log(`    - "${detail.subject.substring(0, 50)}..." from ${detail.from}`);
+      });
+    }
+
+    return {
+      filteredEmails,
+      digestEmails,
+      digestCount
+    };
+  }
+
+  /**
    * Run ML classification on emails (no LLM parsing)
    */
   async classifyEmailsOnly(emails, account) {
@@ -384,7 +498,9 @@ class ClassificationOnlyProcessor {
                 needs_review: mlResult.needs_review || false,
                 ml_only: true,
                 processing_time: processingTime,
-                model_type: mlResult.model_type || 'ml'
+                model_type: mlResult.model_type || 'ml',
+                // Set filter_reason for ML-rejected emails
+                filter_reason: !mlResult.is_job_related ? 'ml_not_job_related' : null
               },
               account_email: account.email,
               processed_at: new Date().toISOString()
@@ -400,7 +516,8 @@ class ClassificationOnlyProcessor {
                 needs_review: true,
                 ml_only: true,
                 processing_time: 0,
-                error: error.message
+                error: error.message,
+                filter_reason: 'ml_classification_error'
               },
               account_email: account.email,
               processed_at: new Date().toISOString()
@@ -510,9 +627,10 @@ class ClassificationOnlyProcessor {
           classification_status,
           parse_status,
           raw_email_data,
+          filter_reason,
           created_at,
           processing_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const updateEmailSync = db.prepare(`
@@ -529,6 +647,28 @@ class ClassificationOnlyProcessor {
         for (const result of results) {
           const { email, classification, account_email, processed_at } = result;
 
+          // Determine classification status based on filter type
+          let classificationStatus;
+          let parseStatus;
+          
+          if (classification.model_type === 'digest_filter') {
+            // Digest emails are marked as rejected
+            classificationStatus = 'rejected';
+            parseStatus = 'skip';
+          } else if (classification.filter_reason === 'ml_classification_error') {
+            // ML errors need review
+            classificationStatus = 'classified';
+            parseStatus = 'skip';
+          } else if (!classification.is_job_related) {
+            // ML classified as not job-related - keep as classified but skip parsing
+            classificationStatus = 'classified';
+            parseStatus = 'skip';
+          } else {
+            // ML classified as job-related - needs parsing
+            classificationStatus = 'classified';
+            parseStatus = 'pending';
+          }
+          
           // Store in classification queue with raw data
           insertClassification.run(
             email.id,
@@ -540,16 +680,18 @@ class ClassificationOnlyProcessor {
             classification.is_job_related ? 1 : 0,
             classification.job_probability,
             classification.needs_review ? 1 : 0,
-            'classified',
-            classification.is_job_related ? 'pending' : 'skip',
+            classificationStatus,
+            parseStatus,
             JSON.stringify({
               snippet: email.snippet,
               labelIds: email.labelIds,
+              filter_confidence: classification.filter_confidence,
               internalDate: email.internalDate,
               date: email.date,
               to: email.to,
               bodyIsHtml: email.bodyIsHtml || false // Track if body is HTML format
             }),
+            classification.filter_reason || null, // filter_reason column
             new Date().toISOString(), // created_at
             classification.processing_time || 0
           );
@@ -579,14 +721,23 @@ class ClassificationOnlyProcessor {
    * Create classification-related database tables
    */
   createClassificationTables(db) {
-    // Check if account_email column exists and add it if missing
+    // Check for missing columns and add them if needed
     try {
       const tableInfo = db.prepare("PRAGMA table_info(classification_queue)").all();
-      const hasAccountEmail = tableInfo.some(col => col.name === 'account_email');
       
-      if (tableInfo.length > 0 && !hasAccountEmail) {
-        console.log('Adding missing account_email column to classification_queue table');
-        db.exec(`ALTER TABLE classification_queue ADD COLUMN account_email TEXT`);
+      if (tableInfo.length > 0) {
+        const hasAccountEmail = tableInfo.some(col => col.name === 'account_email');
+        const hasFilterReason = tableInfo.some(col => col.name === 'filter_reason');
+        
+        if (!hasAccountEmail) {
+          console.log('Adding missing account_email column to classification_queue table');
+          db.exec(`ALTER TABLE classification_queue ADD COLUMN account_email TEXT`);
+        }
+        
+        if (!hasFilterReason) {
+          console.log('Adding filter_reason column to classification_queue table');
+          db.exec(`ALTER TABLE classification_queue ADD COLUMN filter_reason TEXT`);
+        }
       }
     } catch (e) {
       // Table doesn't exist yet, will be created below
@@ -605,13 +756,14 @@ class ClassificationOnlyProcessor {
         is_job_related BOOLEAN DEFAULT 0,
         job_probability REAL DEFAULT 0,
         needs_review BOOLEAN DEFAULT 0,
-        classification_status TEXT DEFAULT 'pending' CHECK(classification_status IN ('pending', 'classified', 'reviewed')),
+        classification_status TEXT DEFAULT 'pending' CHECK(classification_status IN ('pending', 'classified', 'reviewed', 'rejected', 'approved')),
         parse_status TEXT DEFAULT 'pending' CHECK(parse_status IN ('pending', 'parsing', 'parsed', 'failed', 'skip')),
         company TEXT,
         position TEXT,
         status TEXT,
         raw_email_data TEXT, -- JSON with additional email metadata
         user_feedback TEXT, -- For training data
+        filter_reason TEXT, -- Reason why email was filtered (e.g., 'digest_domain:linkedin.com')
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         processing_time INTEGER DEFAULT 0
