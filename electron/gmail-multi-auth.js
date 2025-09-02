@@ -358,7 +358,7 @@ class GmailMultiAuth extends EventEmitter {
       const allMessages = [];
       let currentPageToken = pageToken;
       let totalFetched = 0;
-      const batchSize = Math.min(maxResults, 100); // Fetch 100 at a time max
+      const batchSize = Math.min(maxResults, 250); // Fetch 250 at a time for efficiency
       
       // Check if tokens need refresh
       const account = this.getAccount(email);
@@ -382,9 +382,12 @@ class GmailMultiAuth extends EventEmitter {
       console.log(`GmailMultiAuth: Fetching up to ${maxResults} emails from ${email}...`);
       console.log(`GmailMultiAuth: Query: "${query}"`);
       
-      // Fetch messages in batches until we reach maxResults
-      while (totalFetched < maxResults) {
-        const remainingToFetch = maxResults - totalFetched;
+      // Fetch messages in batches until there are no more
+      // If maxResults is high (1000+), fetch all available emails
+      const fetchAll = maxResults >= 1000;  // More reasonable threshold
+      
+      while (fetchAll || totalFetched < maxResults) {
+        const remainingToFetch = fetchAll ? batchSize : maxResults - totalFetched;
         const thisBatchSize = Math.min(batchSize, remainingToFetch);
         
         const params = {
@@ -429,7 +432,13 @@ class GmailMultiAuth extends EventEmitter {
         // Check if there are more pages
         currentPageToken = response.data.nextPageToken;
         if (!currentPageToken) {
-          console.log('GmailMultiAuth: No more pages available');
+          console.log('GmailMultiAuth: No more pages available - fetched all emails in date range');
+          break;
+        }
+        
+        // If we're fetching all and already have enough for any reasonable use case
+        if (fetchAll && totalFetched >= 10000) {
+          console.log('GmailMultiAuth: Reached 10000 emails - stopping to prevent excessive memory usage');
           break;
         }
       }

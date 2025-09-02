@@ -53,7 +53,7 @@ class DatabaseInitializer {
       // Training feedback table removed
       
       // Create test tables (for model testing)
-      this.createTestTables(db);
+      // Test tables removed - no longer needed
       
       // Create all indexes
       this.createIndexes(db);
@@ -252,35 +252,7 @@ class DatabaseInitializer {
 
   // Training feedback table removed - will export classified data directly instead
 
-  /**
-   * Create test tables for model evaluation
-   */
-  createTestTables(db) {
-    const testTables = ['jobs_llama_test', 'jobs_qwen_test', 'jobs_hermes_test'];
-    
-    for (const tableName of testTables) {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS ${tableName} (
-          id TEXT PRIMARY KEY,
-          gmail_message_id TEXT NOT NULL,
-          company TEXT NOT NULL,
-          position TEXT NOT NULL,
-          status TEXT DEFAULT 'Applied' CHECK(status IN ('Applied', 'Interviewed', 'Declined', 'Offer')),
-          applied_date DATE,
-          location TEXT,
-          salary_range TEXT,
-          notes TEXT,
-          ml_confidence REAL,
-          account_email TEXT,
-          from_address TEXT,
-          thread_id TEXT,
-          email_thread_ids TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(gmail_message_id, account_email)
-        )
-      `);
-    }
-  }
+  // Test tables removed - no longer needed
 
   /**
    * Create all necessary indexes for performance

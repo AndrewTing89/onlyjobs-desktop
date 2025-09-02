@@ -44,18 +44,37 @@ class ClassificationOnlyProcessor {
    */
   async processEmails(account, options = {}) {
     const {
-      daysToSync = 30,
+      dateFrom,
+      dateTo,
+      daysToSync = 30, // Fallback for backward compatibility
       query = 'is:unread OR label:job-applications',
-      maxResults = 500
+      maxResults = options.maxEmails || 100000  // Effectively unlimited - will fetch all emails in date range
     } = options;
 
-    console.log(`Starting classification-only sync for ${account.email}`);
+    // Build date query
+    let dateQuery = '';
+    if (dateFrom && dateTo) {
+      // Convert dates to Gmail query format (YYYY/MM/DD)
+      const fromDate = new Date(dateFrom).toISOString().split('T')[0].replace(/-/g, '/');
+      const toDate = new Date(dateTo).toISOString().split('T')[0].replace(/-/g, '/');
+      dateQuery = `after:${fromDate} before:${toDate}`;
+    } else if (daysToSync) {
+      // Fallback to days-based query
+      const fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - daysToSync);
+      const formattedDate = fromDate.toISOString().split('T')[0].replace(/-/g, '/');
+      dateQuery = `after:${formattedDate}`;
+    }
+
+    // Combine with existing query
+    const fullQuery = dateQuery ? `${query} ${dateQuery}` : query;
+
+    console.log(`Starting classification-only sync for ${account.email} with query: ${fullQuery}`);
     
     try {
       // Step 1: Fetch emails from Gmail
       const emails = await this.fetchEmails(account, {
-        daysToSync,
-        query,
+        query: fullQuery,
         maxResults
       });
 
@@ -121,13 +140,13 @@ class ClassificationOnlyProcessor {
    * Fetch emails from Gmail using existing auth
    */
   async fetchEmails(account, options) {
-    const { daysToSync, query, maxResults } = options;
+    const { query, maxResults } = options;
     
     this.sendProgress('Fetching emails from Gmail...', 0);
     this.sendActivity('fetch', `🔍 Starting email fetch for ${account.email}`, {
       account: account.email,
       maxResults: maxResults,
-      daysToSync: daysToSync
+      query: query
     });
 
     try {
@@ -137,7 +156,7 @@ class ClassificationOnlyProcessor {
       const startTime = Date.now();
       const result = await this.gmailAuth.fetchEmailsFromAccount(account.email, {
         query: query || 'in:inbox',
-        maxResults: maxResults || 50
+        maxResults: maxResults  // Don't default to 50 - use the passed value (100000)
       });
 
       // Extract messages from the result object
@@ -628,9 +647,10 @@ class ClassificationOnlyProcessor {
           parse_status,
           raw_email_data,
           filter_reason,
+          email_date,
           created_at,
           processing_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const updateEmailSync = db.prepare(`
@@ -669,6 +689,13 @@ class ClassificationOnlyProcessor {
             parseStatus = 'pending';
           }
           
+          // Convert internalDate (milliseconds string) to ISO date
+          const emailDate = email.internalDate 
+            ? new Date(parseInt(email.internalDate)).toISOString()
+            : email.date 
+              ? new Date(email.date).toISOString()
+              : new Date().toISOString();
+          
           // Store in classification queue with raw data
           insertClassification.run(
             email.id,
@@ -692,6 +719,7 @@ class ClassificationOnlyProcessor {
               bodyIsHtml: email.bodyIsHtml || false // Track if body is HTML format
             }),
             classification.filter_reason || null, // filter_reason column
+            emailDate, // email_date column - actual email received date
             new Date().toISOString(), // created_at
             classification.processing_time || 0
           );
@@ -728,6 +756,7 @@ class ClassificationOnlyProcessor {
       if (tableInfo.length > 0) {
         const hasAccountEmail = tableInfo.some(col => col.name === 'account_email');
         const hasFilterReason = tableInfo.some(col => col.name === 'filter_reason');
+        const hasEmailDate = tableInfo.some(col => col.name === 'email_date');
         
         if (!hasAccountEmail) {
           console.log('Adding missing account_email column to classification_queue table');
@@ -737,6 +766,11 @@ class ClassificationOnlyProcessor {
         if (!hasFilterReason) {
           console.log('Adding filter_reason column to classification_queue table');
           db.exec(`ALTER TABLE classification_queue ADD COLUMN filter_reason TEXT`);
+        }
+        
+        if (!hasEmailDate) {
+          console.log('Adding email_date column to classification_queue table');
+          db.exec(`ALTER TABLE classification_queue ADD COLUMN email_date TIMESTAMP`);
         }
       }
     } catch (e) {
@@ -764,6 +798,7 @@ class ClassificationOnlyProcessor {
         raw_email_data TEXT, -- JSON with additional email metadata
         user_feedback TEXT, -- For training data
         filter_reason TEXT, -- Reason why email was filtered (e.g., 'digest_domain:linkedin.com')
+        email_date TIMESTAMP, -- Actual email received date from Gmail
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         processing_time INTEGER DEFAULT 0

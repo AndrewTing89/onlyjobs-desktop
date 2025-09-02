@@ -62,8 +62,17 @@ export const GmailMultiAccount: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [daysToSync, setDaysToSync] = useState<number>(365); // Default to 1 year for better results
-  const [syncStats, setSyncStats] = useState<{processed?: number; found?: number; skipped?: number}>({});
+  const [dateRange, setDateRange] = useState<{from: string; to: string}>(() => {
+    // Default to last 90 days
+    const today = new Date();
+    const ninetyDaysAgo = new Date(today);
+    ninetyDaysAgo.setDate(today.getDate() - 90);
+    return {
+      from: ninetyDaysAgo.toISOString().split('T')[0],
+      to: today.toISOString().split('T')[0]
+    };
+  });
+  const [syncStats, setSyncStats] = useState<{processed?: number; found?: number; skipped?: number; digestsFiltered?: number; needsReview?: number; syncDuration?: number; emailsPerSecond?: number}>({});
   const [syncActivityLog, setSyncActivityLog] = useState<SyncLogEntry[]>([]);
 
   useEffect(() => {
@@ -91,11 +100,16 @@ export const GmailMultiAccount: React.FC = () => {
       setSyncStats({
         processed: result.emailsFetched || 0,
         found: result.jobsFound || 0,
-        skipped: result.emailsSkipped || 0
+        skipped: result.emailsSkipped || 0,
+        digestsFiltered: result.digestsFiltered || 0,
+        needsReview: result.needsReview || 0,
+        syncDuration: result.syncDuration || 0,
+        emailsPerSecond: result.emailsPerSecond || 0
       });
-      const message = `Sync complete! Processed ${result.emailsFetched || 0} emails • Found ${result.jobsFound || 0} job applications`;
-      if (result.emailsSkipped > 0) {
-        setSuccessMessage(message + ` • Skipped ${result.emailsSkipped} already processed emails`);
+      const timeMsg = result.syncDuration ? ` in ${result.syncDuration.toFixed(1)}s (${result.emailsPerSecond} emails/sec)` : '';
+      const message = `Sync complete! Processed ${result.emailsFetched || 0} emails${timeMsg} • ${result.digestsFiltered || 0} digests filtered • ${result.jobsFound || 0} job-related`;
+      if (result.needsReview > 0) {
+        setSuccessMessage(message + ` • ${result.needsReview} need review`);
       } else {
         setSuccessMessage(message);
       }
@@ -165,8 +179,9 @@ export const GmailMultiAccount: React.FC = () => {
     try {
       // Use classification-only sync for HIL workflow
       await window.electronAPI.gmail.syncClassifyOnly({
-        daysToSync: daysToSync,
-        maxEmails: 1000  // Maximum allowed per sync
+        dateFrom: dateRange.from,
+        dateTo: dateRange.to
+        // No limit - fetch all emails in date range
       });
     } catch (err: any) {
       setSyncing(false);
@@ -259,51 +274,116 @@ export const GmailMultiAccount: React.FC = () => {
       </Paper>
 
       {/* Sync Controls Row */}
-      <Box sx={{ mb: 3, display: 'flex', gap: 2, alignItems: 'center' }}>
-        <TextField
-          label="Days to sync"
-          type="number"
-          value={daysToSync}
-          onChange={(e) => setDaysToSync(Math.max(1, Math.min(3650, parseInt(e.target.value) || 1)))}
-          inputProps={{
-            min: 1,
-            max: 3650,
-            onKeyDown: (e: React.KeyboardEvent) => {
-              // Enable Cmd+A (Mac) and Ctrl+A (Windows/Linux) to select all
-              if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
-                e.preventDefault();
-                const target = e.target as HTMLInputElement;
-                target.select();
-              }
-            }
-          }}
-          size="small"
-          sx={{ width: 200 }}
-        />
-        
-        <Button
-          variant="outlined"
-          startIcon={<SyncIcon />}
-          onClick={handleSyncAll}
-          disabled={syncing || accounts.length === 0}
-          size="medium"
-          sx={{ 
-            height: '40px',
-            minWidth: 200,
-            color: '#FF7043',
-            borderColor: '#FF7043',
-            '&:hover': {
+      <Box sx={{ mb: 3 }}>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 2 }}>
+          <TextField
+            label="From Date"
+            type="date"
+            value={dateRange.from}
+            onChange={(e) => setDateRange(prev => ({ ...prev, from: e.target.value }))}
+            InputLabelProps={{ shrink: true }}
+            size="small"
+            sx={{ width: 160 }}
+          />
+          
+          <TextField
+            label="To Date"
+            type="date"
+            value={dateRange.to}
+            onChange={(e) => setDateRange(prev => ({ ...prev, to: e.target.value }))}
+            InputLabelProps={{ shrink: true }}
+            size="small"
+            sx={{ width: 160 }}
+          />
+          
+          <Button
+            variant="outlined"
+            startIcon={<SyncIcon />}
+            onClick={handleSyncAll}
+            disabled={syncing || accounts.length === 0}
+            size="medium"
+            sx={{ 
+              height: '40px',
+              minWidth: 200,
+              color: '#FF7043',
               borderColor: '#FF7043',
-              backgroundColor: 'rgba(255, 112, 67, 0.04)'
-            },
-            '&:disabled': {
-              borderColor: 'rgba(0, 0, 0, 0.12)',
-              color: 'rgba(0, 0, 0, 0.26)'
-            }
-          }}
-        >
-          Sync All Accounts ({daysToSync} days)
-        </Button>
+              '&:hover': {
+                borderColor: '#FF7043',
+                backgroundColor: 'rgba(255, 112, 67, 0.04)'
+              },
+              '&:disabled': {
+                borderColor: 'rgba(0, 0, 0, 0.12)',
+                color: 'rgba(0, 0, 0, 0.26)'
+              }
+            }}
+          >
+            Sync All Accounts
+          </Button>
+        </Box>
+        
+        {/* Quick date range presets */}
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => {
+              const today = new Date();
+              const sevenDaysAgo = new Date(today);
+              sevenDaysAgo.setDate(today.getDate() - 7);
+              setDateRange({
+                from: sevenDaysAgo.toISOString().split('T')[0],
+                to: today.toISOString().split('T')[0]
+              });
+            }}
+          >
+            Last 7 days
+          </Button>
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => {
+              const today = new Date();
+              const thirtyDaysAgo = new Date(today);
+              thirtyDaysAgo.setDate(today.getDate() - 30);
+              setDateRange({
+                from: thirtyDaysAgo.toISOString().split('T')[0],
+                to: today.toISOString().split('T')[0]
+              });
+            }}
+          >
+            Last 30 days
+          </Button>
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => {
+              const today = new Date();
+              const ninetyDaysAgo = new Date(today);
+              ninetyDaysAgo.setDate(today.getDate() - 90);
+              setDateRange({
+                from: ninetyDaysAgo.toISOString().split('T')[0],
+                to: today.toISOString().split('T')[0]
+              });
+            }}
+          >
+            Last 90 days
+          </Button>
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => {
+              const today = new Date();
+              const oneYearAgo = new Date(today);
+              oneYearAgo.setFullYear(today.getFullYear() - 1);
+              setDateRange({
+                from: oneYearAgo.toISOString().split('T')[0],
+                to: today.toISOString().split('T')[0]
+              });
+            }}
+          >
+            Last year
+          </Button>
+        </Box>
       </Box>
 
       {syncing && syncProgress && (
@@ -398,9 +478,16 @@ export const GmailMultiAccount: React.FC = () => {
       {/* Sync History Summary */}
       {syncStats.processed !== undefined && !syncing && (
         <Paper sx={{ p: 2, mt: 2, bgcolor: 'background.default' }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Last Sync Summary
-          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+            <Typography variant="subtitle2">
+              Last Sync Summary
+            </Typography>
+            {syncStats.syncDuration && (
+              <Typography variant="caption" color="text.secondary">
+                ⚡ {syncStats.syncDuration.toFixed(1)}s • {syncStats.emailsPerSecond} emails/sec
+              </Typography>
+            )}
+          </Box>
           <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
             <Box>
               <Typography variant="h6" color="primary">
@@ -410,14 +497,42 @@ export const GmailMultiAccount: React.FC = () => {
                 Emails Processed
               </Typography>
             </Box>
+            {syncStats.syncDuration && (
+              <Box>
+                <Typography variant="h6" color="info.main">
+                  {syncStats.syncDuration.toFixed(1)}s
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Duration ({syncStats.emailsPerSecond}/sec)
+                </Typography>
+              </Box>
+            )}
+            <Box>
+              <Typography variant="h6" color="warning.main">
+                {syncStats.digestsFiltered || 0}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Digests Filtered
+              </Typography>
+            </Box>
             <Box>
               <Typography variant="h6" color="success.main">
                 {syncStats.found || 0}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Jobs Found
+                Job-Related
               </Typography>
             </Box>
+            {syncStats.needsReview && syncStats.needsReview > 0 && (
+              <Box>
+                <Typography variant="h6" color="info.main">
+                  {syncStats.needsReview}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Need Review
+                </Typography>
+              </Box>
+            )}
             {syncStats.skipped && syncStats.skipped > 0 && (
               <Box>
                 <Typography variant="h6" color="text.secondary">

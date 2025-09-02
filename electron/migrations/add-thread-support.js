@@ -37,30 +37,7 @@ function addThreadSupport() {
       console.log('email_thread_ids column already exists');
     }
     
-    // Add similar columns to test tables
-    const testTables = ['jobs_llama_test', 'jobs_qwen_test', 'jobs_hermes_test'];
-    
-    for (const tableName of testTables) {
-      // Check if table exists
-      const tableExists = db.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
-      ).get(tableName);
-      
-      if (tableExists) {
-        const testTableInfo = db.pragma(`table_info(${tableName})`);
-        const testColumnNames = testTableInfo.map(col => col.name);
-        
-        if (!testColumnNames.includes('thread_id')) {
-          console.log(`Adding thread_id to ${tableName}...`);
-          db.exec(`ALTER TABLE ${tableName} ADD COLUMN thread_id TEXT`);
-        }
-        
-        if (!testColumnNames.includes('email_thread_ids')) {
-          console.log(`Adding email_thread_ids to ${tableName}...`);
-          db.exec(`ALTER TABLE ${tableName} ADD COLUMN email_thread_ids TEXT`);
-        }
-      }
-    }
+    // Test tables removed - no longer needed
     
     console.log('Thread support migration completed successfully');
     return { success: true };

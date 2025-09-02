@@ -651,12 +651,13 @@ async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, ema
   // ALWAYS trust ML classification, NEVER use LLM Stage 1
   // But track confidence for manual review
   
-  const needsReview = mlResult.confidence < 0.8;
+  const confidence = mlResult.job_probability || mlResult.confidence || 0;
+  const needsReview = confidence < 0.8;
   
   // High confidence - fully trust ML
-  if (mlResult.confidence >= 0.8) {
+  if (confidence >= 0.8) {
     if (mlResult.is_job_related) {
-      console.log(`✅ ML Stage 0: High confidence job (${mlResult.confidence.toFixed(2)}) - proceeding to parsing`);
+      console.log(`✅ ML Stage 0: High confidence job (${confidence.toFixed(2)}) - proceeding to parsing`);
       
       // Skip Stage 1, go directly to Stage 2 extraction
       const stage2Result = await extractStage2(modelId, modelPath, emailSubject, emailBody);
@@ -666,13 +667,13 @@ async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, ema
         ...stage2Result,
         totalTime: Date.now() - startTime,
         mlOnly: true,
-        confidence: mlResult.confidence,
+        confidence: confidence,
         needs_review: false,
         stage1Time: 0,
         stage2Time: stage2Result.stage2Time
       };
     } else {
-      console.log(`✅ ML Stage 0: High confidence non-job (${mlResult.confidence.toFixed(2)}) - skipping all LLM`);
+      console.log(`✅ ML Stage 0: High confidence non-job (${confidence.toFixed(2)}) - skipping all LLM`);
       
       return {
         is_job_related: false,
@@ -681,7 +682,7 @@ async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, ema
         status: null,
         totalTime: Date.now() - startTime,
         mlOnly: true,
-        confidence: mlResult.confidence,
+        confidence: confidence,
         needs_review: false,
         stage1Time: 0,
         stage2Time: 0
@@ -691,7 +692,7 @@ async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, ema
   
   // Low/Medium confidence - still use ML, but flag for review
   if (mlResult.is_job_related) {
-    console.log(`🤔 ML Stage 0: Low confidence job (${mlResult.confidence.toFixed(2)}) - parsing but needs review`);
+    console.log(`🤔 ML Stage 0: Low confidence job (${confidence.toFixed(2)}) - parsing but needs review`);
     
     // Still extract details since ML thinks it's job-related
     const stage2Result = await extractStage2(modelId, modelPath, emailSubject, emailBody);
@@ -701,13 +702,13 @@ async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, ema
       ...stage2Result,
       totalTime: Date.now() - startTime,
       mlOnly: true,
-      confidence: mlResult.confidence,
+      confidence: confidence,
       needs_review: true,  // Flag for manual review
       stage1Time: 0,
       stage2Time: stage2Result.stage2Time
     };
   } else {
-    console.log(`🤔 ML Stage 0: Low confidence non-job (${mlResult.confidence.toFixed(2)}) - needs review`);
+    console.log(`🤔 ML Stage 0: Low confidence non-job (${confidence.toFixed(2)}) - needs review`);
     
     return {
       is_job_related: false,
@@ -716,7 +717,7 @@ async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, ema
       status: null,
       totalTime: Date.now() - startTime,
       mlOnly: true,
-      confidence: mlResult.confidence,
+      confidence: confidence,
       needs_review: true,  // Flag for manual review
       stage1Time: 0,
       stage2Time: 0

@@ -320,82 +320,6 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_gmail_id ON jobs(gmail_message_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_account ON jobs(account_email);
-    -- Model-specific test tables for A/B testing
-    -- These are separate from production jobs table to keep test data isolated
-    
-    -- Llama test table
-    CREATE TABLE IF NOT EXISTS jobs_llama_test (
-      id TEXT PRIMARY KEY,
-      gmail_message_id TEXT NOT NULL,
-      company TEXT,
-      position TEXT,
-      status TEXT CHECK(status IN ('Applied', 'Interview', 'Declined', 'Offer', NULL)),
-      applied_date DATE,
-      account_email TEXT,
-      from_address TEXT,
-      subject TEXT,
-      confidence_score REAL,
-      stage1_result BOOLEAN,
-      stage1_time_ms INTEGER,
-      stage2_time_ms INTEGER,
-      total_time_ms INTEGER,
-      raw_stage1_response TEXT,
-      raw_stage2_response TEXT,
-      tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(gmail_message_id, account_email)
-    );
-    
-    -- Qwen test table  
-    CREATE TABLE IF NOT EXISTS jobs_qwen_test (
-      id TEXT PRIMARY KEY,
-      gmail_message_id TEXT NOT NULL,
-      company TEXT,
-      position TEXT,
-      status TEXT CHECK(status IN ('Applied', 'Interview', 'Declined', 'Offer', NULL)),
-      applied_date DATE,
-      account_email TEXT,
-      from_address TEXT,
-      subject TEXT,
-      confidence_score REAL,
-      stage1_result BOOLEAN,
-      stage1_time_ms INTEGER,
-      stage2_time_ms INTEGER,
-      total_time_ms INTEGER,
-      raw_stage1_response TEXT,
-      raw_stage2_response TEXT,
-      tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(gmail_message_id, account_email)
-    );
-    
-    -- Hermes test table
-    CREATE TABLE IF NOT EXISTS jobs_hermes_test (
-      id TEXT PRIMARY KEY,
-      gmail_message_id TEXT NOT NULL,
-      company TEXT,
-      position TEXT,
-      status TEXT CHECK(status IN ('Applied', 'Interview', 'Declined', 'Offer', NULL)),
-      applied_date DATE,
-      account_email TEXT,
-      from_address TEXT,
-      subject TEXT,
-      confidence_score REAL,
-      stage1_result BOOLEAN,
-      stage1_time_ms INTEGER,
-      stage2_time_ms INTEGER,
-      total_time_ms INTEGER,
-      raw_stage1_response TEXT,
-      raw_stage2_response TEXT,
-      tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(gmail_message_id, account_email)
-    );
-
-    -- Indices for test tables
-    CREATE INDEX IF NOT EXISTS idx_llama_test_email ON jobs_llama_test(account_email);
-    CREATE INDEX IF NOT EXISTS idx_llama_test_msg ON jobs_llama_test(gmail_message_id);
-    CREATE INDEX IF NOT EXISTS idx_qwen_test_email ON jobs_qwen_test(account_email);
-    CREATE INDEX IF NOT EXISTS idx_qwen_test_msg ON jobs_qwen_test(gmail_message_id);
-    CREATE INDEX IF NOT EXISTS idx_hermes_test_email ON jobs_hermes_test(account_email);
-    CREATE INDEX IF NOT EXISTS idx_hermes_test_msg ON jobs_hermes_test(gmail_message_id);
 
     CREATE INDEX IF NOT EXISTS idx_email_sync_account ON email_sync(account_email);
     CREATE INDEX IF NOT EXISTS idx_review_expires ON email_review(expires_at);
@@ -564,78 +488,6 @@ ipcMain.handle('db:get-jobs', async (event, filters = {}) => {
   }
 });
 
-// Get jobs for a specific model (from test tables)
-ipcMain.handle('db:get-jobs-for-model', async (event, modelId, filters = {}) => {
-  try {
-    // Determine table name based on modelId
-    let tableName;
-    if (modelId.includes('llama')) {
-      tableName = 'jobs_llama_test';
-    } else if (modelId.includes('qwen')) {
-      tableName = 'jobs_qwen_test';
-    } else if (modelId.includes('hermes')) {
-      tableName = 'jobs_hermes_test';
-    } else {
-      throw new Error(`Unknown model: ${modelId}`);
-    }
-    
-    let query = `
-      SELECT 
-        id,
-        gmail_message_id,
-        company,
-        position,
-        status,
-        applied_date,
-        account_email,
-        from_address,
-        subject,
-        confidence_score as ml_confidence,
-        tested_at as created_at,
-        tested_at as updated_at
-      FROM ${tableName}
-      WHERE stage1_result = 1
-    `;
-    const params = [];
-
-    if (filters.status) {
-      query += ' AND status = ?';
-      params.push(filters.status);
-    }
-
-    if (filters.company) {
-      query += ' AND company LIKE ?';
-      params.push(`%${filters.company}%`);
-    }
-
-    if (filters.startDate) {
-      query += ' AND applied_date >= ?';
-      params.push(filters.startDate);
-    }
-
-    if (filters.endDate) {
-      query += ' AND applied_date <= ?';
-      params.push(filters.endDate);
-    }
-
-    query += ' ORDER BY tested_at DESC';
-
-    if (filters.limit) {
-      query += ' LIMIT ?';
-      params.push(filters.limit);
-    }
-
-    const stmt = getDb().prepare(query);
-    const results = stmt.all(...params);
-    
-    console.log(`Found ${results.length} jobs for model ${modelId}`);
-    
-    return results;
-  } catch (error) {
-    console.error(`Error fetching jobs for model ${modelId}:`, error);
-    throw error;
-  }
-});
 
 ipcMain.handle('db:get-job', async (event, id) => {
   try {
@@ -3231,118 +3083,7 @@ ipcMain.handle('two-stage:classify', async (event, modelId, modelPath, emailSubj
   }
 });
 
-// Classify and save to model-specific test table
-ipcMain.handle('two-stage:classify-and-save-test', async (event, modelId, modelPath, email) => {
-  try {
-    const result = await twoStage.classifyTwoStage(modelId, modelPath, email.subject, email.body);
-    
-    // Determine which table to use based on model ID
-    let tableName;
-    if (modelId.includes('llama')) {
-      tableName = 'jobs_llama_test';
-    } else if (modelId.includes('qwen')) {
-      tableName = 'jobs_qwen_test';
-    } else if (modelId.includes('hermes')) {
-      tableName = 'jobs_hermes_test';
-    } else {
-      throw new Error(`Unknown model ID: ${modelId}`);
-    }
-    
-    // Generate unique ID for the test entry
-    const testId = `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Extract applied date from email if possible
-    const appliedDate = email.date ? new Date(email.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
-    
-    // Save to model-specific test table
-    const stmt = getDb().prepare(`
-      INSERT OR REPLACE INTO ${tableName} (
-        id, gmail_message_id, company, position, status, 
-        applied_date, account_email, from_address, subject,
-        confidence_score, stage1_result, stage1_time_ms, stage2_time_ms,
-        total_time_ms, raw_stage1_response, raw_stage2_response
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    stmt.run(
-      testId,
-      email.id || testId,
-      result.company || null,
-      result.position || null,
-      result.status || null,
-      appliedDate,
-      email.accountEmail || 'test@example.com',
-      email.from || '',
-      email.subject || '',
-      result.confidence || 0.5,
-      result.is_job_related ? 1 : 0,
-      result.stage1Time || 0,
-      result.stage2Time || 0,
-      (result.stage1Time || 0) + (result.stage2Time || 0),
-      result.stage1Response || '',
-      result.stage2Response || ''
-    );
-    
-    return { success: true, result, testId, tableName };
-  } catch (error) {
-    console.error('Error in two-stage classification and save:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-// Get test results from model-specific table
-ipcMain.handle('two-stage:get-test-results', async (event, modelId) => {
-  try {
-    // Determine which table to use
-    let tableName;
-    if (modelId.includes('llama')) {
-      tableName = 'jobs_llama_test';
-    } else if (modelId.includes('qwen')) {
-      tableName = 'jobs_qwen_test';
-    } else if (modelId.includes('hermes')) {
-      tableName = 'jobs_hermes_test';
-    } else {
-      throw new Error(`Unknown model ID: ${modelId}`);
-    }
-    
-    // Get results from the model-specific table
-    const results = getDb().prepare(`
-      SELECT * FROM ${tableName}
-      ORDER BY tested_at DESC
-      LIMIT 100
-    `).all();
-    
-    return { success: true, results, tableName };
-  } catch (error) {
-    console.error('Error getting test results:', error);
-    return { success: false, error: error.message, results: [] };
-  }
-});
-
-// Clear test results for a specific model
-ipcMain.handle('two-stage:clear-test-results', async (event, modelId) => {
-  try {
-    // Determine which table to clear
-    let tableName;
-    if (modelId.includes('llama')) {
-      tableName = 'jobs_llama_test';
-    } else if (modelId.includes('qwen')) {
-      tableName = 'jobs_qwen_test';
-    } else if (modelId.includes('hermes')) {
-      tableName = 'jobs_hermes_test';
-    } else {
-      throw new Error(`Unknown model ID: ${modelId}`);
-    }
-    
-    // Clear the table
-    getDb().prepare(`DELETE FROM ${tableName}`).run();
-    
-    return { success: true, tableName };
-  } catch (error) {
-    console.error('Error clearing test results:', error);
-    return { success: false, error: error.message };
-  }
-});
+// Test table handlers removed - test tables no longer exist
 
 // ===== HUMAN-IN-THE-LOOP CLASSIFICATION HANDLERS =====
 
@@ -3361,9 +3102,15 @@ ipcMain.handle('sync:classify-only', async (event, options = {}) => {
       throw new Error('No Gmail accounts connected');
     }
     
+    // Track sync timing
+    const syncStartTime = Date.now();
+    
     // Process emails for all accounts
     let totalProcessed = 0;
     let totalClassified = 0;
+    let totalJobRelated = 0;
+    let totalDigestsFiltered = 0;
+    let totalNeedsReview = 0;
     
     for (let i = 0; i < accounts.length; i++) {
       const account = accounts[i];
@@ -3382,15 +3129,28 @@ ipcMain.handle('sync:classify-only', async (event, options = {}) => {
         
         const result = await processor.processEmails(account, options);
         totalProcessed += result.totalEmails || 0;
-        totalClassified += result.jobRelated || 0;
+        totalClassified += result.classified || 0;
+        totalJobRelated += result.jobRelated || 0;
+        totalDigestsFiltered += result.digestsFiltered || 0;
+        totalNeedsReview += result.needsReview || 0;
       }
     }
     
-    // Send sync complete event
+    // Calculate sync duration and rate
+    const syncDuration = (Date.now() - syncStartTime) / 1000; // Convert to seconds
+    const emailsPerSecond = totalProcessed > 0 ? (totalProcessed / syncDuration).toFixed(1) : 0;
+    
+    console.log(`Sync completed: ${totalProcessed} emails in ${syncDuration.toFixed(1)}s (${emailsPerSecond} emails/sec)`);
+    
+    // Send sync complete event with comprehensive stats
     event.sender.send('sync-complete', {
       emailsFetched: totalProcessed,
       emailsClassified: totalClassified,
-      jobsCreated: 0, // Classification-only doesn't create jobs
+      jobsFound: totalJobRelated,  // Keep as jobsFound for backward compatibility
+      digestsFiltered: totalDigestsFiltered,
+      needsReview: totalNeedsReview,
+      syncDuration: syncDuration,
+      emailsPerSecond: parseFloat(emailsPerSecond),
       success: true
     });
     
@@ -3695,7 +3455,7 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
         cq.subject,
         cq.from_address,
         cq.body,
-        cq.created_at as received_date,
+        COALESCE(cq.email_date, cq.created_at) as received_date,
         cq.is_job_related,
         cq.job_probability,
         cq.needs_review,
@@ -3821,7 +3581,7 @@ ipcMain.handle('classification:export-training-data', async (event, format = 'js
         cq.subject,
         cq.from_address,
         cq.body,
-        cq.created_at as received_date,
+        COALESCE(cq.email_date, cq.created_at) as received_date,
         cq.account_email,
         cq.is_job_related as human_classification,
         cq.job_probability as ml_confidence,

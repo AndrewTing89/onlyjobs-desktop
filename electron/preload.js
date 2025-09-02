@@ -5,7 +5,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // Database operations
   getJobs: (filters) => ipcRenderer.invoke('db:get-jobs', filters),
-  getJobsForModel: (modelId, filters) => ipcRenderer.invoke('db:get-jobs-for-model', modelId, filters),
   getJob: (id) => ipcRenderer.invoke('db:get-job', id),
   getJobEmail: (id) => ipcRenderer.invoke('db:get-job-email', id),
   createJob: (job) => ipcRenderer.invoke('db:create-job', job),
@@ -194,13 +193,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveStage3: (modelId, prompt) => ipcRenderer.invoke('two-stage:save-stage3', modelId, prompt),
     resetPrompts: (modelId) => ipcRenderer.invoke('two-stage:reset-prompts', modelId),
     classify: (modelId, modelPath, emailSubject, emailBody) => 
-      ipcRenderer.invoke('two-stage:classify', modelId, modelPath, emailSubject, emailBody),
-    classifyAndSaveTest: (modelId, modelPath, email) =>
-      ipcRenderer.invoke('two-stage:classify-and-save-test', modelId, modelPath, email),
-    getTestResults: (modelId) =>
-      ipcRenderer.invoke('two-stage:get-test-results', modelId),
-    clearTestResults: (modelId) =>
-      ipcRenderer.invoke('two-stage:clear-test-results', modelId)
+      ipcRenderer.invoke('two-stage:classify', modelId, modelPath, emailSubject, emailBody)
   }
 });
 
