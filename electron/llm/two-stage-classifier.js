@@ -125,23 +125,11 @@ const OPTIMIZED_STAGE1_PROMPTS = {
   'hermes-2-pro-mistral-7b-q5_k_m': '<job_check>{"is_job":boolean}</job_check>'
 };
 
-// Optimized Stage 2 prompts - direct extraction (EXPLICIT about JSON-only)
-const OPTIMIZED_STAGE2_PROMPTS = {
-  'llama-3-8b-instruct-q5_k_m': `Output ONLY valid JSON, no other text.
-Format: {"company":"...","position":"...","status":"Applied"|"Interview"|"Declined"|"Offer"}
-Use null for unknown fields. No explanation, just JSON.`,
-  
-  'qwen2.5-7b-instruct-q5_k_m': `Output ONLY JSON: {"company":"...","position":"...","status":"Applied/Interview/Declined/Offer"}
-No other text.`,
-  
-  'qwen2.5-3b-instruct-q5_k_m': 'JSON only: {"company":"...","position":"...","status":"..."}',
-  
-  'phi-3.5-mini-instruct-q5_k_m': 'Output only JSON: {"company":"X","position":"Y","status":"Z"}',
-  
-  'hermes-3-llama-3.1-8b-q5_k_m': 'Return ONLY JSON: {"company":"...","position":"...","status":"..."} Use null for unknown.',
-  
-  'hermes-2-pro-mistral-7b-q5_k_m': '<extract>{"company":"...","position":"...","status":"..."}</extract>'
-};
+// Import optimized extraction prompts
+const { OPTIMIZED_EXTRACTION_PROMPTS, EXTRACTION_PATTERNS, extractCompanyFromDomain } = require('./extraction-prompts');
+
+// Use the new optimized prompts for Stage 2
+const OPTIMIZED_STAGE2_PROMPTS = OPTIMIZED_EXTRACTION_PROMPTS;
 
 // Optimized Stage 3 prompts - job matching
 const OPTIMIZED_STAGE3_PROMPTS = {
@@ -253,6 +241,72 @@ async function getOrCreateContext(model, modelId, stage, contextSize, forceNew =
     
     return entry.context;
   }
+}
+
+/**
+ * Fallback extraction using regex patterns
+ */
+function attemptFallbackExtraction(subject, body, sender) {
+  const result = {
+    company: null,
+    position: null,
+    status: null,
+    location: null,
+    remote_status: null,
+    salary_range: null
+  };
+  
+  // Try to extract from LinkedIn patterns
+  if (subject) {
+    const applicationToMatch = subject.match(/Your application to (.+?) at (.+?)$/i);
+    if (applicationToMatch) {
+      result.position = applicationToMatch[1];
+      result.company = applicationToMatch[2];
+      result.status = 'Applied';
+    }
+    
+    const applicationSentMatch = subject.match(/your application was sent to (.+?)$/i);
+    if (applicationSentMatch) {
+      result.company = applicationSentMatch[1];
+      result.status = 'Applied';
+    }
+  }
+  
+  // Extract company from sender if not found
+  if (!result.company && sender) {
+    result.company = extractCompanyFromDomain(sender);
+  }
+  
+  // Extract status from patterns
+  const fullText = `${subject || ''} ${body || ''}`;
+  if (/interview|phone screen/i.test(fullText)) {
+    result.status = 'Interview';
+  } else if (/thank you for applying|application (was |has been )?(sent|submitted|received)/i.test(fullText)) {
+    result.status = 'Applied';
+  } else if (/unfortunately|not moving forward/i.test(fullText)) {
+    result.status = 'Rejected';
+  } else if (/offer|congratulations/i.test(fullText)) {
+    result.status = 'Offer';
+  } else if (/opportunity|opening/i.test(fullText)) {
+    result.status = 'Opportunity';
+  }
+  
+  // Extract remote status
+  if (/\bremote\b/i.test(fullText)) {
+    result.remote_status = 'remote';
+  } else if (/\bhybrid\b/i.test(fullText)) {
+    result.remote_status = 'hybrid';
+  } else if (/\b(on-?site|in-?office)\b/i.test(fullText)) {
+    result.remote_status = 'onsite';
+  }
+  
+  // Extract salary
+  const salaryMatch = fullText.match(/\$[\d,]+k?\s*[-–]\s*\$?[\d,]+k?|\$[\d,]+(?:,\d{3})*(?:\.\d{2})?/i);
+  if (salaryMatch) {
+    result.salary_range = salaryMatch[0];
+  }
+  
+  return result;
 }
 
 /**
@@ -462,13 +516,23 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody) {
       });
       
       // Parse extraction with robust JSON extraction
-      let result = { company: null, position: null, status: null };
+      let result = { 
+        company: null, 
+        position: null, 
+        status: null,
+        location: null,
+        remote_status: null,
+        salary_range: null
+      };
       try {
         const parsed = extractJSONFromResponse(response);
         
         result.company = parsed.company || null;
         result.position = parsed.position || null;
         result.status = parsed.status || null;
+        result.location = parsed.location || null;
+        result.remote_status = parsed.remote_status || null;
+        result.salary_range = parsed.salary_range || null;
         
         // Status normalization is now handled in extractJSONFromResponse
         
@@ -479,6 +543,12 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody) {
       } catch (e) {
         console.error('Failed to parse Stage 2 response:', e);
         console.error('Raw response was:', response.substring(0, 200));
+        
+        // Try fallback extraction with regex patterns
+        if (emailSubject || emailBody) {
+          console.log('🔧 Attempting fallback extraction with patterns...');
+          result = attemptFallbackExtraction(emailSubject, emailBody, emailSender);
+        }
       }
       
       const processingTime = Date.now() - startTime;

@@ -17,6 +17,11 @@ import {
   DialogActions,
   LinearProgress,
   TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  SelectChangeEvent,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -74,6 +79,7 @@ export const GmailMultiAccount: React.FC = () => {
   });
   const [syncStats, setSyncStats] = useState<{processed?: number; found?: number; skipped?: number; digestsFiltered?: number; needsReview?: number; syncDuration?: number; emailsPerSecond?: number}>({});
   const [syncActivityLog, setSyncActivityLog] = useState<SyncLogEntry[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>(''); // LLM model for extraction
 
   useEffect(() => {
     loadAccounts();
@@ -180,7 +186,8 @@ export const GmailMultiAccount: React.FC = () => {
       // Use classification-only sync for HIL workflow
       await window.electronAPI.gmail.syncClassifyOnly({
         dateFrom: dateRange.from,
-        dateTo: dateRange.to
+        dateTo: dateRange.to,
+        modelId: selectedModel || null  // Pass selected model for LLM extraction
         // No limit - fetch all emails in date range
       });
     } catch (err: any) {
@@ -295,6 +302,26 @@ export const GmailMultiAccount: React.FC = () => {
             size="small"
             sx={{ width: 160 }}
           />
+          
+          <FormControl size="small" sx={{ minWidth: 200 }}>
+            <InputLabel>LLM Model (Optional)</InputLabel>
+            <Select
+              value={selectedModel}
+              onChange={(e: SelectChangeEvent) => setSelectedModel(e.target.value)}
+              label="LLM Model (Optional)"
+            >
+              <MenuItem value="">
+                <em>None (ML Only)</em>
+              </MenuItem>
+              <MenuItem value="llama-3.2-3b-instruct-q5_k_m">Llama-3.2-3B</MenuItem>
+              <MenuItem value="llama-3-8b-instruct-q5_k_m">Llama-3-8B</MenuItem>
+              <MenuItem value="qwen2.5-3b-instruct-q5_k_m">Qwen2.5-3B</MenuItem>
+              <MenuItem value="qwen2.5-7b-instruct-q5_k_m">Qwen2.5-7B</MenuItem>
+              <MenuItem value="phi-3.5-mini-instruct-q5_k_m">Phi-3.5-mini</MenuItem>
+              <MenuItem value="hermes-2-pro-mistral-7b-q5_k_m">Hermes-2-Pro</MenuItem>
+              <MenuItem value="gemma-2-2b-it-q5_k_m">Gemma-2-2B</MenuItem>
+            </Select>
+          </FormControl>
           
           <Button
             variant="outlined"

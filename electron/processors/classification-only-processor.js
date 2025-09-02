@@ -40,7 +40,7 @@ class ClassificationOnlyProcessor {
   }
 
   /**
-   * Main entry point - classify emails without parsing
+   * Main entry point - classify emails with optional LLM extraction
    */
   async processEmails(account, options = {}) {
     const {
@@ -48,7 +48,8 @@ class ClassificationOnlyProcessor {
       dateTo,
       daysToSync = 30, // Fallback for backward compatibility
       query = 'is:unread OR label:job-applications',
-      maxResults = options.maxEmails || 100000  // Effectively unlimited - will fetch all emails in date range
+      maxResults = options.maxEmails || 100000,  // Effectively unlimited - will fetch all emails in date range
+      modelId = options.modelId || null  // LLM model for extraction
     } = options;
 
     // Build date query
@@ -112,7 +113,7 @@ class ClassificationOnlyProcessor {
       // Step 4: Run ML classification only on non-digest emails
       let mlResults = [];
       if (filteredEmails.length > 0) {
-        mlResults = await this.classifyEmailsOnly(filteredEmails, account);
+        mlResults = await this.classifyEmailsOnly(filteredEmails, account, modelId);
       }
 
       // Step 5: Combine all results (ML classified + digest filtered)
@@ -459,12 +460,13 @@ class ClassificationOnlyProcessor {
   }
 
   /**
-   * Run ML classification on emails (no LLM parsing)
+   * Run ML classification on emails with LLM extraction for job-related ones
    */
-  async classifyEmailsOnly(emails, account) {
-    console.log(`Running ML classification on ${emails.length} emails`);
+  async classifyEmailsOnly(emails, account, modelId = null) {
+    console.log(`Running ML classification on ${emails.length} emails${modelId ? ` with LLM extraction using ${modelId}` : ''}`);
     this.sendActivity('ml', `🤖 Starting ML classification for ${emails.length} emails...`, {
-      totalEmails: emails.length
+      totalEmails: emails.length,
+      llmModel: modelId
     });
     
     const results = [];
@@ -509,17 +511,59 @@ class ClassificationOnlyProcessor {
               }
             );
 
+            // If job-related and we have a model, extract details with LLM
+            let extractedDetails = {};
+            if (mlResult.is_job_related && modelId) {
+              try {
+                console.log(`🤖 Extracting details for job email with ${modelId}...`);
+                const { extractStage2 } = require('../llm/two-stage-classifier');
+                
+                // Get model path
+                const modelManager = require('../model-manager');
+                const manager = new modelManager();
+                const modelPath = manager.getModelPath(modelId);
+                
+                // Extract details
+                const extraction = await extractStage2(
+                  modelId,
+                  modelPath,
+                  email.subject || '',
+                  email.body || '',
+                  email.from || ''
+                );
+                
+                extractedDetails = {
+                  company: extraction.company,
+                  position: extraction.position,
+                  status: extraction.status,
+                  location: extraction.location,
+                  remote_status: extraction.remote_status,
+                  salary_range: extraction.salary_range
+                };
+                
+                this.sendActivity('llm', 
+                  `✅ Extracted: ${extraction.company || 'Unknown'} - ${extraction.position || 'Unknown'}`,
+                  extractedDetails
+                );
+              } catch (extractError) {
+                console.error('LLM extraction failed:', extractError);
+                this.sendActivity('llm', `⚠️ Extraction failed: ${extractError.message}`, {});
+              }
+            }
+
             return {
               email,
               classification: {
                 is_job_related: mlResult.is_job_related,
                 job_probability: mlResult.job_probability,
                 needs_review: mlResult.needs_review || false,
-                ml_only: true,
+                ml_only: !modelId, // Only ML if no LLM model provided
                 processing_time: processingTime,
                 model_type: mlResult.model_type || 'ml',
                 // Set filter_reason for ML-rejected emails
-                filter_reason: !mlResult.is_job_related ? 'ml_not_job_related' : null
+                filter_reason: !mlResult.is_job_related ? 'ml_not_job_related' : null,
+                // Add extracted details
+                ...extractedDetails
               },
               account_email: account.email,
               processed_at: new Date().toISOString()
@@ -645,12 +689,18 @@ class ClassificationOnlyProcessor {
           needs_review,
           classification_status,
           parse_status,
+          company,
+          position,
+          status,
+          location,
+          remote_status,
+          salary_range,
           raw_email_data,
           filter_reason,
           email_date,
           created_at,
           processing_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const updateEmailSync = db.prepare(`
@@ -709,6 +759,12 @@ class ClassificationOnlyProcessor {
             classification.needs_review ? 1 : 0,
             classificationStatus,
             parseStatus,
+            classification.company || null,
+            classification.position || null,
+            classification.status || null,
+            classification.location || null,
+            classification.remote_status || null,
+            classification.salary_range || null,
             JSON.stringify({
               snippet: email.snippet,
               labelIds: email.labelIds,
