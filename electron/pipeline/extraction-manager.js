@@ -60,11 +60,7 @@ class ExtractionManager {
         UPDATE email_pipeline 
         SET 
           extraction_attempts = ?,
-          pipeline_stage = CASE 
-            WHEN pipeline_stage IN ('extraction_pending', 'ml_classified') 
-            THEN 'extraction_complete' 
-            ELSE pipeline_stage 
-          END,
+          pipeline_stage = 'extracted',
           updated_at = CURRENT_TIMESTAMP
         WHERE gmail_message_id = ? AND account_email = ?
       `);
@@ -92,11 +88,11 @@ class ExtractionManager {
           subject, 
           from_address, 
           body,
-          ml_confidence
+          confidence
         FROM email_pipeline
-        WHERE pipeline_stage = 'extraction_pending'
-        AND ml_is_job_related = 1
-        ORDER BY ml_confidence DESC
+        WHERE pipeline_stage = 'ready_for_extraction'
+        AND is_job_related = 1
+        ORDER BY confidence DESC
         LIMIT ?
       `).all(limit);
 

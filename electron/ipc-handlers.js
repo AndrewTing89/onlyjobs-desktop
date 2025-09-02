@@ -3966,8 +3966,9 @@ ipcMain.handle('get-pipeline-status', async (event, { accountEmail = null, stage
         email_date,
         pipeline_stage,
         is_digest,
-        ml_is_job_related,
-        ml_confidence,
+        is_job_related,
+        confidence,
+        human_verified,
         needs_review,
         CASE 
           WHEN extraction_attempts IS NOT NULL 
@@ -4151,12 +4152,14 @@ ipcMain.handle('reset-pipeline-stage', async (event, { stage, accountEmail = nul
     const params = [];
     
     switch (stage) {
-      case 'pre_ml':
+      case 'pre_classification':
         query = `UPDATE email_pipeline SET 
-          ml_is_job_related = NULL, 
-          ml_confidence = NULL,
-          ml_processed_at = NULL,
-          ml_processing_time_ms = NULL,
+          is_job_related = NULL, 
+          confidence = NULL,
+          classification_method = NULL,
+          classified_at = NULL,
+          classification_time_ms = NULL,
+          human_verified = 0,
           extraction_attempts = NULL,
           selected_extraction = NULL,
           selected_model_id = NULL,
@@ -4170,8 +4173,8 @@ ipcMain.handle('reset-pipeline-stage', async (event, { stage, accountEmail = nul
           selected_extraction = NULL,
           selected_model_id = NULL,
           pipeline_stage = CASE 
-            WHEN ml_is_job_related = 1 THEN 'extraction_pending'
-            WHEN ml_is_job_related = 0 THEN 'ml_classified'
+            WHEN is_job_related = 1 AND human_verified = 1 THEN 'ready_for_extraction'
+            WHEN is_job_related IS NOT NULL THEN 'classified'
             ELSE pipeline_stage
           END,
           updated_at = CURRENT_TIMESTAMP`;
@@ -4181,8 +4184,8 @@ ipcMain.handle('reset-pipeline-stage', async (event, { stage, accountEmail = nul
         query = `UPDATE email_pipeline SET 
           jobs_table_id = NULL,
           pipeline_stage = CASE
-            WHEN selected_extraction IS NOT NULL THEN 'extraction_complete'
-            WHEN ml_is_job_related = 1 THEN 'extraction_pending'
+            WHEN selected_extraction IS NOT NULL THEN 'extracted'
+            WHEN is_job_related = 1 AND human_verified = 1 THEN 'ready_for_extraction'
             ELSE pipeline_stage
           END,
           updated_at = CURRENT_TIMESTAMP
@@ -4203,6 +4206,108 @@ ipcMain.handle('reset-pipeline-stage', async (event, { stage, accountEmail = nul
     return { success: true, updated: result.changes };
   } catch (error) {
     console.error('Error resetting pipeline stage:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Review and approve classifications
+ipcMain.handle('review-classification', async (event, { gmailMessageId, accountEmail, isJobRelated, confidence = 1.0 }) => {
+  try {
+    const db = getDb();
+    
+    // Determine new pipeline stage based on review
+    const pipelineStage = isJobRelated ? 'ready_for_extraction' : 'classified';
+    
+    const stmt = db.prepare(`
+      UPDATE email_pipeline 
+      SET 
+        is_job_related = ?,
+        confidence = ?,
+        human_verified = 1,
+        classification_method = 'manual',
+        pipeline_stage = ?,
+        needs_review = 0,
+        review_reason = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE gmail_message_id = ? AND account_email = ?
+    `);
+    
+    const result = stmt.run(
+      isJobRelated ? 1 : 0,
+      confidence,
+      pipelineStage,
+      gmailMessageId,
+      accountEmail
+    );
+    
+    return { success: true, updated: result.changes };
+  } catch (error) {
+    console.error('Error reviewing classification:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Bulk approve high-confidence classifications
+ipcMain.handle('bulk-approve-classifications', async (event, { accountEmail, confidenceThreshold = 0.90 }) => {
+  try {
+    const db = getDb();
+    
+    const stmt = db.prepare(`
+      UPDATE email_pipeline 
+      SET 
+        human_verified = 1,
+        pipeline_stage = CASE 
+          WHEN is_job_related = 1 THEN 'ready_for_extraction'
+          ELSE 'classified'
+        END,
+        needs_review = 0,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE 
+        account_email = ?
+        AND pipeline_stage = 'classified'
+        AND confidence >= ?
+        AND human_verified = 0
+    `);
+    
+    const result = stmt.run(accountEmail, confidenceThreshold);
+    
+    return { success: true, approved: result.changes };
+  } catch (error) {
+    console.error('Error bulk approving classifications:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Get classifications needing review
+ipcMain.handle('get-review-queue', async (event, { accountEmail, limit = 100 }) => {
+  try {
+    const db = getDb();
+    
+    const results = db.prepare(`
+      SELECT 
+        gmail_message_id,
+        thread_id,
+        subject,
+        from_address,
+        email_date,
+        is_job_related,
+        confidence,
+        classification_method,
+        needs_review,
+        review_reason
+      FROM email_pipeline
+      WHERE 
+        account_email = ?
+        AND pipeline_stage = 'classified'
+        AND (needs_review = 1 OR confidence < 0.80 OR human_verified = 0)
+        AND is_job_related = 1
+      ORDER BY confidence ASC
+      LIMIT ?
+    `).all(accountEmail, limit);
+    
+    return { success: true, data: results };
+  } catch (error) {
+    console.error('Error getting review queue:', error);
     return { success: false, error: error.message };
   }
 });

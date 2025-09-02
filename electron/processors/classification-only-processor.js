@@ -705,16 +705,18 @@ class ClassificationOnlyProcessor {
           is_digest,
           digest_reason,
           digest_confidence,
-          ml_is_job_related,
-          ml_confidence,
-          ml_processed_at,
-          ml_processing_time_ms,
+          is_job_related,
+          confidence,
+          classification_method,
+          classified_at,
+          classification_time_ms,
+          human_verified,
           pipeline_stage,
           needs_review,
           review_reason,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(gmail_message_id, account_email) DO UPDATE SET
           thread_id = excluded.thread_id,
           subject = excluded.subject,
@@ -725,10 +727,12 @@ class ClassificationOnlyProcessor {
           is_digest = excluded.is_digest,
           digest_reason = excluded.digest_reason,
           digest_confidence = excluded.digest_confidence,
-          ml_is_job_related = excluded.ml_is_job_related,
-          ml_confidence = excluded.ml_confidence,
-          ml_processed_at = excluded.ml_processed_at,
-          ml_processing_time_ms = excluded.ml_processing_time_ms,
+          is_job_related = excluded.is_job_related,
+          confidence = excluded.confidence,
+          classification_method = excluded.classification_method,
+          classified_at = excluded.classified_at,
+          classification_time_ms = excluded.classification_time_ms,
+          human_verified = excluded.human_verified,
           pipeline_stage = excluded.pipeline_stage,
           needs_review = excluded.needs_review,
           review_reason = excluded.review_reason,
@@ -749,17 +753,30 @@ class ClassificationOnlyProcessor {
         for (const result of results) {
           const { email, classification, account_email, processed_at } = result;
 
-          // Determine pipeline stage
+          // Determine pipeline stage and classification method
           let pipelineStage;
+          let classificationMethod;
+          let humanVerified = false;
+          
+          // Use confidence thresholds (can be made configurable)
+          const AUTO_APPROVE_THRESHOLD = 0.90;
+          const NEEDS_REVIEW_THRESHOLD = 0.80;
+          
           if (classification.model_type === 'digest_filter') {
-            pipelineStage = 'digest_filtered';
-          } else if (!classification.is_job_related) {
-            pipelineStage = 'ml_classified';
-          } else if (classification.is_job_related && classification.company) {
-            // If we already have extraction data
-            pipelineStage = 'extraction_complete';
+            pipelineStage = 'classified';
+            classificationMethod = 'digest_filter';
           } else {
-            pipelineStage = 'extraction_pending';
+            classificationMethod = 'ml';
+            const confidence = classification.job_probability || classification.confidence || 0;
+            
+            if (!classification.is_job_related) {
+              pipelineStage = 'classified';
+            } else if (confidence >= AUTO_APPROVE_THRESHOLD) {
+              pipelineStage = 'ready_for_extraction';
+              humanVerified = true; // Auto-approved due to high confidence
+            } else {
+              pipelineStage = 'classified'; // Needs human review before extraction
+            }
           }
 
           // Convert dates
@@ -771,16 +788,16 @@ class ClassificationOnlyProcessor {
 
           const now = new Date().toISOString();
 
-          // UPSERT to pipeline
+          // UPSERT to pipeline (21 parameters to match new schema)
           upsertPipeline.run(
-            email.id,
-            email.threadId,
-            account_email,
-            email.subject,
-            email.from,
-            email.body,
-            emailDate,
-            JSON.stringify({
+            email.id,                    // 1. gmail_message_id
+            email.threadId,               // 2. thread_id
+            account_email,                // 3. account_email
+            email.subject,                // 4. subject
+            email.from,                   // 5. from_address
+            email.body,                   // 6. body
+            emailDate,                    // 7. email_date
+            JSON.stringify({              // 8. raw_email_data
               snippet: email.snippet,
               labelIds: email.labelIds,
               internalDate: email.internalDate,
@@ -788,18 +805,20 @@ class ClassificationOnlyProcessor {
               to: email.to,
               bodyIsHtml: email.bodyIsHtml || false
             }),
-            classification.model_type === 'digest_filter' ? 1 : 0,
-            classification.filter_reason || null,
-            classification.filter_confidence || null,
-            classification.is_job_related ? 1 : 0,
-            classification.job_probability || classification.confidence || 0,
-            now,
-            classification.processing_time || 0,
-            pipelineStage,
-            classification.needs_review ? 1 : 0,
-            classification.needs_review ? 'low_confidence' : null,
-            now,
-            now
+            classification.model_type === 'digest_filter' ? 1 : 0,  // 9. is_digest
+            classification.filter_reason || null,                    // 10. digest_reason
+            classification.filter_confidence || null,                // 11. digest_confidence
+            classification.is_job_related ? 1 : 0,                  // 12. is_job_related
+            classification.job_probability || classification.confidence || 0,  // 13. confidence
+            classificationMethod,                                    // 14. classification_method
+            now,                                                     // 15. classified_at
+            classification.processing_time || 0,                    // 16. classification_time_ms
+            humanVerified ? 1 : 0,                                  // 17. human_verified
+            pipelineStage,                                          // 18. pipeline_stage
+            classification.needs_review ? 1 : 0,                    // 19. needs_review
+            classification.needs_review ? 'low_confidence' : null,  // 20. review_reason
+            now,                                                     // 21. created_at
+            now                                                      // 22. updated_at (OOPS, 22 not 21!)
           );
 
           // Update email sync tracking
@@ -816,13 +835,9 @@ class ClassificationOnlyProcessor {
       transaction();
       console.log(`saveToPipeline: Successfully saved ${results.length} results to pipeline`);
 
-      // Also save to classification_queue for backward compatibility (temporary)
-      await this.saveToClassificationQueue(results, account);
-
     } catch (error) {
       console.error('Error saving to pipeline:', error);
-      // Fall back to old method
-      await this.saveToClassificationQueue(results, account);
+      throw error;
     }
   }
 

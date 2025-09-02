@@ -28,11 +28,13 @@ function addEmailPipelineTables(db) {
         digest_reason TEXT, -- e.g., 'digest_domain:linkedin.com'
         digest_confidence REAL,
         
-        -- Stage 2: ML Classification
-        ml_is_job_related BOOLEAN,
-        ml_confidence REAL,
-        ml_processed_at TIMESTAMP,
-        ml_processing_time_ms INTEGER,
+        -- Stage 2: Classification (ML or digest filter)
+        is_job_related BOOLEAN,
+        confidence REAL,
+        classification_method TEXT, -- 'ml', 'digest_filter', 'manual'
+        classified_at TIMESTAMP,
+        classification_time_ms INTEGER,
+        human_verified BOOLEAN DEFAULT 0,
         
         -- Stage 3: LLM Extraction (Multiple models)
         extraction_attempts TEXT, -- JSON array of all extraction attempts
@@ -63,13 +65,11 @@ function addEmailPipelineTables(db) {
         
         -- Pipeline status tracking
         pipeline_stage TEXT DEFAULT 'fetched' CHECK(pipeline_stage IN (
-          'fetched',           -- Email retrieved from Gmail
-          'digest_filtered',   -- Identified as digest, skipped
-          'ml_classified',     -- ML classification complete
-          'extraction_pending',-- Awaiting LLM extraction
-          'extraction_complete',-- LLM extraction done
-          'review_needed',     -- Needs human review
-          'promoted_to_jobs'   -- Moved to jobs table
+          'fetched',              -- Email retrieved from Gmail
+          'classified',           -- Classification complete (ML or filter)
+          'ready_for_extraction', -- Approved for LLM extraction
+          'extracted',            -- LLM extraction complete
+          'in_jobs'              -- Promoted to jobs table
         )),
         
         -- Links and metadata
@@ -92,7 +92,9 @@ function addEmailPipelineTables(db) {
       CREATE INDEX IF NOT EXISTS idx_pipeline_account ON email_pipeline(account_email);
       CREATE INDEX IF NOT EXISTS idx_pipeline_thread ON email_pipeline(thread_id);
       CREATE INDEX IF NOT EXISTS idx_pipeline_stage ON email_pipeline(pipeline_stage);
-      CREATE INDEX IF NOT EXISTS idx_pipeline_ml_job ON email_pipeline(ml_is_job_related);
+      CREATE INDEX IF NOT EXISTS idx_pipeline_job ON email_pipeline(is_job_related);
+      CREATE INDEX IF NOT EXISTS idx_pipeline_confidence ON email_pipeline(confidence);
+      CREATE INDEX IF NOT EXISTS idx_pipeline_human_verified ON email_pipeline(human_verified);
       CREATE INDEX IF NOT EXISTS idx_pipeline_review ON email_pipeline(needs_review);
       CREATE INDEX IF NOT EXISTS idx_pipeline_date ON email_pipeline(email_date);
       CREATE INDEX IF NOT EXISTS idx_pipeline_message ON email_pipeline(gmail_message_id);
@@ -169,10 +171,11 @@ function migrateExistingData(db) {
           email_date,
           is_digest,
           digest_reason,
-          ml_is_job_related,
-          ml_confidence,
-          ml_processed_at,
-          ml_processing_time_ms,
+          is_job_related,
+          confidence,
+          classified_at,
+          classification_time_ms,
+          classification_method,
           pipeline_stage,
           needs_review,
           created_at,
@@ -188,14 +191,17 @@ function migrateExistingData(db) {
           email_date,
           CASE WHEN filter_reason IS NOT NULL THEN 1 ELSE 0 END as is_digest,
           filter_reason as digest_reason,
-          is_job_related as ml_is_job_related,
-          job_probability as ml_confidence,
-          updated_at as ml_processed_at,
-          processing_time as ml_processing_time_ms,
+          is_job_related,
+          job_probability as confidence,
+          updated_at as classified_at,
+          processing_time as classification_time_ms,
           CASE 
-            WHEN filter_reason IS NOT NULL THEN 'digest_filtered'
-            WHEN is_job_related = 1 THEN 'extraction_pending'
-            WHEN is_job_related = 0 THEN 'ml_classified'
+            WHEN filter_reason IS NOT NULL THEN 'digest_filter'
+            ELSE 'ml'
+          END as classification_method,
+          CASE 
+            WHEN is_job_related = 1 AND needs_review = 0 THEN 'ready_for_extraction'
+            WHEN is_job_related IS NOT NULL THEN 'classified'
             ELSE 'fetched'
           END as pipeline_stage,
           needs_review,
