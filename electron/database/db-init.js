@@ -42,15 +42,15 @@ class DatabaseInitializer {
       // Create core tables
       this.createGmailAccountsTable(db);
       this.createJobsTable(db);
+      this.createEmailPipelineTable(db);
       this.createEmailSyncTable(db);
       this.createSyncStatusTable(db);
       this.createSyncHistoryTable(db);
       this.createLLMCacheTable(db);
       this.createModelPromptsTable(db);
       
-      // Create human-in-the-loop tables
-      this.createClassificationQueueTable(db);
-      // Training feedback table removed
+      // Human-in-the-loop functionality now integrated in email_pipeline table
+      // (removed separate classification_queue table)
       
       // Create test tables (for model testing)
       // Test tables removed - no longer needed
@@ -76,33 +76,32 @@ class DatabaseInitializer {
   }
 
   /**
-   * Create Gmail accounts table
+   * Create Gmail accounts table - only fields actually used by code
    */
   createGmailAccountsTable(db) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS gmail_accounts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT PRIMARY KEY,
         email TEXT UNIQUE NOT NULL,
         access_token TEXT,
         refresh_token TEXT,
-        expires_at INTEGER,
-        scope TEXT,
-        token_type TEXT DEFAULT 'Bearer',
+        token_expiry INTEGER,
         is_active BOOLEAN DEFAULT 1,
         last_sync TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
   }
 
   /**
-   * Create main jobs table with human-in-the-loop columns
+   * Create jobs table - only fields actually used by code
    */
   createJobsTable(db) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY,
         gmail_message_id TEXT NOT NULL,
+        thread_id TEXT,
         company TEXT NOT NULL,
         position TEXT NOT NULL,
         status TEXT DEFAULT 'Applied' CHECK(status IN ('Applied', 'Interviewed', 'Declined', 'Offer')),
@@ -110,25 +109,61 @@ class DatabaseInitializer {
         location TEXT,
         salary_range TEXT,
         notes TEXT,
-        ml_confidence REAL,
+        job_probability REAL,
         account_email TEXT,
         from_address TEXT,
-        thread_id TEXT,
         email_thread_ids TEXT,
-        
-        -- Human-in-the-loop classification columns
-        classification_status TEXT DEFAULT 'pending' CHECK(classification_status IN ('pending', 'ml_classified', 'human_verified', 'parsed', 'rejected')),
-        needs_review BOOLEAN DEFAULT 0,
-        reviewed_at TIMESTAMP,
-        reviewed_by TEXT,
-        parse_status TEXT DEFAULT 'unparsed' CHECK(parse_status IN ('unparsed', 'queued', 'parsing', 'parsed', 'failed')),
-        parse_attempted_at TIMESTAMP,
-        parse_completed_at TIMESTAMP,
-        raw_email_content TEXT,
-        
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(gmail_message_id, account_email)
+      )
+    `);
+  }
+
+  /**
+   * Create email pipeline table - unified schema with clean field names
+   */
+  createEmailPipelineTable(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS email_pipeline (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        gmail_message_id TEXT NOT NULL UNIQUE,
+        thread_id TEXT,
+        account_email TEXT NOT NULL,
+        from_address TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        plaintext TEXT NOT NULL,
+        body_html TEXT,
+        date_received TEXT NOT NULL,
+        
+        -- ML Classification results
+        ml_classification TEXT,
+        job_probability REAL DEFAULT 0,
+        is_job_related BOOLEAN DEFAULT 0,
+        
+        -- Pipeline workflow stages
+        pipeline_stage TEXT DEFAULT 'fetched' CHECK(pipeline_stage IN (
+          'fetched', 'classified', 'ready_for_extraction', 'extracted', 'in_jobs'
+        )),
+        classification_method TEXT CHECK(classification_method IN (
+          'digest_filter', 'ml', 'llm', 'human', 'rule_based', NULL
+        )),
+        is_classified BOOLEAN DEFAULT 0,
+        
+        -- Links and metadata
+        jobs_table_id TEXT,
+        needs_review BOOLEAN DEFAULT 0,
+        review_reason TEXT,
+        user_feedback TEXT,
+        
+        -- User review tracking  
+        user_classification TEXT,
+        reviewed_at TEXT,
+        reviewed_by TEXT,
+        
+        -- Timestamps
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
   }
@@ -166,7 +201,7 @@ class DatabaseInitializer {
   }
 
   /**
-   * Create sync history log table
+   * Create sync history log table - only fields actually used by code
    */
   createSyncHistoryTable(db) {
     db.exec(`
@@ -176,10 +211,15 @@ class DatabaseInitializer {
         accounts_synced INTEGER,
         emails_fetched INTEGER,
         emails_processed INTEGER,
+        emails_classified INTEGER DEFAULT 0,
         jobs_found INTEGER,
+        new_jobs INTEGER DEFAULT 0,
+        updated_jobs INTEGER DEFAULT 0,
         duration_ms INTEGER,
-        success BOOLEAN DEFAULT 1,
-        error_message TEXT
+        status TEXT DEFAULT 'success',
+        date_from TEXT,
+        date_to TEXT,
+        days_synced INTEGER
       )
     `);
   }

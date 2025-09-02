@@ -43,7 +43,7 @@ function cleanStaleContexts() {
   for (const [stage, pool] of Object.entries(contextPools)) {
     for (const [modelId, entry] of pool.entries()) {
       if (now - entry.lastUsed > CONTEXT_POOL_TTL) {
-        console.log(`🧹 Cleaning stale ${stage} context for ${modelId}`);
+        // Cleaning stale context
         try {
           entry.context.dispose();
         } catch (e) {
@@ -164,11 +164,11 @@ async function loadLlamaModule() {
 async function ensureModelLoaded(modelId, modelPath) {
   // Check cache first
   if (loadedModels.has(modelId)) {
-    console.log(`✅ Reusing cached model: ${modelId}`);
+    // Reusing cached model
     return loadedModels.get(modelId);
   }
   
-  console.log(`📦 Loading model ${modelId} from disk (this takes ~60 seconds)...`);
+  // Loading model from disk
   
   const fs = require('fs');
   if (!fs.existsSync(modelPath)) {
@@ -187,7 +187,7 @@ async function ensureModelLoaded(modelId, modelPath) {
     
     // Cache for future use
     loadedModels.set(modelId, model);
-    console.log(`✅ Model ${modelId} loaded and cached`);
+    // Model loaded and cached
     return model;
   } catch (error) {
     console.error(`Failed to load model ${modelId}:`, error);
@@ -210,7 +210,7 @@ async function getOrCreateContext(model, modelId, stage, contextSize, forceNew =
   if (!hasValidContext) {
     // Dispose old context if forcing new
     if (forceNew && entry) {
-      console.log(`🔄 Disposing exhausted ${stage} context for ${modelId}`);
+      // Disposing exhausted context
       try {
         entry.context.dispose();
       } catch (e) {
@@ -218,26 +218,26 @@ async function getOrCreateContext(model, modelId, stage, contextSize, forceNew =
       }
     }
     
-    console.log(`📦 Creating NEW ${stage} context for ${modelId} (size: ${contextSize})`);
+    // Creating new context
     const contextStart = Date.now();
     const context = await model.createContext({ 
       contextSize,
       batchSize: 128  // Small batch size for efficiency
     });
-    console.log(`⏱️ Context creation took ${Date.now() - contextStart}ms for ${stage}`);
+    // Context created
     
     pool.set(modelId, {
       context,
       lastUsed: Date.now()
     });
-    console.log(`✅ Context created and pooled for ${stage}/${modelId}`);
+    // Context pooled
     
     return context;
   } else {
     // Update last used time
     entry.lastUsed = Date.now();
     const ageSeconds = Math.round((Date.now() - entry.lastUsed) / 1000);
-    console.log(`♻️ REUSING existing ${stage} context for ${modelId} (will stay alive for ${Math.round(CONTEXT_POOL_TTL / 1000)}s)`);
+    // Reusing existing context
     
     return entry.context;
   }
@@ -319,7 +319,7 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody) {
   const cacheKey = getCacheKey(emailSubject, emailBody, 'stage1');
   const cached = llmCache.get(cacheKey);
   if (cached && isCacheValid(cached)) {
-    console.log(`📋 Stage 1 cache hit - skipping LLM inference`);
+    // Stage 1 cache hit
     return {
       ...cached.result,
       stage1Time: Date.now() - startTime,
@@ -342,17 +342,17 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody) {
         // Get or create reusable context for Stage 1
         const contextStart = Date.now();
         context = await getOrCreateContext(model, modelId, 'stage1', STAGE1_CONTEXT_SIZE, retryCount > 0);
-        console.log(`⏱️ Context ready in ${Date.now() - contextStart}ms`);
+        // Context ready
         
         // Try to get a fresh sequence from the reusable context
         const seqStart = Date.now();
         sequence = context.getSequence();
-        console.log(`⏱️ Sequence created in ${Date.now() - seqStart}ms`);
+        // Sequence created
         break; // Success, exit retry loop
         
       } catch (error) {
         if (error.message.includes('No sequences left') && retryCount < maxRetries - 1) {
-          console.log(`⚠️ Context exhausted, creating fresh context (retry ${retryCount + 1}/${maxRetries})`);
+          // Context exhausted, retrying
           retryCount++;
         } else {
           throw error; // Re-throw if not sequence error or max retries reached
@@ -366,7 +366,7 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody) {
       const systemPrompt = savedPrompt || OPTIMIZED_STAGE1_PROMPTS[modelId] || OPTIMIZED_STAGE1_PROMPTS['llama-3-8b-instruct-q5_k_m'];
       
       if (savedPrompt) {
-        console.log(`📝 Using custom Stage 1 prompt for ${modelId}`);
+        // Using custom Stage 1 prompt
       }
       
       // Create session
@@ -391,7 +391,7 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody) {
         temperature: 0,
         maxTokens: STAGE1_MAX_TOKENS
       });
-      console.log(`⏱️ LLM inference took ${Date.now() - promptStart}ms`);
+      // LLM inference complete
       
       // Parse response
       let isJob = false;
@@ -406,7 +406,7 @@ async function classifyStage1(modelId, modelPath, emailSubject, emailBody) {
       }
       
       const processingTime = Date.now() - startTime;
-      console.log(`⚡ Stage 1 completed in ${processingTime}ms - Result: ${isJob ? 'Job-related' : 'Not job'}`);
+      // Stage 1 complete
       
       const result = {
         is_job: isJob,
@@ -447,7 +447,7 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody) {
   const cacheKey = getCacheKey(emailSubject, emailBody, 'stage2');
   const cached = llmCache.get(cacheKey);
   if (cached && isCacheValid(cached)) {
-    console.log(`📋 Stage 2 cache hit - skipping LLM inference`);
+    // Stage 2 cache hit
     return {
       ...cached.result,
       stage2Time: Date.now() - startTime,
@@ -476,7 +476,7 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody) {
         
       } catch (error) {
         if (error.message.includes('No sequences left') && retryCount < maxRetries - 1) {
-          console.log(`⚠️ Stage 2 context exhausted, creating fresh context (retry ${retryCount + 1}/${maxRetries})`);
+          // Stage 2 context exhausted, retrying
           retryCount++;
         } else {
           throw error; // Re-throw if not sequence error or max retries reached
@@ -490,7 +490,7 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody) {
       const systemPrompt = savedPrompt || OPTIMIZED_STAGE2_PROMPTS[modelId] || OPTIMIZED_STAGE2_PROMPTS['llama-3-8b-instruct-q5_k_m'];
       
       if (savedPrompt) {
-        console.log(`📝 Using custom Stage 2 prompt for ${modelId}`);
+        // Using custom Stage 2 prompt
       }
       
       // Create session
@@ -538,7 +538,7 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody) {
         
         // Log if we had to extract from chatty response
         if (response.length > 100 && !response.trim().startsWith('{')) {
-          console.log('📝 Extracted JSON from verbose LLM response');
+          // Extracted JSON from verbose response
         }
       } catch (e) {
         console.error('Failed to parse Stage 2 response:', e);
@@ -546,13 +546,13 @@ async function extractStage2(modelId, modelPath, emailSubject, emailBody) {
         
         // Try fallback extraction with regex patterns
         if (emailSubject || emailBody) {
-          console.log('🔧 Attempting fallback extraction with patterns...');
+          // Attempting fallback extraction
           result = attemptFallbackExtraction(emailSubject, emailBody, emailSender);
         }
       }
       
       const processingTime = Date.now() - startTime;
-      console.log(`⚡ Stage 2 completed in ${processingTime}ms - Extracted: ${result.company} / ${result.position}`);
+      // Stage 2 complete
       
       const finalResult = {
         ...result,
@@ -599,7 +599,7 @@ async function matchJobs(modelId, modelPath, job1, job2) {
   // Check cache first
   const cached = llmCache.get(cacheKey);
   if (cached && isCacheValid(cached)) {
-    console.log(`📋 Stage 3 cache hit - skipping LLM inference`);
+    // Stage 3 cache hit
     return {
       ...cached.result,
       stage3Time: Date.now() - startTime,
@@ -628,7 +628,7 @@ async function matchJobs(modelId, modelPath, job1, job2) {
         
       } catch (error) {
         if (error.message.includes('No sequences left') && retryCount < maxRetries - 1) {
-          console.log(`⚠️ Stage 3 context exhausted, creating fresh context (retry ${retryCount + 1}/${maxRetries})`);
+          // Stage 3 context exhausted, retrying
           retryCount++;
         } else {
           throw error; // Re-throw if not sequence error or max retries reached
@@ -642,7 +642,7 @@ async function matchJobs(modelId, modelPath, job1, job2) {
       const systemPrompt = savedPrompt || OPTIMIZED_STAGE3_PROMPTS[modelId] || OPTIMIZED_STAGE3_PROMPTS['llama-3-8b-instruct-q5_k_m'];
       
       if (savedPrompt) {
-        console.log(`📝 Using custom Stage 3 prompt for ${modelId}`);
+        // Using custom Stage 3 prompt
       }
       
       // Create session
@@ -677,7 +677,7 @@ Job 2: ${job2.company} - ${job2.position}`;
       }
       
       const processingTime = Date.now() - startTime;
-      console.log(`⚡ Stage 3 completed in ${processingTime}ms - Match: ${sameJob}`);
+      // Stage 3 complete
       
       const result = {
         same_job: sameJob,
@@ -727,7 +727,7 @@ async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, ema
   // High confidence - fully trust ML
   if (confidence >= 0.8) {
     if (mlResult.is_job_related) {
-      console.log(`✅ ML Stage 0: High confidence job (${confidence.toFixed(2)}) - proceeding to parsing`);
+      // ML Stage 0: High confidence job - proceeding
       
       // Skip Stage 1, go directly to Stage 2 extraction
       const stage2Result = await extractStage2(modelId, modelPath, emailSubject, emailBody);
@@ -743,7 +743,7 @@ async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, ema
         stage2Time: stage2Result.stage2Time
       };
     } else {
-      console.log(`✅ ML Stage 0: High confidence non-job (${confidence.toFixed(2)}) - skipping all LLM`);
+      // ML Stage 0: High confidence non-job - skipping LLM
       
       return {
         is_job_related: false,
@@ -762,7 +762,7 @@ async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, ema
   
   // Low/Medium confidence - still use ML, but flag for review
   if (mlResult.is_job_related) {
-    console.log(`🤔 ML Stage 0: Low confidence job (${confidence.toFixed(2)}) - parsing but needs review`);
+    // ML Stage 0: Low confidence - needs review
     
     // Still extract details since ML thinks it's job-related
     const stage2Result = await extractStage2(modelId, modelPath, emailSubject, emailBody);
@@ -778,7 +778,8 @@ async function classifyTwoStage(modelId, modelPath, emailSubject, emailBody, ema
       stage2Time: stage2Result.stage2Time
     };
   } else {
-    console.log(`🤔 ML Stage 0: Low confidence non-job (${confidence.toFixed(2)}) - needs review`);
+    // Removed console.log that was causing EPIPE error
+    // ML Stage 0: Low confidence non-job - needs review
     
     return {
       is_job_related: false,
@@ -858,7 +859,7 @@ async function extractStage2Batch(modelId, modelPath, emails) {
         break;
       } catch (error) {
         if (error.message.includes('No sequences left') && retryCount < maxRetries - 1) {
-          console.log(`⚠️ Stage 2 batch context exhausted, creating fresh context`);
+          // Stage 2 batch context exhausted
           retryCount++;
         } else {
           throw error;
@@ -922,7 +923,7 @@ async function extractStage2Batch(modelId, modelPath, emails) {
         }));
       }
       
-      console.log(`⚡ Stage 2 batch completed in ${Date.now() - startTime}ms - Processed ${results.length} emails`);
+      // Stage 2 batch complete
       return results;
       
     } finally {
@@ -1026,14 +1027,14 @@ function resetToDefaults(modelId) {
 
 // Cleanup function - clears models and contexts
 async function cleanup() {
-  console.log('Cleaning up loaded models and contexts');
+  // Cleaning up models and contexts
   
   // Dispose all pooled contexts
   for (const pool of Object.values(contextPools)) {
     for (const [modelId, context] of pool) {
       try {
         await context.dispose();
-        console.log(`Disposed context for ${modelId}`);
+        // Disposed context
       } catch (e) {
         console.error(`Error disposing context for ${modelId}:`, e);
       }

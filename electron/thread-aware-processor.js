@@ -214,7 +214,7 @@ class ThreadAwareProcessor {
               company: classification.company || 'Unknown Company',
               position: classification.position || 'Unknown Position',
               status: this.determineLatestStatus(threadEmails, classification),
-              confidence: classification.confidence || 0.95,
+              confidence: classification.job_probability || classification.confidence || 0.95,
               emails: threadEmails.map(e => ({
                 id: e.id,
                 date: new Date(parseInt(e.internalDate)),
@@ -528,7 +528,7 @@ class ThreadAwareProcessor {
           company: item.classification.company || 'Unknown Company',
           position: item.classification.position || 'Unknown Position',
           status: this.determineStatus(item.classification),
-          confidence: item.classification.confidence || 0.8,
+          confidence: item.classification.job_probability || item.classification.confidence || 0.8,
           emails: [{
             id: item.email.id,
             date: emailDate,

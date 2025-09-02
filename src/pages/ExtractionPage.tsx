@@ -4,12 +4,9 @@ import {
   Card,
   CardContent,
   Typography,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
-  IconButton,
   Paper,
+  Tabs,
+  Tab,
   TextField,
   InputAdornment,
   FormControl,
@@ -20,8 +17,12 @@ import {
   Button,
   Alert,
   Snackbar,
+  Divider,
   Stack,
-  LinearProgress,
+  Badge,
+  Stepper,
+  Step,
+  StepLabel,
   Table,
   TableBody,
   TableCell,
@@ -29,10 +30,9 @@ import {
   TableHead,
   TableRow,
   Checkbox,
+  LinearProgress,
+  IconButton,
   Tooltip,
-  Stepper,
-  Step,
-  StepLabel,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -42,27 +42,25 @@ import {
 import Grid from '@mui/material/Grid';
 import {
   Search,
+  FilterList,
   Refresh,
-  PlayArrow,
-  Stop,
   CheckCircle,
-  Error as ErrorIcon,
-  Pending,
-  Edit,
-  Clear,
-  Save,
-  ArrowBack,
-  Dashboard,
-  SkipNext,
-  SelectAll,
-  IndeterminateCheckBox,
-  Psychology,
-  Speed,
-  Timer,
+  Cancel,
+  Email,
+  Person,
+  CalendarToday,
   Business,
   Work,
-  CalendarToday,
-  Email
+  Visibility,
+  ArrowForward,
+  RateReview,
+  Psychology,
+  PlayArrow,
+  ThumbUp,
+  ThumbDown,
+  AutoAwesome,
+  Speed,
+  Timer
 } from '@mui/icons-material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
@@ -76,9 +74,6 @@ import TopBar from '../components/layout/TopBar';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import ConfidenceIndicator from '../components/ConfidenceIndicator';
 
-// Import types
-import type { EmailClassification } from '../types/classification';
-
 // Import auth context
 import { useAuth } from '../contexts/ElectronAuthContext';
 
@@ -86,18 +81,18 @@ const accent = "#FF7043";
 
 const workflowSteps = [
   {
-    label: 'Fetch Emails',
-    description: 'Connect Gmail accounts and fetch emails for processing',
+    label: 'Step 1: Fetch & ML Classify',
+    description: 'Fetch emails and ML classification',
     active: false
   },
   {
-    label: 'Review Classifications',
-    description: 'Review AI classifications and mark job-related emails',
+    label: 'Step 2: Review Classifications',
+    description: 'Human review of ML classifications',
     active: false
   },
   {
-    label: 'Extract Job Details',
-    description: 'Use LLM models to parse job details from confirmed job emails',
+    label: 'Step 3: LLM Extract',
+    description: 'LLM extraction of job details',
     active: true
   }
 ];
@@ -107,1030 +102,593 @@ const availableModels = [
   {
     id: 'llama-3.2-3b-instruct-q5_k_m',
     name: 'Llama-3.2-3B-Instruct',
-    description: 'Fast 3B model - Q5_K_M quantization',
-    size: '2.1GB',
-    color: '#2196F3'
-  },
-  {
-    id: 'llama-3-8b-instruct-q5_k_m',
-    name: 'Llama-3-8B-Instruct', 
-    description: 'Balanced performance - Q5_K_M quantization',
-    size: '5.5GB',
-    color: '#1976D2'
+    description: 'Fast 3B model',
+    size: '2.1GB'
   },
   {
     id: 'qwen2.5-3b-instruct-q5_k_m',
     name: 'Qwen2.5-3B-Instruct',
-    description: 'Efficient 3B Qwen model - Q5_K_M quantization',
-    size: '2.0GB', 
-    color: '#4CAF50'
-  },
-  {
-    id: 'qwen2.5-7b-instruct-q5_k_m',
-    name: 'Qwen2.5-7B-Instruct',
-    description: 'Latest Qwen model - Q5_K_M quantization',
-    size: '5.1GB',
-    color: '#388E3C'
+    description: 'Efficient 3B model',
+    size: '2.0GB'
   },
   {
     id: 'phi-3.5-mini-instruct-q5_k_m',
     name: 'Phi-3.5-mini-instruct',
-    description: 'Microsoft Phi-3.5 mini (3.8B) - Q5_K_M quantization',
-    size: '2.5GB',
-    color: '#FF9800'
-  },
-  {
-    id: 'hermes-2-pro-mistral-7b-q5_k_m',
-    name: 'Hermes-2-Pro-Mistral-7B',
-    description: 'Function calling specialist - Q5_K_M',
-    size: '4.8GB',
-    color: '#9C27B0'
-  },
-  {
-    id: 'gemma-2-2b-it-q5_k_m',
-    name: 'Gemma-2-2B-it',
-    description: 'Google Gemma-2 2B instruction tuned - Q5_K_M quantization',
-    size: '1.5GB',
-    color: '#F44336'
+    description: 'Microsoft Phi-3.5 mini',
+    size: '2.5GB'
   }
 ];
 
-interface ExtractionResult {
-  id: string;
-  email_id: string;
+interface PipelineEmail {
+  id?: number;              // Database ID
+  gmail_message_id: string;
+  thread_id?: string;       // Optional as it can be undefined
+  account_email: string;
+  subject: string;
+  from_address: string;
+  email_date: string;
+  body: string;
+  pipeline_stage: 'fetched' | 'digested' | 'classified' | 'HIL_approved' | 'HIL_rejected' | 'ready_for_extraction' | 'extracted' | 'in_jobs';
+  is_job_related: boolean;
+  job_probability: number;  // Primary field from new API
+  confidence: number;       // Required for ConfidenceIndicator component
+  human_verified: boolean;
+  needs_review: boolean;
+  review_reason?: string;
+  classification_method?: string;
+  is_digest?: boolean;
+  digest_reason?: string;
   company?: string;
   position?: string;
-  status?: 'Applied' | 'Interview' | 'Offer' | 'Declined';
-  confidence?: number;
-  extraction_status: 'pending' | 'parsing' | 'completed' | 'failed';
-  error_message?: string;
-  extracted_at?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  selected_extraction?: any;
+  extraction_attempts?: any[];
 }
 
-interface ExtractionProgress {
-  current: number;
+interface PipelineStats {
   total: number;
-  currentEmail?: EmailClassification;
-  speed: number; // emails per minute
-  estimatedTimeRemaining: number; // seconds
-  isRunning: boolean;
-}
-
-interface EditDialogData {
-  email: EmailClassification;
-  result: ExtractionResult;
+  classified: number;
+  needs_review: number;
+  ready_for_extraction: number;
+  extracted: number;
+  in_jobs: number;
 }
 
 export default function ExtractionPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const authData = useAuth() as any;
-  const currentUser = authData.currentUser;
-
-  // State management
-  const [emails, setEmails] = useState<EmailClassification[]>([]);
-  const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState(availableModels[0].id);
-  const [extractionResults, setExtractionResults] = useState<Record<string, ExtractionResult>>({});
-  const [loading, setLoading] = useState(true);
-  const [progress, setProgress] = useState<ExtractionProgress>({
-    current: 0,
+  const { currentUser, signOut } = useAuth();
+  
+  // State
+  const [loading, setLoading] = useState(false);
+  const [emails, setEmails] = useState<PipelineEmail[]>([]);
+  const [stats, setStats] = useState<PipelineStats>({
     total: 0,
-    speed: 0,
-    estimatedTimeRemaining: 0,
-    isRunning: false
-  });
-  const [searchQuery, setSearchQuery] = useState('');
-  const [editDialog, setEditDialog] = useState<EditDialogData | null>(null);
-  const [snackbar, setSnackbar] = useState({ 
-    open: false, 
-    message: '', 
-    severity: 'success' as 'success' | 'error' | 'info' | 'warning'
+    classified: 0,
+    needs_review: 0,
+    ready_for_extraction: 0,
+    extracted: 0,
+    in_jobs: 0
   });
   
-  // Prompt management state
-  const [customPrompt, setCustomPrompt] = useState('');
-  const [isPromptModified, setIsPromptModified] = useState(false);
-  const [defaultPrompt, setDefaultPrompt] = useState(`Extract the following information from this job application email:
-- Company name
-- Job position/title
-- Application status (Applied, Interview, Offer, Rejected)
-- Application date
-- Any additional relevant details
+  // No tabs needed - this page is only for extraction
+  const [selectedEmails, setSelectedEmails] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [accountFilter, setAccountFilter] = useState('all');
+  const [confidenceThreshold, setConfidenceThreshold] = useState(0.9);
+  const [selectedModel, setSelectedModel] = useState(availableModels[0].id);
+  const [extracting, setExtracting] = useState(false);
+  
+  // Snackbar
+  const [snackbar, setSnackbar] = useState<{
+    open: boolean;
+    message: string;
+    severity: 'success' | 'error' | 'info';
+  }>({
+    open: false,
+    message: '',
+    severity: 'info'
+  });
 
-Format the response as JSON.`);
-
-  // Load confirmed job emails ready for extraction
-  useEffect(() => {
-    loadJobEmails();
-  }, []);
-
-  const loadJobEmails = async () => {
+  // Load emails from pipeline
+  const loadPipelineData = async () => {
     try {
       setLoading(true);
       
-      // TODO: Fetch real confirmed job emails from the database
-      // For now, set empty array
-      setEmails([]);
-      setExtractionResults({});
-      
+      if (window.electronAPI?.pipeline?.getEmails) {
+        const result = await window.electronAPI.pipeline.getEmails({
+          accountEmail: accountFilter !== 'all' ? accountFilter : undefined,
+          stages: ['ready_for_extraction', 'extracted', 'in_jobs'],
+          limit: 500
+        });
+        
+        if (result.success) {
+          // Ensure confidence field is present (it's aliased from job_probability in backend)
+          const emailsWithConfidence = (result.emails || []).map((email: any) => ({
+            ...email,
+            confidence: email.confidence || email.job_probability || 0
+          }));
+          setEmails(emailsWithConfidence);
+          
+          // Calculate stats
+          const emailArray = emailsWithConfidence;
+          const newStats: PipelineStats = {
+            total: emailArray.length,
+            classified: emailArray.filter((e: any) => 
+              e.pipeline_stage === 'classified' && !e.needs_review
+            ).length,
+            needs_review: emailArray.filter((e: any) => e.needs_review).length,
+            ready_for_extraction: emailArray.filter((e: any) => 
+              e.pipeline_stage === 'ready_for_extraction'
+            ).length,
+            extracted: emailArray.filter((e: any) => 
+              e.pipeline_stage === 'extracted'
+            ).length,
+            in_jobs: emailArray.filter((e: any) => 
+              e.pipeline_stage === 'in_jobs'
+            ).length
+          };
+          setStats(newStats);
+        }
+      }
     } catch (error) {
-      console.error('Error loading job emails:', error);
-      showSnackbar('Failed to load job emails', 'error');
+      console.error('Error loading pipeline data:', error);
+      showSnackbar('Failed to load emails', 'error');
     } finally {
       setLoading(false);
     }
   };
 
-  const filteredEmails = useMemo(() => {
-    let filtered = emails;
+  // Load on mount
+  useEffect(() => {
+    loadPipelineData();
+  }, [accountFilter]);
 
-    // Apply search query
-    if (searchQuery.trim()) {
+  // Filter emails - only show emails ready for extraction
+  const filteredEmails = useMemo(() => {
+    let filtered = emails.filter(e => 
+      e.pipeline_stage === 'ready_for_extraction' ||
+      e.pipeline_stage === 'extracted'
+    );
+    
+    // Search filter
+    if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(email => 
-        email.subject.toLowerCase().includes(query) ||
-        email.from_address.toLowerCase().includes(query) ||
-        email.company?.toLowerCase().includes(query) ||
-        email.position?.toLowerCase().includes(query)
+      filtered = filtered.filter(e => 
+        e.subject?.toLowerCase().includes(query) ||
+        e.from_address?.toLowerCase().includes(query) ||
+        e.body?.toLowerCase().includes(query)
       );
     }
-
-    return filtered.sort((a, b) => 
-      new Date(b.received_date).getTime() - new Date(a.received_date).getTime()
-    );
+    
+    return filtered;
   }, [emails, searchQuery]);
 
-  const selectedModelInfo = availableModels.find(m => m.id === selectedModel) || availableModels[0];
+  // Get unique accounts
+  const uniqueAccounts = useMemo(() => {
+    const accounts = new Set(emails.map(e => e.account_email));
+    return Array.from(accounts).filter(Boolean);
+  }, [emails]);
 
-  const completedExtractions = Object.values(extractionResults).filter(r => r.extraction_status === 'completed');
-  const failedExtractions = Object.values(extractionResults).filter(r => r.extraction_status === 'failed');
-  const pendingExtractions = Object.values(extractionResults).filter(r => r.extraction_status === 'pending');
-
-  const handleModelChange = (modelId: string) => {
-    if (!progress.isRunning) {
-      setSelectedModel(modelId);
-    }
-  };
-
-  const handleSelectAll = () => {
-    setSelectedEmails(filteredEmails.map(email => email.id));
-  };
-
-  const handleDeselectAll = () => {
-    setSelectedEmails([]);
-  };
-
-  const handleEmailSelect = (emailId: string, selected: boolean) => {
-    if (selected) {
-      setSelectedEmails(prev => [...prev, emailId]);
-    } else {
-      setSelectedEmails(prev => prev.filter(id => id !== emailId));
-    }
-  };
-
-  const startExtraction = async (emailIds: string[]) => {
-    try {
-      setProgress(prev => ({ ...prev, isRunning: true, current: 0, total: emailIds.length }));
-      
-      for (let i = 0; i < emailIds.length; i++) {
-        const emailId = emailIds[i];
-        const email = emails.find(e => e.id === emailId);
-        
-        if (!email) continue;
-        
-        // Update current progress
-        setProgress(prev => ({
-          ...prev,
-          current: i + 1,
-          currentEmail: email
-        }));
-
-        // Update extraction status to parsing
-        setExtractionResults(prev => ({
-          ...prev,
-          [emailId]: {
-            ...prev[emailId],
-            extraction_status: 'parsing'
-          }
-        }));
-
-        // Simulate extraction process
-        await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
-
-        // Mock extraction result
-        const mockResult: ExtractionResult = {
-          id: emailId,
-          email_id: email.email_id,
-          company: email.from_address.includes('google') ? 'Google' :
-                   email.from_address.includes('microsoft') ? 'Microsoft' :
-                   email.from_address.includes('apple') ? 'Apple' :
-                   'Unknown Company',
-          position: email.subject.includes('Software Engineer') ? 'Software Engineer' :
-                   email.subject.includes('Senior Developer') ? 'Senior Developer' :
-                   'Unknown Position',
-          status: email.subject.toLowerCase().includes('interview') ? 'Interview' : 'Applied',
-          confidence: 80 + Math.random() * 20,
-          extraction_status: Math.random() > 0.1 ? 'completed' : 'failed',
-          error_message: Math.random() > 0.1 ? undefined : 'Failed to parse email content',
-          extracted_at: new Date().toISOString()
-        };
-
-        // Update extraction result
-        setExtractionResults(prev => ({
-          ...prev,
-          [emailId]: mockResult
-        }));
-
-        // Update speed calculation
-        const timeElapsed = (i + 1) * 3; // rough estimate
-        const speed = ((i + 1) / timeElapsed) * 60; // emails per minute
-        const remaining = emailIds.length - (i + 1);
-        const eta = remaining > 0 ? (remaining / speed) * 60 : 0;
-
-        setProgress(prev => ({
-          ...prev,
-          speed: Math.round(speed),
-          estimatedTimeRemaining: Math.round(eta)
-        }));
-      }
-
-      setProgress(prev => ({ ...prev, isRunning: false, currentEmail: undefined }));
-      showSnackbar(`Completed extraction for ${emailIds.length} emails`, 'success');
-      
-    } catch (error) {
-      console.error('Extraction failed:', error);
-      setProgress(prev => ({ ...prev, isRunning: false }));
-      showSnackbar('Extraction failed', 'error');
-    }
-  };
-
-  const stopExtraction = () => {
-    setProgress(prev => ({ ...prev, isRunning: false }));
-    showSnackbar('Extraction stopped', 'info');
-  };
-
-  const clearCompleted = () => {
-    setExtractionResults(prev => {
-      const updated = { ...prev };
-      Object.keys(updated).forEach(id => {
-        if (updated[id].extraction_status === 'completed') {
-          updated[id] = {
-            id,
-            email_id: updated[id].email_id,
-            extraction_status: 'pending'
-          };
-        }
-      });
-      return updated;
-    });
-    showSnackbar('Cleared completed extractions', 'info');
-  };
-
-  const handleEdit = (email: EmailClassification) => {
-    const result = extractionResults[email.id];
-    setEditDialog({ email, result });
-  };
-
-  const handleSaveEdit = (updatedResult: ExtractionResult) => {
-    setExtractionResults(prev => ({
-      ...prev,
-      [updatedResult.id]: updatedResult
-    }));
-    setEditDialog(null);
-    showSnackbar('Extraction result updated', 'success');
-  };
-
-  const handleSaveToDashboard = async () => {
-    try {
-      const completedResults = Object.values(extractionResults).filter(r => r.extraction_status === 'completed');
-      
-      // Mock save to dashboard - in real implementation this would call window.electronAPI
-      console.log('Saving to dashboard:', completedResults);
-      
-      showSnackbar(`Saved ${completedResults.length} job applications to dashboard`, 'success');
-      navigate('/dashboard');
-    } catch (error) {
-      console.error('Failed to save to dashboard:', error);
-      showSnackbar('Failed to save to dashboard', 'error');
-    }
-  };
-
-  const showSnackbar = (message: string, severity: typeof snackbar.severity) => {
+  // Handlers
+  const showSnackbar = (message: string, severity: 'success' | 'error' | 'info') => {
     setSnackbar({ open: true, message, severity });
   };
 
-  const handleLogout = async () => {
-    try {
-      await authData.signOut();
-    } catch (error) {
-      console.error('Logout failed:', error);
+  const handleSelectAll = () => {
+    if (selectedEmails.size === filteredEmails.length) {
+      setSelectedEmails(new Set());
+    } else {
+      setSelectedEmails(new Set(filteredEmails.map(e => e.gmail_message_id)));
     }
   };
 
-  const formatTime = (seconds: number): string => {
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return `${minutes}m ${remainingSeconds}s`;
+  const handleSelectEmail = (emailId: string) => {
+    const newSelected = new Set(selectedEmails);
+    if (newSelected.has(emailId)) {
+      newSelected.delete(emailId);
+    } else {
+      newSelected.add(emailId);
+    }
+    setSelectedEmails(newSelected);
   };
 
-  if (loading) {
-    return (
-      <ThemeProvider theme={onlyJobsTheme}>
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-          <LoadingSpinner variant="dots" size="large" />
-        </Box>
-      </ThemeProvider>
-    );
-  }
+  const handleReviewEmail = async (email: PipelineEmail, isJobRelated: boolean) => {
+    try {
+      if (window.electronAPI?.reviewClassification) {
+        const result = await window.electronAPI.reviewClassification({
+          gmailMessageId: email.gmail_message_id,
+          accountEmail: email.account_email,
+          isJobRelated,
+          confidence: 1.0 // Manual review = 100% confidence
+        });
+        
+        if (result.success) {
+          showSnackbar(
+            `Email marked as ${isJobRelated ? 'job-related' : 'not job-related'}`,
+            'success'
+          );
+          await loadPipelineData();
+        }
+      }
+    } catch (error) {
+      console.error('Error reviewing email:', error);
+      showSnackbar('Failed to update classification', 'error');
+    }
+  };
+
+  const handleBulkApprove = async () => {
+    try {
+      if (window.electronAPI?.bulkApproveClassifications) {
+        const result = await window.electronAPI.bulkApproveClassifications({
+          accountEmail: accountFilter !== 'all' ? accountFilter : null,
+          confidenceThreshold
+        });
+        
+        if (result.success) {
+          showSnackbar(`Approved ${result.approved} high-confidence classifications`, 'success');
+          await loadPipelineData();
+        }
+      }
+    } catch (error) {
+      console.error('Error bulk approving:', error);
+      showSnackbar('Failed to bulk approve', 'error');
+    }
+  };
+
+  const handleExtract = async () => {
+    try {
+      setExtracting(true);
+      
+      // Get emails ready for extraction
+      const toExtract = emails.filter(e => 
+        e.pipeline_stage === 'ready_for_extraction' &&
+        (selectedEmails.size === 0 || selectedEmails.has(e.gmail_message_id))
+      );
+      
+      if (toExtract.length === 0) {
+        showSnackbar('No emails ready for extraction', 'info');
+        return;
+      }
+      
+      // Call the extraction API with selected model
+      showSnackbar(`Starting extraction for ${toExtract.length} emails with ${selectedModel}...`, 'info');
+      
+      if (window.electronAPI?.runExtraction) {
+        // Get model path (you might need to add a method to get this)
+        const modelPath = `/Users/ndting/Library/Application Support/models/${selectedModel}.gguf`;
+        
+        const result = await window.electronAPI.runExtraction({
+          modelId: selectedModel,
+          modelPath: modelPath,
+          limit: toExtract.length
+        });
+        
+        if (result.success) {
+          showSnackbar(
+            `Extraction completed: ${result.data?.successful || 0} successful, ${result.data?.failed || 0} failed`,
+            'success'
+          );
+          await loadPipelineData();
+        } else {
+          throw new Error(result.error || 'Extraction failed');
+        }
+      } else {
+        throw new Error('Extraction API not available');
+      }
+      
+    } catch (error) {
+      console.error('Error extracting:', error);
+      showSnackbar('Extraction failed', 'error');
+    } finally {
+      setExtracting(false);
+    }
+  };
 
   return (
     <ThemeProvider theme={onlyJobsTheme}>
-      <Box sx={{ display: 'flex', height: '100vh' }}>
-        {/* Sidebar Navigation */}
+      <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: '#f5f5f5' }}>
         <Sidebar currentPath={location.pathname} />
-
-        {/* Main Content Area */}
+        
         <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-          {/* Top Bar */}
-          <Box sx={{ p: 3, pb: 0 }}>
-            <TopBar 
-              currentUser={currentUser} 
-              onLogout={handleLogout}
-              title="Step 3 of 3: Extract Job Details"
-            />
-          </Box>
+          <TopBar 
+            currentUser={currentUser || undefined}
+            onLogout={signOut}
+          />
+          
+          <Box sx={{ p: 3, flexGrow: 1 }}>
+            {/* Workflow Stepper */}
+            <Paper sx={{ p: 2, mb: 3 }}>
+              <Stepper activeStep={2} alternativeLabel>
+                {workflowSteps.map((step) => (
+                  <Step key={step.label}>
+                    <StepLabel>{step.label}</StepLabel>
+                  </Step>
+                ))}
+              </Stepper>
+            </Paper>
 
-          {/* Workflow Progress */}
-          <Box sx={{ px: 3, py: 2 }}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Psychology color="primary" />
-                  Workflow
-                </Typography>
-                <Stepper activeStep={2} orientation="horizontal">
-                  {workflowSteps.map((step, index) => (
-                    <Step 
-                      key={step.label} 
-                      completed={index < 2}
-                      sx={{
-                        '& .MuiStepLabel-root': {
-                          ...(index === 2 && {
-                            padding: '8px',
-                            border: '2px solid #FF7043',
-                            borderRadius: '8px',
-                            backgroundColor: 'rgba(255, 112, 67, 0.04)'
-                          })
-                        }
-                      }}
-                    >
-                      <StepLabel>
-                        <Box>
-                          <Typography variant="subtitle2">{step.label}</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {step.description}
-                          </Typography>
-                        </Box>
-                      </StepLabel>
-                    </Step>
-                  ))}
-                </Stepper>
-              </CardContent>
-            </Card>
-          </Box>
-
-          {/* Extraction Prompt - Full Width */}
-          <Box sx={{ px: 3, py: 1 }}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Edit sx={{ color: accent }} />
-                  Extraction Prompt
-                </Typography>
-                <TextField
-                  multiline
-                  fullWidth
-                  rows={6}
-                  value={customPrompt || defaultPrompt}
-                  onChange={(e) => {
-                    setCustomPrompt(e.target.value);
-                    setIsPromptModified(e.target.value !== defaultPrompt);
-                  }}
-                  placeholder="Enter your custom extraction prompt..."
-                  variant="outlined"
-                  sx={{ mb: 2 }}
-                />
-                <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-                  <Button
-                    size="small"
-                    startIcon={<Refresh />}
-                    onClick={() => {
-                      setCustomPrompt(defaultPrompt);
-                      setIsPromptModified(false);
-                      showSnackbar('Prompt reset to default', 'info');
-                    }}
-                    disabled={!isPromptModified}
-                  >
-                    Reset to Default
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="contained"
-                    startIcon={<Save />}
-                    onClick={() => {
-                      // In real implementation, save prompt to backend
-                      showSnackbar('Prompt saved successfully', 'success');
-                    }}
-                    disabled={!isPromptModified}
-                  >
-                    Save Prompt
-                  </Button>
-                </Box>
-                {isPromptModified && (
-                  <Alert severity="warning" sx={{ mt: 1 }}>
-                    <Typography variant="caption">
-                      You have unsaved changes to the prompt
+            {/* Stats Overview */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid size={{ xs: 12, md: 2.4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="textSecondary" gutterBottom>
+                      Total Emails
                     </Typography>
-                  </Alert>
-                )}
-              </CardContent>
-            </Card>
-          </Box>
-
-          {/* Model Selection, Processing, and Progress - Three equal cards */}
-          <Box sx={{ px: 3, py: 1 }}>
-            <Grid container spacing={2}>
-              {/* Model Selection - Left */}
-              <Grid size={{ xs: 12, md: 4 }}>
-                <Card sx={{ height: '100%' }}>
-                  <CardContent sx={{ py: 2 }}>
-                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-                      <Psychology sx={{ color: accent }} />
-                      Model Selection
+                    <Typography variant="h4">
+                      {stats.total}
                     </Typography>
-                    <FormControl fullWidth>
-                      <InputLabel>Choose Model</InputLabel>
-                      <Select
-                        value={selectedModel}
-                        onChange={(e) => handleModelChange(e.target.value)}
-                        disabled={progress.isRunning}
-                        label="Choose Model"
-                        size="small"
-                      >
-                        {availableModels.map(model => (
-                          <MenuItem key={model.id} value={model.id}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                              <Box sx={{ flexGrow: 1 }}>
-                                <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                                  {model.name}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  {model.description}
-                                </Typography>
-                              </Box>
-                              <Chip 
-                                label={model.size}
-                                size="small"
-                                sx={{ 
-                                  backgroundColor: model.color,
-                                  color: 'white',
-                                  ml: 1
-                                }}
-                              />
-                            </Box>
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
                   </CardContent>
                 </Card>
               </Grid>
-              
-              {/* Processing - Middle */}
-              <Grid size={{ xs: 12, md: 4 }}>
-                <Card sx={{ height: '100%' }}>
-                  <CardContent sx={{ py: 2 }}>
-                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-                      <PlayArrow sx={{ color: accent }} />
-                      Processing
+              <Grid size={{ xs: 12, md: 2.4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="textSecondary" gutterBottom>
+                      Needs Review
                     </Typography>
-                    
-                    <Stack spacing={1.5}>
-                      {/* Action Buttons - Compact */}
-                      <Box sx={{ display: 'flex', gap: 1 }}>
-                        <Button
-                          fullWidth
-                          size="small"
-                          startIcon={<PlayArrow sx={{ fontSize: 18 }} />}
-                          variant="contained"
-                          onClick={() => startExtraction(selectedEmails)}
-                          disabled={selectedEmails.length === 0 || progress.isRunning}
-                          sx={{ backgroundColor: accent, py: 0.75 }}
-                        >
-                          Parse Selected ({selectedEmails.length})
-                        </Button>
-                        
-                        <Button
-                          fullWidth
-                          size="small"
-                          startIcon={<PlayArrow sx={{ fontSize: 18 }} />}
-                          variant="outlined"
-                          onClick={() => startExtraction(emails.map(e => e.id))}
-                          disabled={progress.isRunning}
-                          sx={{ py: 0.75 }}
-                        >
-                          Parse All ({emails.length})
-                        </Button>
-                      </Box>
-                      
-                      {/* Stop/Clear Button - Compact */}
-                      {progress.isRunning ? (
-                        <Button
-                          fullWidth
-                          size="small"
-                          startIcon={<Stop sx={{ fontSize: 18 }} />}
-                          variant="outlined"
-                          color="error"
-                          onClick={stopExtraction}
-                          sx={{ py: 0.75 }}
-                        >
-                          Stop Extraction
-                        </Button>
-                      ) : (
-                        <Button
-                          fullWidth
-                          size="small"
-                          startIcon={<Clear sx={{ fontSize: 18 }} />}
-                          variant="text"
-                          onClick={clearCompleted}
-                          disabled={completedExtractions.length === 0}
-                          sx={{ py: 0.5 }}
-                        >
-                          Clear Completed
-                        </Button>
-                      )}
-                    </Stack>
+                    <Typography variant="h4" color={stats.needs_review > 0 ? 'warning.main' : 'inherit'}>
+                      {stats.needs_review}
+                    </Typography>
                   </CardContent>
                 </Card>
               </Grid>
-              
-              {/* Progress - Right */}
-              <Grid size={{ xs: 12, md: 4 }}>
-                <Card sx={{ height: '100%' }}>
-                  <CardContent sx={{ py: 2 }}>
-                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-                      <Speed sx={{ color: accent }} />
-                      Progress
+              <Grid size={{ xs: 12, md: 2.4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="textSecondary" gutterBottom>
+                      Ready to Extract
                     </Typography>
-                    
-                    {progress.isRunning ? (
-                      <Stack spacing={1.5}>
-                        <Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-                            <Typography variant="body2">
-                              Processing
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              {Math.round((progress.current / progress.total) * 100)}%
-                            </Typography>
-                          </Box>
-                          <LinearProgress 
-                            variant="determinate" 
-                            value={(progress.current / progress.total) * 100}
-                            sx={{ height: 6, borderRadius: 3 }}
-                          />
-                          <Typography variant="caption" color="text.secondary">
-                            {progress.current} of {progress.total} emails
-                          </Typography>
-                        </Box>
-                        
-                        {progress.currentEmail && (
-                          <Box sx={{ p: 1, backgroundColor: 'grey.50', borderRadius: 1 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.875rem' }} noWrap>
-                              {progress.currentEmail.subject}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                              {progress.currentEmail.from_address}
-                            </Typography>
-                          </Box>
-                        )}
-                        
-                        <Box sx={{ display: 'flex', gap: 2 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <Speed sx={{ fontSize: 14, color: 'text.secondary' }} />
-                            <Typography variant="caption" sx={{ fontSize: '0.75rem' }}>
-                              {progress.speed} emails/min
-                            </Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <Timer sx={{ fontSize: 14, color: 'text.secondary' }} />
-                            <Typography variant="caption" sx={{ fontSize: '0.75rem' }}>
-                              ETA: {formatTime(progress.estimatedTimeRemaining)}
-                            </Typography>
-                          </Box>
-                        </Box>
-                      </Stack>
-                    ) : (
-                      <Stack spacing={1.5}>
-                        <Typography variant="body2" color="text.secondary">
-                          Ready to start extraction
-                        </Typography>
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                          <Chip icon={<CheckCircle sx={{ fontSize: 16 }} />} label={`${completedExtractions.length} Completed`} color="success" size="small" />
-                          <Chip icon={<ErrorIcon sx={{ fontSize: 16 }} />} label={`${failedExtractions.length} Failed`} color="error" size="small" />
-                          <Chip icon={<Pending sx={{ fontSize: 16 }} />} label={`${pendingExtractions.length} Pending`} color="default" size="small" />
-                        </Box>
-                      </Stack>
-                    )}
+                    <Typography variant="h4" color="primary">
+                      {stats.ready_for_extraction}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid size={{ xs: 12, md: 2.4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="textSecondary" gutterBottom>
+                      Extracted
+                    </Typography>
+                    <Typography variant="h4" color="success.main">
+                      {stats.extracted}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid size={{ xs: 12, md: 2.4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="textSecondary" gutterBottom>
+                      In Jobs
+                    </Typography>
+                    <Typography variant="h4">
+                      {stats.in_jobs}
+                    </Typography>
                   </CardContent>
                 </Card>
               </Grid>
             </Grid>
-          </Box>
 
-          {/* Main Content */}
-          <Box sx={{ flexGrow: 1, px: 3, pb: 3 }}>
-            <Grid container spacing={2} sx={{ height: '100%' }}>
-              {/* Email List and Controls */}
-              <Grid size={{ xs: 12, md: 8 }} sx={{ height: '100%' }}>
-                <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  {/* Card Title */}
-                  <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-                    <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                      <Email sx={{ color: accent }} />
-                      Extraction
-                    </Typography>
-                  </Box>
+            {/* Main Content */}
+            <Card>
+              <CardContent>
+                <Typography variant="h5" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Psychology />
+                  LLM Extraction
+                  <Chip label={`${stats.ready_for_extraction} ready`} color="primary" size="small" />
+                </Typography>
+
+                {/* Toolbar */}
+                <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+                  <TextField
+                    placeholder="Search emails..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    size="small"
+                    sx={{ flexGrow: 1, maxWidth: 400 }}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <Search />
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
                   
-                  {/* Search and Filters */}
-                  <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        placeholder="Search emails..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        InputProps={{
-                          startAdornment: (
-                            <InputAdornment position="start">
-                              <Search />
-                            </InputAdornment>
-                          ),
-                          endAdornment: (
-                            <InputAdornment position="end">
-                              <IconButton size="small" onClick={loadJobEmails}>
-                                <Refresh />
-                              </IconButton>
-                            </InputAdornment>
-                          )
-                        }}
-                      />
-                      <Button
-                        size="small"
-                        variant="text"
-                        onClick={handleSelectAll}
-                        disabled={progress.isRunning}
-                        sx={{ minWidth: 'auto', px: 1.5 }}
-                      >
-                        Select All
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="text"
-                        onClick={handleDeselectAll}
-                        disabled={progress.isRunning}
-                        sx={{ minWidth: 'auto', px: 1.5 }}
-                      >
-                        Deselect All
-                      </Button>
-                    </Box>
-                  </Box>
+                  <FormControl size="small" sx={{ minWidth: 200 }}>
+                    <InputLabel>Account</InputLabel>
+                    <Select
+                      value={accountFilter}
+                      onChange={(e) => setAccountFilter(e.target.value)}
+                      label="Account"
+                    >
+                      <MenuItem value="all">All Accounts</MenuItem>
+                      {uniqueAccounts.map(account => (
+                        <MenuItem key={account} value={account}>{account}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  
+                  <Button
+                    variant="outlined"
+                    startIcon={<Refresh />}
+                    onClick={loadPipelineData}
+                  >
+                    Refresh
+                  </Button>
+                  
+                  <FormControl size="small" sx={{ minWidth: 200 }}>
+                    <InputLabel>Model</InputLabel>
+                    <Select
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      label="Model"
+                    >
+                      {availableModels.map(model => (
+                        <MenuItem key={model.id} value={model.id}>
+                          {model.name}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  
+                  <Button
+                    variant="contained"
+                    color="success"
+                    startIcon={extracting ? <CircularProgress size={20} /> : <PlayArrow />}
+                    onClick={handleExtract}
+                    disabled={extracting || stats.ready_for_extraction === 0}
+                  >
+                    {extracting ? 'Extracting...' : 'Start Extraction'}
+                  </Button>
+                </Stack>
 
-                  {/* Email List */}
-                  <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
-                    {filteredEmails.length === 0 ? (
-                      <Box sx={{ p: 4, textAlign: 'center' }}>
-                        <Typography variant="body2" color="text.secondary">
-                          No confirmed job emails found for extraction.
-                        </Typography>
-                      </Box>
-                    ) : (
-                      <List sx={{ py: 0 }}>
-                        {filteredEmails.map((email) => {
-                          const result = extractionResults[email.id];
-                          const isSelected = selectedEmails.includes(email.id);
-                          
-                          return (
-                            <ListItem
-                              key={email.id}
-                              sx={{
-                                py: 2,
-                                px: 2,
-                                borderBottom: '1px solid',
-                                borderColor: 'divider',
-                                backgroundColor: isSelected 
-                                  ? 'action.selected' 
-                                  : 'inherit'
-                              }}
-                            >
-                              <Box sx={{ mr: 1 }}>
-                                <Checkbox
-                                  checked={isSelected}
-                                  onChange={(e) => handleEmailSelect(email.id, e.target.checked)}
-                                  disabled={progress.isRunning}
-                                />
-                              </Box>
-
-                              <ListItemText
-                                primary={
-                                  <Box>
-                                    <Typography variant="subtitle2" noWrap>
-                                      {email.subject}
-                                    </Typography>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                                      <Email sx={{ fontSize: 14 }} />
-                                      <Typography variant="caption" color="text.secondary" noWrap>
-                                        {email.from_address}
-                                      </Typography>
-                                      <CalendarToday sx={{ fontSize: 14, ml: 1 }} />
-                                      <Typography variant="caption" color="text.secondary">
-                                        {new Date(email.received_date).toLocaleDateString()}
-                                      </Typography>
-                                    </Box>
-                                  </Box>
-                                }
-                                secondary={
-                                  <Box sx={{ mt: 1 }}>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                      {result.extraction_status === 'pending' && (
-                                        <Chip 
-                                          icon={<Pending />}
-                                          label="Pending"
-                                          size="small"
-                                          color="default"
-                                        />
-                                      )}
-                                      {result.extraction_status === 'parsing' && (
-                                        <Chip 
-                                          icon={<CircularProgress size={14} />}
-                                          label="Parsing..."
-                                          size="small"
-                                          sx={{ backgroundColor: accent, color: 'white' }}
-                                        />
-                                      )}
-                                      {result.extraction_status === 'completed' && (
-                                        <>
-                                          <Chip 
-                                            icon={<CheckCircle />}
-                                            label="Completed"
-                                            size="small"
-                                            color="success"
-                                          />
-                                          {result.company && (
-                                            <Chip 
-                                              label={result.company}
-                                              size="small"
-                                              sx={{ backgroundColor: 'primary.light', color: 'primary.contrastText' }}
-                                            />
-                                          )}
-                                          {result.position && (
-                                            <Chip 
-                                              label={result.position}
-                                              size="small"
-                                              variant="outlined"
-                                            />
-                                          )}
-                                        </>
-                                      )}
-                                      {result.extraction_status === 'failed' && (
-                                        <Tooltip title={result.error_message || 'Extraction failed'}>
-                                          <Chip 
-                                            icon={<ErrorIcon />}
-                                            label="Failed"
-                                            size="small"
-                                            color="error"
-                                          />
-                                        </Tooltip>
-                                      )}
-                                    </Box>
-                                  </Box>
+                {/* Email Table */}
+                <TableContainer component={Paper} variant="outlined">
+                  <Table>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell padding="checkbox">
+                          <Checkbox
+                            indeterminate={selectedEmails.size > 0 && selectedEmails.size < filteredEmails.length}
+                            checked={filteredEmails.length > 0 && selectedEmails.size === filteredEmails.length}
+                            onChange={handleSelectAll}
+                          />
+                        </TableCell>
+                        <TableCell>Subject</TableCell>
+                        <TableCell>From</TableCell>
+                        <TableCell>Date</TableCell>
+                        <TableCell>Confidence</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell>Actions</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {loading ? (
+                        <TableRow>
+                          <TableCell colSpan={7} align="center">
+                            <CircularProgress />
+                          </TableCell>
+                        </TableRow>
+                      ) : filteredEmails.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} align="center">
+                            <Typography color="textSecondary">
+                              No emails to extract
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        filteredEmails.map(email => (
+                          <TableRow key={email.gmail_message_id}>
+                            <TableCell padding="checkbox">
+                              <Checkbox
+                                checked={selectedEmails.has(email.gmail_message_id)}
+                                onChange={() => handleSelectEmail(email.gmail_message_id)}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" noWrap sx={{ maxWidth: 300 }}>
+                                {email.subject || '(No subject)'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" noWrap sx={{ maxWidth: 200 }}>
+                                {email.from_address}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              {new Date(email.email_date).toLocaleDateString()}
+                            </TableCell>
+                            <TableCell>
+                              <ConfidenceIndicator confidence={email.confidence} />
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                label={email.pipeline_stage.replace('_', ' ')}
+                                size="small"
+                                color={
+                                  email.pipeline_stage === 'ready_for_extraction' ? 'primary' :
+                                  email.pipeline_stage === 'extracted' ? 'success' :
+                                  email.needs_review ? 'warning' : 'default'
                                 }
                               />
-
-                              <ListItemSecondaryAction>
-                                <Stack direction="row" spacing={0.5}>
-                                  {result.extraction_status === 'completed' && (
+                            </TableCell>
+                            <TableCell>
+                              {false && (
+                                <Stack direction="row" spacing={1}>
+                                  <Tooltip title="Mark as job-related">
                                     <IconButton
                                       size="small"
-                                      onClick={() => handleEdit(email)}
+                                      color="success"
+                                      onClick={() => handleReviewEmail(email, true)}
                                     >
-                                      <Edit />
+                                      <ThumbUp />
                                     </IconButton>
-                                  )}
+                                  </Tooltip>
+                                  <Tooltip title="Mark as not job-related">
+                                    <IconButton
+                                      size="small"
+                                      color="error"
+                                      onClick={() => handleReviewEmail(email, false)}
+                                    >
+                                      <ThumbDown />
+                                    </IconButton>
+                                  </Tooltip>
                                 </Stack>
-                              </ListItemSecondaryAction>
-                            </ListItem>
-                          );
-                        })}
-                      </List>
-                    )}
-                  </Box>
-                </Card>
-              </Grid>
-
-              {/* Results Preview */}
-              <Grid size={{ xs: 12, md: 4 }} sx={{ height: '100%' }}>
-                <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Dashboard sx={{ color: accent }} />
-                      Results
-                    </Typography>
-                    
-                    {completedExtractions.length === 0 ? (
-                      <Box sx={{ textAlign: 'center', py: 4 }}>
-                        <Psychology sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
-                        <Typography variant="h6" color="text.secondary">
-                          No Results Yet
-                        </Typography>
-                        <Typography variant="body2" color="text.disabled">
-                          Start extraction to see parsed job details here
-                        </Typography>
-                      </Box>
-                    ) : (
-                      <Box>
-                        <TableContainer component={Paper} sx={{ maxHeight: 300, mb: 2 }}>
-                          <Table size="small" stickyHeader>
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>Company</TableCell>
-                                <TableCell>Position</TableCell>
-                                <TableCell>Status</TableCell>
-                                <TableCell>Confidence</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {completedExtractions.map((result) => (
-                                <TableRow key={result.id}>
-                                  <TableCell>{result.company || 'N/A'}</TableCell>
-                                  <TableCell>{result.position || 'N/A'}</TableCell>
-                                  <TableCell>
-                                    <Chip 
-                                      label={result.status || 'N/A'} 
-                                      size="small" 
-                                      variant="outlined"
-                                    />
-                                  </TableCell>
-                                  <TableCell>
-                                    {result.confidence && (
-                                      <ConfidenceIndicator 
-                                        confidence={Math.round(result.confidence)}
-                                        variant="chip"
-                                        size="small"
-                                        showPercentage
-                                      />
-                                    )}
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                          {completedExtractions.length} job{completedExtractions.length !== 1 ? 's' : ''} extracted successfully
-                        </Typography>
-                      </Box>
-                    )}
-                  </CardContent>
-                </Card>
-              </Grid>
-            </Grid>
-          </Box>
-
-          {/* Action Buttons */}
-          <Box sx={{ px: 3, pb: 3 }}>
-            <Card>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Box sx={{ display: 'flex', gap: 2 }}>
-                    <Button
-                      variant="outlined"
-                      startIcon={<ArrowBack />}
-                      onClick={() => navigate('/classification-review')}
-                    >
-                      Back to Classification
-                    </Button>
-                    <Button
-                      variant="text"
-                      startIcon={<SkipNext />}
-                      onClick={() => navigate('/dashboard')}
-                    >
-                      Skip to Dashboard
-                    </Button>
-                  </Box>
-                  <Button
-                    variant="contained"
-                    size="large"
-                    endIcon={<Save />}
-                    onClick={handleSaveToDashboard}
-                    disabled={completedExtractions.length === 0}
-                    sx={{ 
-                      py: 1.5,
-                      px: 3,
-                      fontSize: '1rem',
-                      fontWeight: 600,
-                      minWidth: 200,
-                      backgroundColor: accent,
-                      '&:hover': { backgroundColor: accent, filter: 'brightness(0.9)' }
-                    }}
-                  >
-                    Save to Dashboard ({completedExtractions.length})
-                  </Button>
-                </Box>
+                              )}
+                              {email.pipeline_stage === 'extracted' && (
+                                <Chip
+                                  icon={<CheckCircle />}
+                                  label="Extracted"
+                                  size="small"
+                                  color="success"
+                                />
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
               </CardContent>
             </Card>
+
+            {/* Navigation */}
+            <Stack direction="row" justifyContent="space-between" sx={{ mt: 3 }}>
+              <Button
+                variant="outlined"
+                startIcon={<ArrowForward sx={{ transform: 'rotate(180deg)' }} />}
+                onClick={() => navigate('/classification-review')}
+              >
+                Back to Review
+              </Button>
+              <Button
+                variant="contained"
+                endIcon={<Work />}
+                onClick={() => navigate('/jobs')}
+              >
+                View Jobs
+              </Button>
+            </Stack>
           </Box>
         </Box>
-
-        {/* Edit Dialog */}
-        {editDialog && (
-          <Dialog open={true} onClose={() => setEditDialog(null)} maxWidth="sm" fullWidth>
-            <DialogTitle>Edit Extraction Result</DialogTitle>
-            <DialogContent>
-              <Box sx={{ mt: 2 }}>
-                <TextField
-                  fullWidth
-                  label="Company"
-                  value={editDialog.result.company || ''}
-                  onChange={(e) => setEditDialog({
-                    ...editDialog,
-                    result: { ...editDialog.result, company: e.target.value }
-                  })}
-                  sx={{ mb: 2 }}
-                />
-                <TextField
-                  fullWidth
-                  label="Position"
-                  value={editDialog.result.position || ''}
-                  onChange={(e) => setEditDialog({
-                    ...editDialog,
-                    result: { ...editDialog.result, position: e.target.value }
-                  })}
-                  sx={{ mb: 2 }}
-                />
-                <FormControl fullWidth sx={{ mb: 2 }}>
-                  <InputLabel>Status</InputLabel>
-                  <Select
-                    value={editDialog.result.status || 'Applied'}
-                    onChange={(e) => setEditDialog({
-                      ...editDialog,
-                      result: { ...editDialog.result, status: e.target.value as any }
-                    })}
-                    label="Status"
-                  >
-                    <MenuItem value="Applied">Applied</MenuItem>
-                    <MenuItem value="Interview">Interview</MenuItem>
-                    <MenuItem value="Offer">Offer</MenuItem>
-                    <MenuItem value="Declined">Declined</MenuItem>
-                  </Select>
-                </FormControl>
-                <TextField
-                  fullWidth
-                  label="Confidence (%)"
-                  type="number"
-                  value={editDialog.result.confidence || 0}
-                  onChange={(e) => setEditDialog({
-                    ...editDialog,
-                    result: { ...editDialog.result, confidence: Number(e.target.value) }
-                  })}
-                  inputProps={{ min: 0, max: 100 }}
-                />
-              </Box>
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setEditDialog(null)}>Cancel</Button>
-              <Button onClick={() => handleSaveEdit(editDialog.result)} variant="contained">
-                Save Changes
-              </Button>
-            </DialogActions>
-          </Dialog>
-        )}
-
-        {/* Snackbar for notifications */}
+        
+        {/* Snackbar */}
         <Snackbar
           open={snackbar.open}
           autoHideDuration={6000}
-          onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
         >
           <Alert 
-            onClose={() => setSnackbar(prev => ({ ...prev, open: false }))} 
+            onClose={() => setSnackbar({ ...snackbar, open: false })} 
             severity={snackbar.severity}
-            sx={{ width: '100%' }}
           >
             {snackbar.message}
           </Alert>

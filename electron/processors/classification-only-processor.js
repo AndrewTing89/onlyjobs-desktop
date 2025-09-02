@@ -4,9 +4,9 @@
  * This processor:
  * - Fetches emails from Gmail
  * - Runs ML classification only (no LLM parsing)
- * - Saves results to classification_queue table
- * - Marks items that need review (confidence < 0.8)
- * - Stores raw email content for later parsing
+ * - Saves results to email_pipeline table
+ * - Marks items that need review (job_probability < 0.8)
+ * - Stores classification data for later human review
  */
 
 const { getMLClassifier } = require('../ml-classifier-bridge');
@@ -15,7 +15,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const { app } = require('electron');
 const DigestDetector = require('../digest-detector');
-const { addEmailPipelineTables, migrateExistingData } = require('../database/migrations/add_email_pipeline');
+const { improvePipelineSchema } = require('../database/migrations/improve_pipeline_schema');
 
 // Shared database connection for this processor
 let sharedDb = null;
@@ -48,11 +48,21 @@ class ClassificationOnlyProcessor {
    */
   initializePipelineTables() {
     try {
-      addEmailPipelineTables(this.db);
-      // Only migrate once - check if pipeline table is empty
-      const pipelineCount = this.db.prepare('SELECT COUNT(*) as count FROM email_pipeline').get();
-      if (pipelineCount.count === 0) {
-        migrateExistingData(this.db);
+      // Check if table exists and has correct schema
+      const tableInfo = this.db.prepare("PRAGMA table_info(email_pipeline)").all();
+      const hasIsJobRelated = tableInfo.some(col => col.name === 'is_job_related');
+      
+      if (tableInfo.length > 0 && !hasIsJobRelated) {
+        console.log('⚠️ Old email_pipeline schema detected, recreating table...');
+        // Drop old table with incorrect schema
+        this.db.exec('DROP TABLE IF EXISTS email_pipeline');
+        console.log('Dropped old email_pipeline table');
+      }
+      
+      // Run pipeline schema improvement
+      const improvement = improvePipelineSchema(this.db);
+      if (!improvement.success) {
+        console.error('Pipeline schema improvement failed:', improvement.error);
       }
     } catch (error) {
       console.error('Error initializing pipeline tables:', error);
@@ -68,8 +78,8 @@ class ClassificationOnlyProcessor {
       dateTo,
       daysToSync = 30, // Fallback for backward compatibility
       query = 'is:unread OR label:job-applications',
-      maxResults = options.maxEmails || 100000,  // Effectively unlimited - will fetch all emails in date range
-      modelId = options.modelId || null  // LLM model for extraction
+      maxResults = options.maxEmails || 100000  // Effectively unlimited - will fetch all emails in date range
+      // NO modelId - no LLM during sync, only ML classification
     } = options;
 
     // Build date query
@@ -133,7 +143,7 @@ class ClassificationOnlyProcessor {
       // Step 4: Run ML classification only on non-digest emails
       let mlResults = [];
       if (filteredEmails.length > 0) {
-        mlResults = await this.classifyEmailsOnly(filteredEmails, account, modelId);
+        mlResults = await this.classifyEmailsOnly(filteredEmails, account);
       }
 
       // Step 5: Combine all results (ML classified + digest filtered)
@@ -482,11 +492,10 @@ class ClassificationOnlyProcessor {
   /**
    * Run ML classification on emails with LLM extraction for job-related ones
    */
-  async classifyEmailsOnly(emails, account, modelId = null) {
-    console.log(`Running ML classification on ${emails.length} emails${modelId ? ` with LLM extraction using ${modelId}` : ''}`);
+  async classifyEmailsOnly(emails, account) {
+    console.log(`Running ML classification on ${emails.length} emails`);
     this.sendActivity('ml', `🤖 Starting ML classification for ${emails.length} emails...`, {
-      totalEmails: emails.length,
-      llmModel: modelId
+      totalEmails: emails.length
     });
     
     const results = [];
@@ -531,45 +540,8 @@ class ClassificationOnlyProcessor {
               }
             );
 
-            // If job-related and we have a model, extract details with LLM
-            let extractedDetails = {};
-            if (mlResult.is_job_related && modelId) {
-              try {
-                console.log(`🤖 Extracting details for job email with ${modelId}...`);
-                const { extractStage2 } = require('../llm/two-stage-classifier');
-                
-                // Get model path
-                const modelManager = require('../model-manager');
-                const manager = new modelManager();
-                const modelPath = manager.getModelPath(modelId);
-                
-                // Extract details
-                const extraction = await extractStage2(
-                  modelId,
-                  modelPath,
-                  email.subject || '',
-                  email.body || '',
-                  email.from || ''
-                );
-                
-                extractedDetails = {
-                  company: extraction.company,
-                  position: extraction.position,
-                  status: extraction.status,
-                  location: extraction.location,
-                  remote_status: extraction.remote_status,
-                  salary_range: extraction.salary_range
-                };
-                
-                this.sendActivity('llm', 
-                  `✅ Extracted: ${extraction.company || 'Unknown'} - ${extraction.position || 'Unknown'}`,
-                  extractedDetails
-                );
-              } catch (extractError) {
-                console.error('LLM extraction failed:', extractError);
-                this.sendActivity('llm', `⚠️ Extraction failed: ${extractError.message}`, {});
-              }
-            }
+            // NO LLM extraction during sync - only ML classification
+            // Extraction happens AFTER human review in the Review & Extract page
 
             return {
               email,
@@ -577,13 +549,12 @@ class ClassificationOnlyProcessor {
                 is_job_related: mlResult.is_job_related,
                 job_probability: mlResult.job_probability,
                 needs_review: mlResult.needs_review || false,
-                ml_only: !modelId, // Only ML if no LLM model provided
+                ml_only: true, // Always ML only - no LLM during sync
                 processing_time: processingTime,
                 model_type: mlResult.model_type || 'ml',
                 // Set filter_reason for ML-rejected emails
-                filter_reason: !mlResult.is_job_related ? 'ml_not_job_related' : null,
-                // Add extracted details
-                ...extractedDetails
+                filter_reason: !mlResult.is_job_related ? 'ml_not_job_related' : null
+                // NO extracted details - extraction happens after human review
               },
               account_email: account.email,
               processed_at: new Date().toISOString()
@@ -697,45 +668,47 @@ class ClassificationOnlyProcessor {
           gmail_message_id,
           thread_id,
           account_email,
-          subject,
           from_address,
-          body,
-          email_date,
-          raw_email_data,
-          is_digest,
-          digest_reason,
-          digest_confidence,
+          subject,
+          plaintext,
+          body_html,
+          date_received,
+          ml_classification,
+          job_probability,
           is_job_related,
-          confidence,
-          classification_method,
-          classified_at,
-          classification_time_ms,
-          human_verified,
           pipeline_stage,
+          classification_method,
+          is_classified,
+          jobs_table_id,
           needs_review,
           review_reason,
+          user_feedback,
+          user_classification,
+          reviewed_at,
+          reviewed_by,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(gmail_message_id, account_email) DO UPDATE SET
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(gmail_message_id) DO UPDATE SET
           thread_id = excluded.thread_id,
           subject = excluded.subject,
           from_address = excluded.from_address,
-          body = excluded.body,
-          email_date = excluded.email_date,
-          raw_email_data = excluded.raw_email_data,
-          is_digest = excluded.is_digest,
-          digest_reason = excluded.digest_reason,
-          digest_confidence = excluded.digest_confidence,
+          plaintext = excluded.plaintext,
+          body_html = excluded.body_html,
+          date_received = excluded.date_received,
+          ml_classification = excluded.ml_classification,
+          job_probability = excluded.job_probability,
           is_job_related = excluded.is_job_related,
-          confidence = excluded.confidence,
-          classification_method = excluded.classification_method,
-          classified_at = excluded.classified_at,
-          classification_time_ms = excluded.classification_time_ms,
-          human_verified = excluded.human_verified,
           pipeline_stage = excluded.pipeline_stage,
+          classification_method = excluded.classification_method,
+          is_classified = excluded.is_classified,
+          jobs_table_id = excluded.jobs_table_id,
           needs_review = excluded.needs_review,
           review_reason = excluded.review_reason,
+          user_feedback = excluded.user_feedback,
+          user_classification = excluded.user_classification,
+          reviewed_at = excluded.reviewed_at,
+          reviewed_by = excluded.reviewed_by,
           updated_at = excluded.updated_at
       `);
 
@@ -762,20 +735,24 @@ class ClassificationOnlyProcessor {
           const AUTO_APPROVE_THRESHOLD = 0.90;
           const NEEDS_REVIEW_THRESHOLD = 0.80;
           
+          let isClassified = true;
+          
           if (classification.model_type === 'digest_filter') {
+            // Digest filtered emails are classified but typically not job-related
             pipelineStage = 'classified';
             classificationMethod = 'digest_filter';
           } else {
             classificationMethod = 'ml';
             const confidence = classification.job_probability || classification.confidence || 0;
             
-            if (!classification.is_job_related) {
-              pipelineStage = 'classified';
-            } else if (confidence >= AUTO_APPROVE_THRESHOLD) {
-              pipelineStage = 'ready_for_extraction';
-              humanVerified = true; // Auto-approved due to high confidence
-            } else {
-              pipelineStage = 'classified'; // Needs human review before extraction
+            // All ML classifications are considered classified
+            pipelineStage = 'classified';
+            
+            // High confidence job-related emails could potentially be auto-approved
+            // but let's keep human review for now
+            if (classification.is_job_related && confidence >= AUTO_APPROVE_THRESHOLD) {
+              // Could set to 'ready_for_extraction' but keeping manual review
+              humanVerified = true;
             }
           }
 
@@ -788,37 +765,38 @@ class ClassificationOnlyProcessor {
 
           const now = new Date().toISOString();
 
-          // UPSERT to pipeline (21 parameters to match new schema)
+          // UPSERT to pipeline (23 parameters to match new schema)
           upsertPipeline.run(
             email.id,                    // 1. gmail_message_id
             email.threadId,               // 2. thread_id
             account_email,                // 3. account_email
-            email.subject,                // 4. subject
-            email.from,                   // 5. from_address
-            email.body,                   // 6. body
-            emailDate,                    // 7. email_date
-            JSON.stringify({              // 8. raw_email_data
-              snippet: email.snippet,
-              labelIds: email.labelIds,
-              internalDate: email.internalDate,
-              date: email.date,
-              to: email.to,
-              bodyIsHtml: email.bodyIsHtml || false
+            email.from,                   // 4. from_address
+            email.subject,                // 5. subject
+            email.body,                   // 6. plaintext
+            email.bodyIsHtml ? email.body : null,  // 7. body_html
+            emailDate,                    // 8. date_received
+            JSON.stringify({              // 9. ml_classification
+              model_type: classification.model_type,
+              confidence: classification.job_probability || classification.confidence || 0,
+              processing_time: classification.processing_time || 0,
+              features: classification.features,
+              filter_reason: classification.filter_reason,
+              filter_confidence: classification.filter_confidence
             }),
-            classification.model_type === 'digest_filter' ? 1 : 0,  // 9. is_digest
-            classification.filter_reason || null,                    // 10. digest_reason
-            classification.filter_confidence || null,                // 11. digest_confidence
-            classification.is_job_related ? 1 : 0,                  // 12. is_job_related
-            classification.job_probability || classification.confidence || 0,  // 13. confidence
-            classificationMethod,                                    // 14. classification_method
-            now,                                                     // 15. classified_at
-            classification.processing_time || 0,                    // 16. classification_time_ms
-            humanVerified ? 1 : 0,                                  // 17. human_verified
-            pipelineStage,                                          // 18. pipeline_stage
-            classification.needs_review ? 1 : 0,                    // 19. needs_review
-            classification.needs_review ? 'low_confidence' : null,  // 20. review_reason
-            now,                                                     // 21. created_at
-            now                                                      // 22. updated_at (OOPS, 22 not 21!)
+            classification.job_probability || classification.confidence || 0,  // 10. job_probability
+            classification.is_job_related ? 1 : 0,                  // 11. is_job_related
+            pipelineStage,                                          // 12. pipeline_stage
+            classificationMethod,                                    // 13. classification_method
+            isClassified ? 1 : 0,                                   // 14. is_classified
+            null,                                                    // 15. jobs_table_id
+            classification.needs_review ? 1 : 0,                    // 16. needs_review
+            classification.needs_review ? 'low_confidence' : null,  // 17. review_reason
+            null,                                                    // 18. user_feedback
+            null,                                                    // 19. user_classification
+            null,                                                    // 20. reviewed_at
+            null,                                                    // 21. reviewed_by
+            now,                                                     // 22. created_at
+            now                                                      // 23. updated_at
           );
 
           // Update email sync tracking
@@ -852,8 +830,8 @@ class ClassificationOnlyProcessor {
     const classified = results.length;
     const jobRelated = results.filter(r => r.classification.is_job_related).length;
     const needsReview = results.filter(r => r.classification.needs_review).length;
-    const highConfidence = results.filter(r => r.classification.confidence >= 0.8).length;
-    const lowConfidence = results.filter(r => r.classification.confidence < 0.8).length;
+    const highConfidence = results.filter(r => (r.classification.job_probability || r.classification.confidence || 0) >= 0.8).length;
+    const lowConfidence = results.filter(r => (r.classification.job_probability || r.classification.confidence || 0) < 0.8).length;
 
     return {
       totalEmails: classified,
@@ -884,362 +862,20 @@ class ClassificationOnlyProcessor {
   /**
    * Send activity updates to UI
    */
-  sendActivity(type, message, data = {}) {
-    // Content will be fixed below
-          gmail_message_id,
-          thread_id,
-          account_email,
-          subject,
-          from_address,
-          body,
-          is_job_related,
-          job_probability,
-          needs_review,
-          classification_status,
-          parse_status,
-          company,
-          position,
-          status,
-          location,
-          remote_status,
-          salary_range,
-          raw_email_data,
-          filter_reason,
-          email_date,
-          created_at,
-          processing_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      const updateEmailSync = db.prepare(`
-        INSERT OR REPLACE INTO email_sync (
-          gmail_message_id,
-          account_email,
-          processed_at,
-          is_job_related
-        ) VALUES (?, ?, ?, ?)
-      `);
-
-      // Begin transaction
-      const transaction = db.transaction(() => {
-        for (const result of results) {
-          const { email, classification, account_email, processed_at } = result;
-
-          // Determine classification status based on filter type
-          let classificationStatus;
-          let parseStatus;
-          
-          if (classification.model_type === 'digest_filter') {
-            // Digest emails are marked as rejected
-            classificationStatus = 'rejected';
-            parseStatus = 'skip';
-          } else if (classification.filter_reason === 'ml_classification_error') {
-            // ML errors need review
-            classificationStatus = 'classified';
-            parseStatus = 'skip';
-          } else if (!classification.is_job_related) {
-            // ML classified as not job-related - keep as classified but skip parsing
-            classificationStatus = 'classified';
-            parseStatus = 'skip';
-          } else {
-            // ML classified as job-related - needs parsing
-            classificationStatus = 'classified';
-            parseStatus = 'pending';
-          }
-          
-          // Convert internalDate (milliseconds string) to ISO date
-          const emailDate = email.internalDate 
-            ? new Date(parseInt(email.internalDate)).toISOString()
-            : email.date 
-              ? new Date(email.date).toISOString()
-              : new Date().toISOString();
-          
-          // Store in classification queue with raw data
-          insertClassification.run(
-            email.id,
-            email.threadId,
-            account_email,
-            email.subject,
-            email.from,
-            email.body,
-            classification.is_job_related ? 1 : 0,
-            classification.job_probability,
-            classification.needs_review ? 1 : 0,
-            classificationStatus,
-            parseStatus,
-            classification.company || null,
-            classification.position || null,
-            classification.status || null,
-            classification.location || null,
-            classification.remote_status || null,
-            classification.salary_range || null,
-            JSON.stringify({
-              snippet: email.snippet,
-              labelIds: email.labelIds,
-              filter_confidence: classification.filter_confidence,
-              internalDate: email.internalDate,
-              date: email.date,
-              to: email.to,
-              bodyIsHtml: email.bodyIsHtml || false // Track if body is HTML format
-            }),
-            classification.filter_reason || null, // filter_reason column
-            emailDate, // email_date column - actual email received date
-            new Date().toISOString(), // created_at
-            classification.processing_time || 0
-          );
-
-          // Update email sync tracking
-          updateEmailSync.run(
-            email.id,
-            account_email,
-            processed_at,
-            classification.is_job_related ? 1 : 0
-          );
-        }
-      });
-
-      console.log(`saveToClassificationQueue: Starting transaction for ${results.length} results...`);
-      transaction();
-      console.log(`saveToClassificationQueue: Successfully saved ${results.length} classification results`);
-
-    } catch (error) {
-      console.error('Error saving classification batch:', error);
-      throw error;
-    }
-    // Don't close the shared connection
-  }
-
-  /**
-   * Create classification-related database tables
-   */
-  createClassificationTables(db) {
-    // Check for missing columns and add them if needed
-    try {
-      const tableInfo = db.prepare("PRAGMA table_info(classification_queue)").all();
-      
-      if (tableInfo.length > 0) {
-        const hasAccountEmail = tableInfo.some(col => col.name === 'account_email');
-        const hasFilterReason = tableInfo.some(col => col.name === 'filter_reason');
-        const hasEmailDate = tableInfo.some(col => col.name === 'email_date');
-        
-        if (!hasAccountEmail) {
-          console.log('Adding missing account_email column to classification_queue table');
-          db.exec(`ALTER TABLE classification_queue ADD COLUMN account_email TEXT`);
-        }
-        
-        if (!hasFilterReason) {
-          console.log('Adding filter_reason column to classification_queue table');
-          db.exec(`ALTER TABLE classification_queue ADD COLUMN filter_reason TEXT`);
-        }
-        
-        if (!hasEmailDate) {
-          console.log('Adding email_date column to classification_queue table');
-          db.exec(`ALTER TABLE classification_queue ADD COLUMN email_date TIMESTAMP`);
-        }
-      }
-    } catch (e) {
-      // Table doesn't exist yet, will be created below
-    }
-    
-    // Create classification queue table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS classification_queue (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        gmail_message_id TEXT UNIQUE NOT NULL,
-        thread_id TEXT,
-        account_email TEXT,
-        subject TEXT,
-        from_address TEXT,
-        body TEXT,
-        is_job_related BOOLEAN DEFAULT 0,
-        job_probability REAL DEFAULT 0,
-        needs_review BOOLEAN DEFAULT 0,
-        classification_status TEXT DEFAULT 'pending' CHECK(classification_status IN ('pending', 'classified', 'reviewed', 'rejected', 'approved')),
-        parse_status TEXT DEFAULT 'pending' CHECK(parse_status IN ('pending', 'parsing', 'parsed', 'failed', 'skip')),
-        company TEXT,
-        position TEXT,
-        status TEXT,
-        raw_email_data TEXT, -- JSON with additional email metadata
-        user_feedback TEXT, -- For training data
-        filter_reason TEXT, -- Reason why email was filtered (e.g., 'digest_domain:linkedin.com')
-        email_date TIMESTAMP, -- Actual email received date from Gmail
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        processing_time INTEGER DEFAULT 0
-      )
-    `);
-
-    // Create indexes for performance
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_classification_queue_account ON classification_queue(account_email);
-      CREATE INDEX IF NOT EXISTS idx_classification_queue_status ON classification_queue(classification_status);
-      CREATE INDEX IF NOT EXISTS idx_classification_queue_parse_status ON classification_queue(parse_status);
-      CREATE INDEX IF NOT EXISTS idx_classification_queue_needs_review ON classification_queue(needs_review);
-      CREATE INDEX IF NOT EXISTS idx_classification_queue_thread ON classification_queue(thread_id);
-    `);
-
-    // Training feedback table removed - will export classified data directly instead
-
-    console.log('Classification tables created/verified');
-  }
-
-  /**
-   * Calculate statistics from results
-   */
-  calculateStats(results) {
-    const classified = results.length;
-    const jobRelated = results.filter(r => r.classification.is_job_related).length;
-    const needsReview = results.filter(r => r.classification.needs_review).length;
-    const highConfidence = results.filter(r => r.classification.confidence >= 0.8).length;
-    const lowConfidence = results.filter(r => r.classification.confidence < 0.8).length;
-
-    return {
-      totalEmails: classified,
-      classified,
-      jobRelated,
-      nonJobRelated: classified - jobRelated,
-      needsReview,
-      highConfidence,
-      lowConfidence,
-      averageConfidence: classified > 0 
-        ? results.reduce((sum, r) => sum + r.classification.confidence, 0) / classified 
-        : 0
-    };
-  }
-
-  /**
-   * Send progress updates to UI
-   */
-  sendProgress(message, progress) {
-    if (this.webContents) {
-      this.webContents.send('sync-progress', {
-        stage: message,
-        phase: 'classifying',
-        progress: Math.min(100, Math.max(0, progress))
-      });
-    }
-    console.log(`Progress: ${message} (${progress}%)`);
-  }
-
-  /**
-   * Send activity log to UI
-   */
   sendActivity(type, message, details = {}) {
     console.log(`sendActivity called: type=${type}, hasWebContents=${!!this.webContents}`);
     if (this.webContents) {
       try {
-        this.webContents.send('sync-activity', {
+        this.webContents.send("sync-activity", {
           type,
           message,
           details
         });
-        console.log('sync-activity event sent successfully');
+        console.log("sync-activity event sent successfully");
       } catch (error) {
-        console.error('Error sending sync-activity:', error);
+        console.error("Error sending sync-activity:", error);
       }
-    } else {
-      console.log('No webContents available to send activity');
     }
-  }
-
-  /**
-   * Get pending items that need review
-   */
-  async getPendingReview(accountEmail = null) {
-    const db = this.db; // Use shared connection
-
-    try {
-      let query = `
-        SELECT 
-          id,
-          gmail_message_id,
-          account_email,
-          subject,
-          from_address,
-          body,
-          is_job_related,
-          confidence,
-          created_at
-        FROM classification_queue 
-        WHERE needs_review = 1 AND classification_status = 'classified'
-      `;
-      
-      const params = [];
-      if (accountEmail) {
-        query += ' AND account_email = ?';
-        params.push(accountEmail);
-      }
-      
-      query += ' ORDER BY created_at DESC LIMIT 100';
-
-      const stmt = db.prepare(query);
-      const results = stmt.all(...params);
-
-      return results.map(row => ({
-        id: row.id,
-        gmail_message_id: row.gmail_message_id,
-        account_email: row.account_email,
-        subject: row.subject,
-        from: row.from_address,
-        body: row.body.substring(0, 500) + (row.body.length > 500 ? '...' : ''),
-        is_job_related: row.is_job_related === 1,
-        confidence: row.confidence,
-        created_at: row.created_at
-      }));
-
-    } catch (error) {
-      console.error('Error getting pending review items:', error);
-      return [];
-    }
-    // Don't close the shared connection
-  }
-
-  /**
-   * Update classification based on user review
-   */
-  async updateClassification(id, isJobRelated, notes = '') {
-    const db = this.db; // Use shared connection
-
-    try {
-      // Begin transaction
-      const updateClassification = db.prepare(`
-        UPDATE classification_queue 
-        SET 
-          is_job_related = ?,
-          needs_review = 0,
-          classification_status = 'reviewed',
-          parse_status = CASE WHEN ? = 1 THEN 'pending' ELSE 'skip' END,
-          user_feedback = ?,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `);
-
-      const getOriginalData = db.prepare(`
-        SELECT gmail_message_id, is_job_related, confidence, subject, body, from_address 
-        FROM classification_queue 
-        WHERE id = ?
-      `);
-
-      const transaction = db.transaction(() => {
-        // Get original data
-        const original = getOriginalData.get(id);
-        if (!original) {
-          throw new Error(`Classification record with ID ${id} not found`);
-        }
-
-        // Update classification
-        updateClassification.run(isJobRelated ? 1 : 0, isJobRelated ? 1 : 0, notes, id);
-      });
-
-      transaction();
-      console.log(`Updated classification for ID ${id}: job-related=${isJobRelated}`);
-      return { success: true };
-
-    } catch (error) {
-      console.error('Error updating classification:', error);
-      throw error;
-    }
-    // Don't close the shared connection
   }
 }
 

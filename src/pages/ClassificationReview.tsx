@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import DOMPurify from 'dompurify';
 import {
   Box,
   Card,
@@ -32,8 +31,7 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogActions,
-  Tooltip
+  DialogActions
 } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import {
@@ -50,9 +48,7 @@ import {
   Work,
   Visibility,
   ArrowForward,
-  RateReview,
-  Close,
-  Download
+  RateReview
 } from '@mui/icons-material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
@@ -82,18 +78,18 @@ const accent = "#FF7043";
 
 const workflowSteps = [
   {
-    label: 'Fetch Emails',
-    description: 'Connect Gmail accounts and fetch emails for processing',
+    label: 'Step 1: Fetch & ML Classify',
+    description: 'Fetch emails and ML classification',
     active: false
   },
   {
-    label: 'Review Classifications',
-    description: 'Review AI classifications and mark job-related emails',
+    label: 'Step 2: Review Classifications',
+    description: 'Human review of ML classifications',
     active: true
   },
   {
-    label: 'Extract Job Details',
-    description: 'Use LLM models to parse job details from confirmed job emails',
+    label: 'Step 3: LLM Extract',
+    description: 'LLM extraction of job details',
     active: false
   }
 ];
@@ -121,16 +117,14 @@ export default function ClassificationReview() {
   // State management
   const [emails, setEmails] = useState<EmailClassification[]>([]);
   const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
-  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [selectedEmailForPreview, setSelectedEmailForPreview] = useState<EmailClassification | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [stats, setStats] = useState<ClassificationStats | null>(null);
   const [currentTab, setCurrentTab] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [filters, setFilters] = useState<ClassificationFilters>({});
-  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({ 
     open: false, 
     message: '', 
@@ -146,22 +140,74 @@ export default function ClassificationReview() {
     try {
       setLoading(true);
       
-      // Fetch real data from the backend
+      // Fetch real data from the backend using classification queue API
       if (window.electronAPI && window.electronAPI.getClassificationQueue) {
-        const result = await window.electronAPI.getClassificationQueue();
+        const result = await window.electronAPI.getClassificationQueue({
+          // Get all emails - we'll filter client-side for more flexibility
+          limit: 1500
+        });
         
-        if (result.success) {
+        if (result.success && result.emails) {
           // Transform the data to match our EmailClassification type
-          const transformedEmails: EmailClassification[] = result.emails.map((email: any) => ({
-            ...email,
+          const transformedEmails: EmailClassification[] = result.emails
+            .filter((email: any) => 
+              email.needs_review || 
+              email.pipeline_stage === 'classified' || 
+              email.pipeline_stage === 'ready_for_extraction'
+            )
+            .map((email: any) => ({
+            id: email.gmail_message_id,
+            gmail_message_id: email.gmail_message_id,
+            thread_id: email.thread_id,
+            subject: email.subject || '',
+            from_address: email.from_address || '',
+            plaintext: email.plaintext,
+            body_html: email.body_html,
+            date_received: email.date_received,
+            account_email: email.account_email || '',
+            
+            // ML Classification results
+            ml_classification: email.ml_classification,
             job_probability: email.job_probability || 0,
+            is_job_related: email.is_job_related,
+            is_classified: email.is_classified || false,
+            
+            // Pipeline workflow stages  
+            pipeline_stage: email.pipeline_stage || 'classified',
+            classification_method: email.classification_method,
+            
+            // Links and metadata
+            jobs_table_id: email.jobs_table_id,
+            needs_review: email.needs_review,
+            review_reason: email.review_reason,
+            user_feedback: email.user_feedback,
+            
+            // User review tracking
+            user_classification: email.user_classification,
+            reviewed_at: email.reviewed_at,
+            reviewed_by: email.reviewed_by,
             company: email.company || undefined,
             position: email.position || undefined,
-            status: email.status || undefined
+            status: email.status || undefined,
+            created_at: email.created_at || new Date().toISOString(),
+            updated_at: email.updated_at || new Date().toISOString()
           }));
           
           setEmails(transformedEmails);
-          setStats(result.stats);
+          
+          // Calculate stats from the emails
+          const calculatedStats = {
+            total_emails: transformedEmails.length,
+            needs_review: transformedEmails.filter(e => e.needs_review && !e.user_classification).length,
+            high_confidence_jobs: transformedEmails.filter(e => e.job_probability > 0.9 && e.is_job_related).length,
+            rejected: transformedEmails.filter(e => e.user_classification === 'HIL_rejected' || (!e.is_job_related && e.is_classified)).length,
+            queued_for_parsing: transformedEmails.filter(e => e.pipeline_stage === 'ready_for_extraction' || e.user_classification === 'HIL_approved').length,
+            avg_confidence: transformedEmails.length > 0 
+              ? transformedEmails.reduce((sum, e) => sum + e.job_probability, 0) / transformedEmails.length 
+              : 0
+          };
+          
+          setStats(calculatedStats);
           
           // Select first email for preview
           if (transformedEmails.length > 0) {
@@ -202,16 +248,6 @@ export default function ClassificationReview() {
     }
   };
 
-  // Calculate tab counts based on actual email data
-  const tabCounts = useMemo(() => {
-    return {
-      needsReview: emails.filter(email => email.needs_review === true).length,
-      jobRelated: emails.filter(email => email.job_probability > 0.9 && email.is_job_related).length,
-      rejected: emails.filter(email => email.is_job_related === false).length,
-      all: emails.length
-    };
-  }, [emails]);
-
   // Filter emails based on current tab and search/filters
   const filteredEmails = useMemo(() => {
     let filtered = emails;
@@ -219,13 +255,13 @@ export default function ClassificationReview() {
     // Filter by tab
     switch (currentTab) {
       case 0: // Needs Review
-        filtered = filtered.filter(email => email.needs_review === true);
+        filtered = filtered.filter(email => email.needs_review && !email.user_classification);
         break;
-      case 1: // Job Related (High Confidence)
-        filtered = filtered.filter(email => email.job_probability > 0.9 && email.is_job_related);
+      case 1: // High Confidence Jobs
+        filtered = filtered.filter(email => email.job_probability > 0.7 && email.is_job_related);
         break;
-      case 2: // Non-job emails
-        filtered = filtered.filter(email => email.is_job_related === false);
+      case 2: // Rejected
+        filtered = filtered.filter(email => email.user_classification === 'HIL_rejected' || (!email.is_job_related && email.is_classified));
         break;
       case 3: // All
         break;
@@ -251,63 +287,92 @@ export default function ClassificationReview() {
     }
 
     return filtered.sort((a, b) => 
-      new Date(b.received_date).getTime() - new Date(a.received_date).getTime()
+      new Date(b.date_received).getTime() - new Date(a.date_received).getTime()
     );
   }, [emails, currentTab, searchQuery, filters]);
 
   const handleEmailSelect = (email: EmailClassification) => {
     setSelectedEmailForPreview(email);
-    setModalOpen(true);
+    setEmailDialogOpen(true);
   };
 
-  const handleCloseModal = () => {
-    setModalOpen(false);
+  const handleCloseEmailDialog = () => {
+    setEmailDialogOpen(false);
   };
 
   const handleBulkOperation = async (request: BulkOperationRequest) => {
     try {
       setProcessing(true);
       
-      // If email_ids is empty, we need to filter emails based on confidence for Smart Actions
-      let emailIds = request.email_ids;
-      
-      if (emailIds.length === 0) {
-        // Smart Actions - filter based on job probability (stored as 0-1 range)
-        if (request.operation === 'approve_as_job') {
-          // Auto-approve high probability (>90% = >0.9)
-          emailIds = filteredEmails
-            .filter(email => email.job_probability > 0.9)
-            .map(email => email.id);
-        } else if (request.operation === 'reject_as_not_job') {
-          // Auto-reject low probability (<30% = <0.3)
-          emailIds = filteredEmails
-            .filter(email => email.job_probability < 0.3)
-            .map(email => email.id);
+      // Handle different operations based on type
+      if (request.operation === 'approve_for_extraction' || request.operation === 'reject_as_not_job') {
+        // Use the new review-classification API for individual emails
+        const isJobRelated = request.operation === 'approve_for_extraction';
+        
+        for (const emailId of request.email_ids) {
+          const email = emails.find(e => e.id === emailId);
+          if (email && window.electronAPI?.reviewClassification) {
+            await window.electronAPI.reviewClassification({
+              gmailMessageId: emailId,
+              accountEmail: email.account_email,
+              isJobRelated,
+              confidence: 1.0 // Manual review = 100% confidence
+            });
+          }
         }
         
-        if (emailIds.length === 0) {
-          showSnackbar('No emails matched the criteria', 'info');
-          return;
-        }
+        showSnackbar(
+          `${request.email_ids.length} email(s) marked as ${isJobRelated ? 'job-related' : 'not job-related'}`,
+          'success'
+        );
       }
       
-      // Call Electron API to perform bulk operation
-      const result = await window.electronAPI.classificationBulkOperation({
-        ...request,
-        emailIds: emailIds
+      // Update local state based on operation
+      setEmails(prevEmails => {
+        return prevEmails.map(email => {
+          if (request.email_ids.includes(email.id)) {
+            const updates: Partial<EmailClassification> = {};
+            
+            switch (request.operation) {
+              case 'approve_for_extraction':
+                updates.user_classification = 'HIL_approved';
+                updates.is_job_related = true;
+                updates.pipeline_stage = 'ready_for_extraction';
+                updates.needs_review = false;
+                updates.reviewed_at = new Date().toISOString();
+                if (request.metadata?.user_feedback) updates.user_feedback = request.metadata.user_feedback;
+                break;
+              case 'reject_as_not_job':
+                updates.user_classification = 'HIL_rejected';
+                updates.is_job_related = false;
+                updates.pipeline_stage = 'classified';
+                updates.needs_review = false;
+                updates.reviewed_at = new Date().toISOString();
+                if (request.metadata?.user_feedback) updates.user_feedback = request.metadata.user_feedback;
+                break;
+              case 'mark_needs_review':
+                updates.needs_review = true;
+                updates.user_classification = undefined;
+                updates.reviewed_at = undefined;
+                break;
+              case 'mark_reviewed':
+                updates.needs_review = false;
+                updates.reviewed_at = new Date().toISOString();
+                if (request.metadata?.pipeline_stage) updates.pipeline_stage = request.metadata.pipeline_stage;
+                if (request.metadata?.user_classification) updates.user_classification = request.metadata.user_classification;
+                break;
+            }
+            
+            return { ...email, ...updates, updated_at: new Date().toISOString() };
+          }
+          return email;
+        });
       });
       
-      if (!result.success) {
-        throw new Error(result.error || 'Bulk operation failed');
-      }
-      
-      // Clear selection after bulk operation
+      // Clear selection
       setSelectedEmails([]);
       
-      // Refresh data
-      await loadClassificationData();
-      
-      showSnackbar(`Successfully processed ${emailIds.length} emails`, 'success');
+      showSnackbar(`Successfully processed ${request.email_ids.length} emails`, 'success');
     } catch (error) {
       console.error('Bulk operation failed:', error);
       showSnackbar('Bulk operation failed', 'error');
@@ -326,34 +391,6 @@ export default function ClassificationReview() {
 
   const showSnackbar = (message: string, severity: typeof snackbar.severity) => {
     setSnackbar({ open: true, message, severity });
-  };
-
-  const handleExportTrainingData = async (format: 'json' | 'csv') => {
-    try {
-      setProcessing(true);
-      setExportDialogOpen(false);
-      
-      if (window.electronAPI && window.electronAPI.exportTrainingData) {
-        const result = await window.electronAPI.exportTrainingData(format);
-        
-        if (result.success) {
-          const formatLabel = format.toUpperCase();
-          showSnackbar(
-            `Successfully exported ${result.recordCount} records as ${formatLabel} to ${result.filePath}`, 
-            'success'
-          );
-        } else {
-          showSnackbar(result.error || 'Export failed', 'error');
-        }
-      } else {
-        showSnackbar('Export functionality not available', 'error');
-      }
-    } catch (error) {
-      console.error('Export error:', error);
-      showSnackbar('Failed to export training data', 'error');
-    } finally {
-      setProcessing(false);
-    }
   };
 
   const handleLogout = async () => {
@@ -397,24 +434,11 @@ export default function ClassificationReview() {
               <CardContent>
                 <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <RateReview color="primary" />
-                  Workflow
+                  Classification Workflow Progress
                 </Typography>
                 <Stepper activeStep={1} orientation="horizontal">
                   {workflowSteps.map((step, index) => (
-                    <Step 
-                      key={step.label} 
-                      completed={index < 1}
-                      sx={{
-                        '& .MuiStepLabel-root': {
-                          ...(index === 1 && {
-                            padding: '8px',
-                            border: '2px solid #FF7043',
-                            borderRadius: '8px',
-                            backgroundColor: 'rgba(255, 112, 67, 0.04)'
-                          })
-                        }
-                      }}
-                    >
+                    <Step key={step.label} completed={index < 1}>
                       <StepLabel>
                         <Box>
                           <Typography variant="subtitle2">{step.label}</Typography>
@@ -453,7 +477,7 @@ export default function ClassificationReview() {
                         {stats.high_confidence_jobs}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        Job Related
+                        High Confidence
                       </Typography>
                     </CardContent>
                   </Card>
@@ -465,7 +489,7 @@ export default function ClassificationReview() {
                         {stats.rejected}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        Non-Job
+                        Rejected
                       </Typography>
                     </CardContent>
                   </Card>
@@ -474,10 +498,10 @@ export default function ClassificationReview() {
                   <Card sx={{ textAlign: 'center' }}>
                     <CardContent sx={{ py: 2 }}>
                       <Typography variant="h4" color="primary.main" sx={{ fontWeight: 600 }}>
-                        {Math.round(stats.avg_confidence * 100)}%
+                        {Math.round(stats.avg_confidence)}%
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        Avg Job Probability
+                        Avg Confidence
                       </Typography>
                     </CardContent>
                   </Card>
@@ -486,10 +510,11 @@ export default function ClassificationReview() {
             </Box>
           )}
 
-          {/* Main Content - Full Width Email List */}
+          {/* Main Content */}
           <Box sx={{ flexGrow: 1, px: 3, pb: 3 }}>
-            <Grid container sx={{ height: '100%' }}>
-              <Grid size={12} sx={{ height: '100%' }}>
+            <Grid container spacing={2} sx={{ height: '100%' }}>
+              {/* Email List Panel */}
+              <Grid size={{ xs: 12 }} sx={{ height: '100%' }}>
                 <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                   {/* Tabs and Filters */}
                   <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
@@ -500,34 +525,22 @@ export default function ClassificationReview() {
                     >
                       <Tab 
                         label={
-                          <Badge 
-                            badgeContent={tabCounts.needsReview} 
-                            color="warning"
-                            max={999}
-                          >
+                          <Badge badgeContent={stats?.needs_review} color="warning">
                             Needs Review
                           </Badge>
                         } 
                       />
                       <Tab 
                         label={
-                          <Badge 
-                            badgeContent={tabCounts.jobRelated} 
-                            color="success"
-                            max={999}
-                          >
-                            Job Related
+                          <Badge badgeContent={stats?.high_confidence_jobs} color="success">
+                            High Confidence
                           </Badge>
                         } 
                       />
                       <Tab 
                         label={
-                          <Badge 
-                            badgeContent={tabCounts.rejected} 
-                            color="error"
-                            max={999}
-                          >
-                            Non-Job
+                          <Badge badgeContent={stats?.rejected} color="error">
+                            Rejected
                           </Badge>
                         } 
                       />
@@ -537,45 +550,27 @@ export default function ClassificationReview() {
 
                   {/* Search and Filters */}
                   <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        placeholder="Search emails..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        InputProps={{
-                          startAdornment: (
-                            <InputAdornment position="start">
-                              <Search />
-                            </InputAdornment>
-                          ),
-                          endAdornment: (
-                            <InputAdornment position="end">
-                              <IconButton size="small" onClick={loadClassificationData}>
-                                <Refresh />
-                              </IconButton>
-                            </InputAdornment>
-                          )
-                        }}
-                      />
-                      <Tooltip title="Export all classified emails with ML predictions and human corrections for training data">
-                        <span>
-                          <Button
-                            variant="outlined"
-                            startIcon={<Download />}
-                            onClick={() => setExportDialogOpen(true)}
-                            disabled={processing || emails.length === 0}
-                            sx={{ 
-                              minWidth: 150,
-                              whiteSpace: 'nowrap'
-                            }}
-                          >
-                            Export Data
-                          </Button>
-                        </span>
-                      </Tooltip>
-                    </Box>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      placeholder="Search emails..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <Search />
+                          </InputAdornment>
+                        ),
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <IconButton size="small" onClick={loadClassificationData}>
+                              <Refresh />
+                            </IconButton>
+                          </InputAdornment>
+                        )
+                      }}
+                    />
                   </Box>
 
                   {/* Bulk Operations Toolbar */}
@@ -615,119 +610,64 @@ export default function ClassificationReview() {
                                   backgroundColor: 'action.hover'
                                 }
                               }}
-                              onClick={(e) => {
-                                // Don't open modal if clicking on checkbox area
-                                const target = e.target as HTMLElement;
-                                if (target.tagName !== 'INPUT' && !target.closest('.checkbox-wrapper')) {
-                                  handleEmailSelect(email);
-                                }
-                              }}
+                              onClick={() => handleEmailSelect(email)}
                             >
-                              <Box 
-                                sx={{ 
-                                  mr: 2, 
-                                  display: 'flex', 
-                                  alignItems: 'center',
-                                  '& input[type="checkbox"]': {
-                                    width: '20px',
-                                    height: '20px',
-                                    cursor: 'pointer'
-                                  }
-                                }} 
-                                className="checkbox-wrapper" 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const currentIndex = filteredEmails.findIndex(e => e.id === email.id);
-                                  
-                                  if ((e as any).shiftKey && lastSelectedIndex !== null) {
-                                    // Shift+click: select range
-                                    const start = Math.min(lastSelectedIndex, currentIndex);
-                                    const end = Math.max(lastSelectedIndex, currentIndex);
-                                    const rangeIds = filteredEmails
-                                      .slice(start, end + 1)
-                                      .map(e => e.id);
-                                    
-                                    setSelectedEmails(prev => {
-                                      const newSelection = new Set(prev);
-                                      rangeIds.forEach(id => newSelection.add(id));
-                                      return Array.from(newSelection);
-                                    });
-                                  } else {
-                                    // Regular click: toggle single selection
-                                    if (selectedEmails.includes(email.id)) {
-                                      setSelectedEmails(prev => prev.filter(id => id !== email.id));
-                                    } else {
-                                      setSelectedEmails(prev => [...prev, email.id]);
-                                    }
-                                    setLastSelectedIndex(currentIndex);
-                                  }
-                                }}
-                              >
+                              <Box sx={{ mr: 1 }}>
                                 <input
                                   type="checkbox"
                                   checked={selectedEmails.includes(email.id)}
-                                  onChange={() => {}}
-                                  style={{ pointerEvents: 'none' }}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    if (e.target.checked) {
+                                      setSelectedEmails(prev => [...prev, email.id]);
+                                    } else {
+                                      setSelectedEmails(prev => prev.filter(id => id !== email.id));
+                                    }
+                                  }}
                                 />
                               </Box>
 
                               <ListItemText
                                 primary={
-                                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <Box sx={{ flexGrow: 1, mr: 2 }}>
-                                      <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-                                        {email.subject}
+                                  <Box>
+                                    <Typography variant="subtitle2" noWrap>
+                                      {email.subject}
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                                      <Email sx={{ fontSize: 14 }} />
+                                      <Typography variant="caption" color="text.secondary" noWrap>
+                                        {email.from_address}
                                       </Typography>
-                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0.5 }}>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                          <Person sx={{ fontSize: 14, color: 'text.secondary' }} />
-                                          <Typography variant="body2" color="text.secondary">
-                                            {email.from_address}
-                                          </Typography>
-                                        </Box>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                          <CalendarToday sx={{ fontSize: 14, color: 'text.secondary' }} />
-                                          <Typography variant="body2" color="text.secondary">
-                                            Received: {new Date(email.received_date).toLocaleDateString()}
-                                          </Typography>
-                                        </Box>
-                                        {email.processed_at && (
-                                          <Typography variant="caption" color="text.secondary" sx={{ ml: 2.5 }}>
-                                            Classified: {new Date(email.processed_at).toLocaleDateString()}
-                                          </Typography>
-                                        )}
-                                      </Box>
                                     </Box>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  </Box>
+                                }
+                                secondary={
+                                  <Box sx={{ mt: 1 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
                                       <ConfidenceIndicator 
                                         confidence={email.job_probability} 
                                         variant="chip" 
                                         size="small"
                                         showPercentage
                                       />
-                                      {email.is_job_related && (
+                                      {email.is_job_related && email.company && (
                                         <Chip 
-                                          label="Job Related"
-                                          size="small"
-                                          color="success"
-                                          variant="outlined"
-                                        />
-                                      )}
-                                      {email.company && (
-                                        <Chip 
-                                          label={email.company}
+                                          label={`${email.company}${email.position ? ` - ${email.position}` : ''}`}
                                           size="small"
                                           sx={{ backgroundColor: 'primary.light', color: 'primary.contrastText' }}
                                         />
                                       )}
                                     </Box>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {new Date(email.date_received).toLocaleDateString()}
+                                    </Typography>
                                   </Box>
                                 }
                               />
 
                               <ListItemSecondaryAction>
                                 <Stack direction="row" spacing={0.5}>
-                                  {email.review_status === 'needs_review' && (
+                                  {email.needs_review && !email.user_classification && (
                                     <>
                                       <IconButton
                                         size="small"
@@ -735,7 +675,7 @@ export default function ClassificationReview() {
                                           e.stopPropagation();
                                           handleBulkOperation({
                                             email_ids: [email.id],
-                                            operation: 'approve_as_job'
+                                            operation: 'approve_for_extraction'
                                           });
                                         }}
                                         sx={{ color: 'success.main' }}
@@ -761,7 +701,7 @@ export default function ClassificationReview() {
                                     size="small"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleEmailSelect(email);
+                                      setSelectedEmailForPreview(email);
                                     }}
                                   >
                                     <Visibility />
@@ -778,214 +718,6 @@ export default function ClassificationReview() {
               </Grid>
             </Grid>
           </Box>
-
-          {/* Email Preview Modal */}
-          <Dialog
-            open={modalOpen}
-            onClose={handleCloseModal}
-            maxWidth="md"
-            fullWidth
-            PaperProps={{
-              sx: { minHeight: '80vh' }
-            }}
-          >
-            <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Typography variant="h6" component="div" sx={{ flexGrow: 1, mr: 2 }}>
-                {selectedEmailForPreview?.subject || 'Email Details'}
-              </Typography>
-              <IconButton onClick={handleCloseModal} size="small">
-                <Close />
-              </IconButton>
-            </DialogTitle>
-            <DialogContent dividers>
-                    {selectedEmailForPreview ? (
-                      <Box>
-                        {/* Email Header */}
-                        <Box sx={{ mb: 3 }}>
-                          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-                            <ConfidenceIndicator 
-                              confidence={selectedEmailForPreview.job_probability}
-                              variant="detailed"
-                              size="medium"
-                            />
-                          </Box>
-
-                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Person sx={{ fontSize: 16, color: 'text.secondary' }} />
-                              <Typography variant="body2">{selectedEmailForPreview.from_address}</Typography>
-                            </Box>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <CalendarToday sx={{ fontSize: 16, color: 'text.secondary' }} />
-                                <Typography variant="body2">
-                                  Received: {new Date(selectedEmailForPreview.received_date).toLocaleString()}
-                                </Typography>
-                              </Box>
-                              {selectedEmailForPreview.processed_at && (
-                                <Typography variant="body2" sx={{ ml: 3 }}>
-                                  Classified: {new Date(selectedEmailForPreview.processed_at).toLocaleString()}
-                                </Typography>
-                              )}
-                            </Box>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Email sx={{ fontSize: 16, color: 'text.secondary' }} />
-                              <Typography variant="body2">{selectedEmailForPreview.account_email}</Typography>
-                            </Box>
-                          </Box>
-                        </Box>
-
-                        <Divider sx={{ my: 2 }} />
-
-                        {/* Classification Results */}
-                        {selectedEmailForPreview.is_job_related && (
-                          <Box sx={{ mb: 3 }}>
-                            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                              Extracted Information
-                            </Typography>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                              {selectedEmailForPreview.company && (
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                  <Business sx={{ fontSize: 16, color: 'primary.main' }} />
-                                  <Typography variant="body2">
-                                    <strong>Company:</strong> {selectedEmailForPreview.company}
-                                  </Typography>
-                                </Box>
-                              )}
-                              {selectedEmailForPreview.position && (
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                  <Work sx={{ fontSize: 16, color: 'primary.main' }} />
-                                  <Typography variant="body2">
-                                    <strong>Position:</strong> {selectedEmailForPreview.position}
-                                  </Typography>
-                                </Box>
-                              )}
-                              {selectedEmailForPreview.status && (
-                                <Typography variant="body2">
-                                  <strong>Status:</strong> {selectedEmailForPreview.status}
-                                </Typography>
-                              )}
-                            </Box>
-                          </Box>
-                        )}
-
-                        <Divider sx={{ my: 2 }} />
-
-                        {/* Email Content Preview */}
-                        <Box sx={{ mt: 3 }}>
-                          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                            Email Content
-                          </Typography>
-                          <Paper sx={{ p: 2, backgroundColor: 'grey.50', maxHeight: 300, overflow: 'auto' }}>
-                            {(() => {
-                              const body = selectedEmailForPreview.body || 'Email content not available';
-                              // Check if the body contains HTML
-                              const isHtml = body.includes('<html') || body.includes('<!DOCTYPE') || 
-                                           (body.includes('<div') && body.includes('</div>')) ||
-                                           (body.includes('<p>') && body.includes('</p>')) ||
-                                           (body.includes('<br') || body.includes('<table'));
-                              
-                              if (isHtml) {
-                                // Sanitize and render HTML
-                                const cleanHtml = DOMPurify.sanitize(body, {
-                                  ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'i', 'em', 'u', 'a', 'ul', 'ol', 'li', 
-                                               'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span',
-                                               'table', 'thead', 'tbody', 'tr', 'td', 'th', 'img', 'hr'],
-                                  ALLOWED_ATTR: ['href', 'target', 'src', 'alt', 'style'],
-                                  ALLOW_DATA_ATTR: false
-                                });
-                                
-                                return (
-                                  <Box 
-                                    dangerouslySetInnerHTML={{ __html: cleanHtml }}
-                                    sx={{
-                                      '& a': { color: 'primary.main', textDecoration: 'underline' },
-                                      '& p': { margin: '0.5em 0' },
-                                      '& ul, & ol': { paddingLeft: '1.5em' },
-                                      '& li': { margin: '0.25em 0' },
-                                      '& blockquote': { 
-                                        borderLeft: '3px solid #ccc', 
-                                        paddingLeft: '1em', 
-                                        margin: '1em 0',
-                                        color: 'text.secondary'
-                                      },
-                                      '& img': { maxWidth: '100%', height: 'auto' },
-                                      '& table': { borderCollapse: 'collapse', width: '100%' },
-                                      '& td, & th': { border: '1px solid #ddd', padding: '8px' },
-                                      fontSize: '14px',
-                                      lineHeight: 1.6,
-                                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif'
-                                    }}
-                                  />
-                                );
-                              } else {
-                                // Display plain text
-                                return (
-                                  <Typography variant="body2" sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-                                    {body}
-                                  </Typography>
-                                );
-                              }
-                            })()}
-                          </Paper>
-                        </Box>
-                      </Box>
-                    ) : (
-                      <Box sx={{ textAlign: 'center', py: 8 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          Loading email details...
-                        </Typography>
-                      </Box>
-                    )}
-            </DialogContent>
-            <DialogActions sx={{ p: 2, gap: 1 }}>
-              {selectedEmailForPreview && (
-                <>
-                  <Button
-                    variant="contained"
-                    startIcon={<CheckCircle />}
-                    onClick={() => {
-                      handleBulkOperation({
-                        email_ids: [selectedEmailForPreview.id],
-                        operation: 'approve_as_job'
-                      });
-                      handleCloseModal();
-                    }}
-                    sx={{ 
-                      backgroundColor: 'success.main',
-                      '&:hover': { backgroundColor: 'success.dark' }
-                    }}
-                  >
-                    Mark as Job-Related
-                  </Button>
-                  <Button
-                    variant="contained"
-                    startIcon={<Cancel />}
-                    onClick={() => {
-                      handleBulkOperation({
-                        email_ids: [selectedEmailForPreview.id],
-                        operation: 'reject_as_not_job'
-                      });
-                      handleCloseModal();
-                    }}
-                    sx={{ 
-                      backgroundColor: 'error.main',
-                      '&:hover': { backgroundColor: 'error.dark' }
-                    }}
-                  >
-                    Mark as Not Job-Related
-                  </Button>
-                  <Box sx={{ flexGrow: 1 }} />
-                  <Button
-                    variant="outlined"
-                    onClick={handleCloseModal}
-                  >
-                    Close
-                  </Button>
-                </>
-              )}
-            </DialogActions>
-          </Dialog>
 
           {/* Workflow Actions */}
           <Box sx={{ px: 3, pb: 3 }}>
@@ -1021,70 +753,135 @@ export default function ClassificationReview() {
           </Box>
         </Box>
 
-        {/* Export Format Selection Dialog */}
-        <Dialog
-          open={exportDialogOpen}
-          onClose={() => setExportDialogOpen(false)}
-          maxWidth="sm"
+        {/* Email Preview Dialog */}
+        <Dialog 
+          open={emailDialogOpen} 
+          onClose={handleCloseEmailDialog}
+          maxWidth="md"
           fullWidth
         >
-          <DialogTitle>
-            <Typography variant="h6" component="div">
-              Select Export Format
-            </Typography>
-          </DialogTitle>
-          <DialogContent>
-            <Typography variant="body2" sx={{ mb: 3 }}>
-              Choose the format for exporting your classified email data:
-            </Typography>
-            <Stack spacing={2}>
-              <Card 
-                sx={{ 
-                  p: 2, 
-                  cursor: 'pointer',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  '&:hover': {
-                    borderColor: 'primary.main',
-                    bgcolor: 'action.hover'
-                  }
-                }}
-                onClick={() => handleExportTrainingData('json')}
-              >
-                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                  JSON Format
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Complete data with all metadata, nested structure, ideal for programmatic processing
-                </Typography>
-              </Card>
-              <Card 
-                sx={{ 
-                  p: 2, 
-                  cursor: 'pointer',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  '&:hover': {
-                    borderColor: 'primary.main',
-                    bgcolor: 'action.hover'
-                  }
-                }}
-                onClick={() => handleExportTrainingData('csv')}
-              >
-                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                  CSV Format
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Simplified tabular format, easy to open in Excel, ideal for ML training
-                </Typography>
-              </Card>
-            </Stack>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setExportDialogOpen(false)} color="inherit">
-              Cancel
-            </Button>
-          </DialogActions>
+          {selectedEmailForPreview && (
+            <>
+              <DialogTitle>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <Typography variant="h6" sx={{ flexGrow: 1, mr: 2 }}>
+                    {selectedEmailForPreview.subject}
+                  </Typography>
+                  <ConfidenceIndicator 
+                    confidence={selectedEmailForPreview.job_probability}
+                    variant="detailed"
+                    size="small"
+                  />
+                </Box>
+              </DialogTitle>
+              <DialogContent dividers>
+                {/* Email Header Info */}
+                <Box sx={{ mb: 3 }}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Person sx={{ fontSize: 16, color: 'text.secondary' }} />
+                      <Typography variant="body2">{selectedEmailForPreview.from_address}</Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CalendarToday sx={{ fontSize: 16, color: 'text.secondary' }} />
+                      <Typography variant="body2">
+                        {new Date(selectedEmailForPreview.date_received).toLocaleString()}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Email sx={{ fontSize: 16, color: 'text.secondary' }} />
+                      <Typography variant="body2">{selectedEmailForPreview.account_email}</Typography>
+                    </Box>
+                  </Box>
+                </Box>
+
+                {/* Classification Results */}
+                {selectedEmailForPreview.is_job_related && (
+                  <Box sx={{ mb: 3 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                      Extracted Information
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {selectedEmailForPreview.company && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Business sx={{ fontSize: 16, color: 'primary.main' }} />
+                          <Typography variant="body2">
+                            <strong>Company:</strong> {selectedEmailForPreview.company}
+                          </Typography>
+                        </Box>
+                      )}
+                      {selectedEmailForPreview.position && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Work sx={{ fontSize: 16, color: 'primary.main' }} />
+                          <Typography variant="body2">
+                            <strong>Position:</strong> {selectedEmailForPreview.position}
+                          </Typography>
+                        </Box>
+                      )}
+                      {selectedEmailForPreview.status && (
+                        <Typography variant="body2">
+                          <strong>Status:</strong> {selectedEmailForPreview.status}
+                        </Typography>
+                      )}
+                    </Box>
+                  </Box>
+                )}
+
+                {/* Email Content Preview */}
+                <Box>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Email Content
+                  </Typography>
+                  <Paper sx={{ p: 2, backgroundColor: 'grey.50', maxHeight: 400, overflow: 'auto' }}>
+                    <Typography variant="body2" sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                      {selectedEmailForPreview.plaintext || 'Email content not available'}
+                    </Typography>
+                  </Paper>
+                </Box>
+              </DialogContent>
+              <DialogActions>
+                {selectedEmailForPreview.needs_review && !selectedEmailForPreview.user_classification && (
+                  <>
+                    <Button
+                      variant="contained"
+                      startIcon={<CheckCircle />}
+                      onClick={() => {
+                        handleBulkOperation({
+                          email_ids: [selectedEmailForPreview.id],
+                          operation: 'approve_for_extraction'
+                        });
+                        handleCloseEmailDialog();
+                      }}
+                      sx={{ 
+                        backgroundColor: 'success.main',
+                        '&:hover': { backgroundColor: 'success.dark' }
+                      }}
+                    >
+                      Mark as Job
+                    </Button>
+                    <Button
+                      variant="contained"
+                      startIcon={<Cancel />}
+                      onClick={() => {
+                        handleBulkOperation({
+                          email_ids: [selectedEmailForPreview.id],
+                          operation: 'reject_as_not_job'
+                        });
+                        handleCloseEmailDialog();
+                      }}
+                      sx={{ 
+                        backgroundColor: 'error.main',
+                        '&:hover': { backgroundColor: 'error.dark' }
+                      }}
+                    >
+                      Not a Job
+                    </Button>
+                  </>
+                )}
+                <Button onClick={handleCloseEmailDialog}>Close</Button>
+              </DialogActions>
+            </>
+          )}
         </Dialog>
 
         {/* Snackbar for notifications */}

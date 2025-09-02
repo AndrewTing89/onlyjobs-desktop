@@ -97,7 +97,11 @@ const BulkOperationsToolbar: React.FC<BulkOperationsToolbarProps> = ({
     
     await onBulkOperation({
       email_ids: selectedEmails,
-      operation: 'queue_for_parsing'
+      operation: 'approve_for_extraction',
+      metadata: {
+        user_classification: 'HIL_approved',
+        pipeline_stage: 'ready_for_extraction'
+      }
     });
     handleMenuClose();
   };
@@ -107,11 +111,13 @@ const BulkOperationsToolbar: React.FC<BulkOperationsToolbarProps> = ({
     
     await onBulkOperation({
       email_ids: selectedEmails,
-      operation: 'approve_as_job',
+      operation: 'approve_for_extraction',
       metadata: {
-        company: jobFormData.company || undefined,
-        position: jobFormData.position || undefined,
-        status: jobFormData.status
+        user_classification: 'HIL_approved',
+        pipeline_stage: 'ready_for_extraction',
+        user_feedback: jobFormData.company && jobFormData.position 
+          ? `Company: ${jobFormData.company}, Position: ${jobFormData.position}` 
+          : undefined
       }
     });
     
@@ -123,7 +129,11 @@ const BulkOperationsToolbar: React.FC<BulkOperationsToolbarProps> = ({
     // This would approve all high confidence (>90%) emails
     await onBulkOperation({
       email_ids: [], // Backend would filter by confidence
-      operation: 'approve_as_job'
+      operation: 'approve_for_extraction',
+      metadata: {
+        user_classification: 'HIL_approved',
+        pipeline_stage: 'ready_for_extraction'
+      }
     });
     handleSmartActionsClose();
   };

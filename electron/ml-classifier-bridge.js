@@ -115,13 +115,14 @@ class MLClassifierBridge {
             });
 
             const elapsed = Date.now() - startTime;
-            console.log(`📊 ML Classification completed in ${elapsed}ms - Job: ${processedResult.is_job_related} (probability: ${job_probability.toFixed(2)})`);
+            // Removed console.log that was causing EPIPE error
+            // ML Classification completed in Xms
             
             // Training data capture removed - will export classified data directly instead
             
             resolve(processedResult);
           } catch (parseError) {
-            console.error('Failed to parse ML result:', parseError, 'Output:', output);
+            console.error('Failed to parse ML result:', parseError.message);
             resolve({
               is_job_related: false,
               job_probability: 0,

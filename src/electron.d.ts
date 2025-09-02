@@ -17,7 +17,7 @@ interface ElectronAPI {
   getJobInbox?: (jobId: string) => Promise<any>;
   getEmailDetail?: (emailId: string) => Promise<any>;
   
-  // Email classification
+  // Email classification (legacy - redirects to pipeline API)
   classifyEmail: (input: string | { subject: string; plaintext: string }) => Promise<any>;
   getClassificationQueue: (filters?: any) => Promise<{ success: boolean; emails: any[]; stats: any; error?: string }>;
   updateClassification: (id: string, isJobRelated: boolean, notes?: string) => Promise<any>;
@@ -29,6 +29,160 @@ interface ElectronAPI {
     format?: string;
     stats?: any; 
     error?: string; 
+  }>;
+  
+  // Pipeline API - New standardized API for email pipeline
+  pipeline: {
+    getEmails: (filters?: {
+      includeDigested?: boolean;
+      includeAll?: boolean;
+      stages?: string[];
+      accountEmail?: string;
+      needsReview?: boolean;
+      isJobRelated?: boolean;
+      limit?: number;
+    }) => Promise<{
+      success: boolean;
+      emails: Array<{
+        id: number;
+        gmail_message_id: string;
+        thread_id?: string;
+        subject: string;
+        from_address: string;
+        body: string;
+        email_date: string;
+        account_email: string;
+        job_probability: number;
+        is_job_related: boolean;
+        needs_review: boolean;
+        human_verified: boolean;
+        pipeline_stage: 'fetched' | 'digested' | 'classified' | 'HIL_approved' | 'HIL_rejected' | 'ready_for_extraction' | 'extracted' | 'in_jobs';
+        review_reason?: string;
+        classification_method?: string;
+        is_digest: boolean;
+        digest_reason?: string;
+        company?: string;
+        position?: string;
+        status?: string;
+        created_at: string;
+        updated_at: string;
+      }>;
+      stats: {
+        total: number;
+        needs_review: number;
+        high_confidence: number;
+        classified: number;
+        hil_approved: number;
+        hil_rejected: number;
+        ready_for_extraction: number;
+        avg_confidence: number;
+      };
+      error?: string;
+    }>;
+    
+    getDigested: (filters?: {
+      accountEmail?: string;
+      digestReason?: string;
+      daysToKeep?: number;
+      limit?: number;
+    }) => Promise<{
+      success: boolean;
+      digested: Array<{
+        id: number;
+        gmail_message_id: string;
+        subject: string;
+        from_address: string;
+        email_date: string;
+        digest_reason: string;
+        digest_confidence: number;
+        account_email: string;
+        created_at: string;
+      }>;
+      stats: {
+        total: number;
+        byReason: Record<string, number>;
+      };
+      error?: string;
+    }>;
+    
+    updateReview: (emailId: string, decision: 'HIL_approved' | 'HIL_rejected' | 'needs_more_info') => Promise<{
+      success: boolean;
+      updated: number;
+      newStage?: string;
+      error?: string;
+    }>;
+    
+    bulkApprove: (emailIds: string[]) => Promise<{
+      success: boolean;
+      updated: number;
+      message?: string;
+      error?: string;
+    }>;
+    
+    bulkReject: (emailIds: string[]) => Promise<{
+      success: boolean;
+      updated: number;
+      message?: string;
+      error?: string;
+    }>;
+    
+    getStats: () => Promise<{
+      success: boolean;
+      stats: {
+        byStage: Record<string, number>;
+        byMethod: Record<string, number>;
+        digestReasons: Record<string, number>;
+        review: {
+          needs_review: number;
+          human_verified: number;
+          approved: number;
+          rejected: number;
+          avg_confidence: number;
+        };
+        total: number;
+      };
+      error?: string;
+    }>;
+    
+    exportTraining: (format?: 'json' | 'csv') => Promise<{
+      success: boolean;
+      filePath?: string;
+      recordCount?: number;
+      format?: string;
+      error?: string;
+    }>;
+  };
+  
+  // Email pipeline operations
+  getPipelineStatus: (params: { accountEmail?: string | null; stage?: string | null; limit?: number }) => Promise<{
+    success: boolean;
+    emails?: any[];
+    error?: string;
+  }>;
+  reviewClassification: (params: {
+    gmailMessageId: string;
+    accountEmail: string;
+    isJobRelated: boolean;
+    confidence?: number;
+  }) => Promise<{ success: boolean; error?: string }>;
+  bulkApproveClassifications: (params: {
+    accountEmail?: string | null;
+    confidenceThreshold?: number;
+  }) => Promise<{ success: boolean; approved?: number; error?: string }>;
+  runExtraction: (params: {
+    modelId: string;
+    modelPath: string;
+    testRunId?: string | null;
+    limit?: number;
+  }) => Promise<{ 
+    success: boolean; 
+    data?: {
+      processed: number;
+      successful: number;
+      failed: number;
+      results: any[];
+    };
+    error?: string;
   }>;
   
   // LLM Health Check
@@ -175,6 +329,27 @@ interface ElectronAPI {
     addAccount: () => Promise<{ success: boolean; account: { email: string } }>;
     removeAccount: (email: string) => Promise<{ success: boolean }>;
     syncAll: (options?: { daysToSync?: number; maxEmails?: number; modelId?: string }) => Promise<any>;
+    getSyncHistory: (limit?: number) => Promise<{
+      success: boolean;
+      history?: Array<{
+        id: number;
+        sync_date: string;
+        accounts_synced: number;
+        emails_fetched: number;
+        emails_processed: number;
+        emails_classified: number;
+        jobs_found: number;
+        new_jobs: number;
+        updated_jobs: number;
+        duration_ms: number;
+        status: string;
+        error_message?: string;
+        date_from?: string;
+        date_to?: string;
+        days_synced?: number;
+      }>;
+      error?: string;
+    }>;
   };
   
   // Email operations

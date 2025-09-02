@@ -321,10 +321,10 @@ app.whenReady().then(() => {
   
   // Preload LLM model in background after UI loads
   setTimeout(() => {
-    console.log('🔧 Initializing LLM model preloader...');
+    // Removed console.log that was causing EPIPE error
     const { preloadDefaultModel } = require('./llm/model-preloader');
     preloadDefaultModel().catch(err => {
-      console.error('Model preload failed:', err);
+      // Silently handle error to avoid EPIPE
     });
   }, 5000); // Wait 5 seconds for UI to be ready
 });

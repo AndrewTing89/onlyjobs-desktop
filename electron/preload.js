@@ -17,12 +17,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearJobData: () => ipcRenderer.invoke('db:clear-job-data'),
   clearClassifications: () => ipcRenderer.invoke('db:clear-classifications'),
   
-  // Email classification
+  // Email classification (legacy - kept for compatibility)
   classifyEmail: (content) => ipcRenderer.invoke('classify-email', content),
-  getClassificationQueue: (filters) => ipcRenderer.invoke('classification:get-queue', filters),
+  getClassificationQueue: (filters) => ipcRenderer.invoke('pipeline:get-emails', filters), // Redirect to new API
   updateClassification: (id, isJobRelated, notes) => ipcRenderer.invoke('classification:update', id, isJobRelated, notes),
   classificationBulkOperation: (request) => ipcRenderer.invoke('classification:bulk-operation', request),
-  exportTrainingData: (format) => ipcRenderer.invoke('classification:export-training-data', format),
+  exportTrainingData: (format) => ipcRenderer.invoke('pipeline:export-training', format), // Redirect to new API
+  
+  // Pipeline API - New standardized API for email pipeline
+  pipeline: {
+    getEmails: (filters) => ipcRenderer.invoke('pipeline:get-emails', filters),
+    getDigested: (filters) => ipcRenderer.invoke('pipeline:get-digested', filters),
+    updateReview: (emailId, decision) => ipcRenderer.invoke('pipeline:update-review', emailId, decision),
+    bulkApprove: (emailIds) => ipcRenderer.invoke('pipeline:bulk-approve', emailIds),
+    bulkReject: (emailIds) => ipcRenderer.invoke('pipeline:bulk-reject', emailIds),
+    getStats: () => ipcRenderer.invoke('pipeline:get-stats'),
+    exportTraining: (format) => ipcRenderer.invoke('pipeline:export-training', format)
+  },
   
   // LLM Health Check
   checkLLMHealth: () => ipcRenderer.invoke('llm:health-check'),
@@ -85,6 +96,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeAccount: (email) => ipcRenderer.invoke('gmail:remove-account', email),
     syncAll: (options) => ipcRenderer.invoke('gmail:sync-all', options),
     syncClassifyOnly: (options) => ipcRenderer.invoke('sync:classify-only', options),
+    getSyncHistory: (limit) => ipcRenderer.invoke('sync:get-history', limit),
   },
   
   // Email operations

@@ -14,7 +14,7 @@ const twoStage = require('./two-stage-classifier');
  */
 async function preloadDefaultModel() {
   try {
-    console.log('🚀 Starting LLM model preload...');
+    // Silently start model preload
     
     // Default model configuration
     const modelId = 'llama-3-8b-instruct-q5_k_m';
@@ -24,12 +24,11 @@ async function preloadDefaultModel() {
     // Check if model file exists
     const fs = require('fs');
     if (!fs.existsSync(modelPath)) {
-      console.log(`⚠️ Model file not found: ${modelPath}`);
-      console.log('Model will be loaded on first use');
+      // Model file not found - will be loaded on first use
       return;
     }
     
-    console.log(`📦 Preloading model: ${modelId}`);
+    // Preloading model
     const startTime = Date.now();
     
     // Warm up the model with a dummy classification
@@ -42,18 +41,16 @@ async function preloadDefaultModel() {
     );
     
     const loadTime = Date.now() - startTime;
-    console.log(`✅ Model preloaded successfully in ${loadTime}ms`);
-    console.log(`🔥 Model is now warm and ready for fast classification`);
+    // Model preloaded successfully
     
     // Log the dummy result to verify it worked
     if (dummyResult.is_job_related !== undefined) {
-      console.log('✓ Model test classification successful');
+      // Model test classification successful
     }
     
     return true;
   } catch (error) {
-    console.error('❌ Failed to preload LLM model:', error);
-    console.log('Model will be loaded on first use');
+    // Failed to preload model - will be loaded on first use
     return false;
   }
 }
@@ -68,7 +65,7 @@ async function preloadModels(modelIds = []) {
     const modelPath = path.join(modelsDir, `${modelId}.gguf`);
     
     try {
-      console.log(`Preloading ${modelId}...`);
+      // Preloading model
       // Use classifyTwoStage with dummy email to preload the model
       await twoStage.classifyTwoStage(
         modelId,
@@ -78,7 +75,7 @@ async function preloadModels(modelIds = []) {
       );
       results.push({ modelId, success: true });
     } catch (error) {
-      console.error(`Failed to preload ${modelId}:`, error);
+      // Failed to preload model
       results.push({ modelId, success: false, error: error.message });
     }
   }

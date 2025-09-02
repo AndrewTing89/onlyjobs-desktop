@@ -12,6 +12,60 @@ const { PromptManager } = require('./llm/promptManager');
 const promptManager = new PromptManager();
 const DatabaseInitializer = require('./database/db-init');
 const { addHumanInLoopTables } = require('./database/migrations/add_human_in_loop_tables');
+const { improvePipelineSchema } = require('./database/migrations/improve_pipeline_schema');
+const { 
+  CONFIDENCE_THRESHOLDS, 
+  getConfidenceLevel, 
+  needsReview, 
+  canAutoApprove, 
+  getRetentionDays,
+  shouldStoreAsJob 
+} = require('./confidence-config');
+
+// Migration function to add date range tracking to sync_history
+function addDateRangeToSyncHistory(db) {
+  console.log('Adding date range tracking to sync_history table...');
+  
+  // Check if columns already exist
+  const pragma = db.prepare("PRAGMA table_info(sync_history)").all();
+  const hasDateFrom = pragma.some(col => col.name === 'date_from');
+  const hasDateTo = pragma.some(col => col.name === 'date_to');
+  const hasDaysSynced = pragma.some(col => col.name === 'days_synced');
+  const hasEmailsClassified = pragma.some(col => col.name === 'emails_classified');
+  const hasNewJobs = pragma.some(col => col.name === 'new_jobs');
+  const hasUpdatedJobs = pragma.some(col => col.name === 'updated_jobs');
+  const hasStatus = pragma.some(col => col.name === 'status');
+  
+  if (!hasDateFrom) {
+    db.exec('ALTER TABLE sync_history ADD COLUMN date_from TEXT');
+  }
+  
+  if (!hasDateTo) {
+    db.exec('ALTER TABLE sync_history ADD COLUMN date_to TEXT'); 
+  }
+  
+  if (!hasDaysSynced) {
+    db.exec('ALTER TABLE sync_history ADD COLUMN days_synced INTEGER');
+  }
+  
+  if (!hasEmailsClassified) {
+    db.exec('ALTER TABLE sync_history ADD COLUMN emails_classified INTEGER DEFAULT 0');
+  }
+  
+  if (!hasNewJobs) {
+    db.exec('ALTER TABLE sync_history ADD COLUMN new_jobs INTEGER DEFAULT 0');
+  }
+  
+  if (!hasUpdatedJobs) {
+    db.exec('ALTER TABLE sync_history ADD COLUMN updated_jobs INTEGER DEFAULT 0');
+  }
+  
+  if (!hasStatus) {
+    db.exec('ALTER TABLE sync_history ADD COLUMN status TEXT DEFAULT \'success\'');
+  }
+  
+  console.log('Sync history date range tracking migration completed');
+}
 
 // Store for saving custom prompt
 const promptStore = new Store({ name: 'prompt-settings' });
@@ -19,7 +73,7 @@ const promptStore = new Store({ name: 'prompt-settings' });
 // Removed old auth-flow - using simplified auth for desktop app
 // const GmailAuth = require('./gmail-auth'); // Removed - using multi-account only
 const GmailMultiAuth = require('./gmail-multi-auth');
-const IntegratedEmailProcessor = require('./integrated-email-processor');
+// IntegratedEmailProcessor removed - unused
 // ML classifier removed - using pure LLM approach
 
 console.log('Loading IPC handlers...');
@@ -57,53 +111,25 @@ function getDb() {
         // Initialize the complete schema
         const initResult = dbInitializer.initializeDatabase();
         if (!initResult.success) {
-          console.error('Database initialization failed:', initResult.error);
+          // Database initialization failed
         }
         
-        // Run all migrations
-        const migrationResult = dbInitializer.runMigrations();
-        if (!migrationResult.success) {
-          console.error('Database migration failed:', migrationResult.error);
+        // Run database schema improvements
+        const improvementResult = improvePipelineSchema(db);
+        if (!improvementResult.success) {
+          console.error('Pipeline schema improvement failed:', improvementResult.error);
         }
         
-        // Run human-in-the-loop migration specifically
-        try {
-          const humanInLoopResult = addHumanInLoopTables();
-          if (!humanInLoopResult.success) {
-            console.error('Human-in-the-loop migration failed:', humanInLoopResult.error);
-          }
-        } catch (migrationError) {
-          console.error('Human-in-the-loop migration error:', migrationError);
-        }
+        // Skip old migrations since we have fresh database with clean schemas
+        // Only keep the pipeline improvement migration for clean schema setup
         
-        // Add email pipeline tables migration
-        try {
-          const { addEmailPipelineTables, migrateExistingData } = require('./database/migrations/add_email_pipeline');
-          addEmailPipelineTables(db);
-          
-          // Check if pipeline is empty and needs migration
-          const pipelineCount = db.prepare('SELECT COUNT(*) as count FROM email_pipeline').get();
-          if (pipelineCount.count === 0) {
-            console.log('Migrating existing data to email_pipeline...');
-            migrateExistingData(db);
-          }
-        } catch (pipelineError) {
-          console.error('Email pipeline migration error:', pipelineError);
-        }
-        
-        // Clean up legacy tables
-        try {
-          const { cleanupLegacyTables } = require('./database/migrations/cleanup_legacy_tables');
-          cleanupLegacyTables(db);
-        } catch (cleanupError) {
-          console.error('Legacy table cleanup error:', cleanupError);
-        }
+        console.log('Fresh database detected, skipping legacy migrations');
         
         initialized = true;
         console.log('Database initialization and migrations completed successfully');
         
       } catch (error) {
-        console.error('Error during database initialization:', error);
+        // Database initialization error
         // Fall back to legacy initialization
         initializeDatabase();
         initialized = true;
@@ -214,7 +240,7 @@ function initializeDatabase() {
     }
     
   } catch (error) {
-    console.error('Migration error:', error);
+    // Migration error
   }
   
   // Add missing columns to email_sync table if they don't exist
@@ -372,18 +398,16 @@ function initializeDatabase() {
 }
 
 // Helper function to calculate retention days based on confidence
-function calculateRetentionDays(confidence, preClassification) {
+function calculateRetentionDays(job_probability, preClassification) {
   // Don't store obvious non-job emails
-  if (preClassification === 'not_job' && confidence > 0.8) return 0;
+  if (preClassification === 'not_job' && job_probability > CONFIDENCE_THRESHOLDS.DIGEST_FILTER) return 0;
   
-  // Longer retention for uncertain classifications
-  if (confidence < 0.5) return 30;  // Very uncertain - keep for 30 days
-  if (confidence < 0.7) return 14;  // Moderately uncertain - keep for 14 days
-  return 7;  // High confidence but still worth review - keep for 7 days
+  // Use centralized retention logic
+  return getRetentionDays(job_probability, false);
 }
 
 // Helper function to store email for review
-async function storeEmailForReview(email, classification, confidence, retentionDays, accountEmail) {
+async function storeEmailForReview(email, classification, job_probability, retentionDays, accountEmail) {
   if (retentionDays === 0) return; // Don't store if retention is 0
   
   const db = getDb();
@@ -426,7 +450,7 @@ async function storeEmailForReview(email, classification, confidence, retentionD
     
     // console.log(`📋 Stored email for review: ${subject.substring(0, 50)} (confidence: ${confidence.toFixed(2)}, retention: ${retentionDays} days)`);
   } catch (error) {
-    console.error('Error storing email for review:', error);
+    // Error storing email for review
   }
 }
 
@@ -446,7 +470,7 @@ async function cleanupExpiredReviews() {
     
     return result.changes;
   } catch (error) {
-    console.error('Error cleaning up expired reviews:', error);
+    // Error cleaning up expired reviews
     return 0;
   }
 }
@@ -501,12 +525,11 @@ ipcMain.handle('db:get-jobs', async (event, filters = {}) => {
     const stmt = getDb().prepare(query);
     const results = stmt.all(...params);
     
-    console.log(`Found ${results.length} jobs`);
-    console.log('Sample job from database:', results[0]); // Debug first job
+    // Removed debug logging that was causing EPIPE errors
     
     return results;
   } catch (error) {
-    console.error('Error fetching jobs:', error);
+    // Error fetching jobs
     throw error;
   }
 });
@@ -525,7 +548,7 @@ ipcMain.handle('db:get-job', async (event, id) => {
     
     return result;
   } catch (error) {
-    console.error('Error fetching job:', error);
+    // Error fetching job
     throw error;
   }
 });
@@ -549,7 +572,7 @@ ipcMain.handle('db:get-job-email', async (event, jobId) => {
       try {
         emailHistory = JSON.parse(result.email_history);
       } catch (e) {
-        console.error('Error parsing email history:', e);
+        // Error parsing email history
       }
     }
     
@@ -559,7 +582,7 @@ ipcMain.handle('db:get-job-email', async (event, jobId) => {
       emailHistory: emailHistory
     };
   } catch (error) {
-    console.error('Error fetching job email:', error);
+    // Error fetching job email
     return { success: false, error: error.message };
   }
 });
@@ -589,7 +612,7 @@ ipcMain.handle('db:create-job', async (event, job) => {
 
     return { id, ...job, changes: result.changes };
   } catch (error) {
-    console.error('Error creating job:', error);
+    // Error creating job
     throw error;
   }
 });
@@ -607,7 +630,7 @@ ipcMain.handle('db:update-job', async (event, id, updates) => {
     const result = stmt.run(...values);
     return { changes: result.changes };
   } catch (error) {
-    console.error('Error updating job:', error);
+    // Error updating job
     throw error;
   }
 });
@@ -618,7 +641,7 @@ ipcMain.handle('db:delete-job', async (event, id) => {
     const result = stmt.run(id);
     return { changes: result.changes };
   } catch (error) {
-    console.error('Error deleting job:', error);
+    // Error deleting job
     throw error;
   }
 });
@@ -646,7 +669,7 @@ ipcMain.handle('review:get-pending', async (event, filters = {}) => {
       total: getDb().prepare('SELECT COUNT(*) as count FROM email_review WHERE manually_reviewed = 0').get().count
     };
   } catch (error) {
-    console.error('Error getting pending reviews:', error);
+    // Error getting pending reviews
     return { success: false, error: error.message };
   }
 });
@@ -697,7 +720,7 @@ ipcMain.handle('review:mark-job-related', async (event, reviewId) => {
     
     return { success: true, jobId };
   } catch (error) {
-    console.error('Error marking as job-related:', error);
+    // Error marking as job-related
     return { success: false, error: error.message };
   }
 });
@@ -710,7 +733,7 @@ ipcMain.handle('review:confirm-not-job', async (event, reviewId) => {
     
     return { success: true, deleted: result.changes > 0 };
   } catch (error) {
-    console.error('Error confirming not-job:', error);
+    // Error confirming not-job
     return { success: false, error: error.message };
   }
 });
@@ -745,7 +768,7 @@ ipcMain.handle('review:get-stats', async () => {
     
     return { success: true, stats };
   } catch (error) {
-    console.error('Error getting review stats:', error);
+    // Error getting review stats
     return { success: false, error: error.message };
   }
 });
@@ -782,7 +805,7 @@ ipcMain.handle('classify-email', async (event, arg) => {
     
     return enhancedResult;
   } catch (error) {
-    console.error('❌ Error classifying email:', error);
+    // Error classifying email
     throw error;
   }
 });
@@ -971,7 +994,7 @@ ipcMain.handle('llm:health-check', async () => {
     
     return health;
   } catch (error) {
-    console.error('Health check error:', error);
+    // Health check error
     return {
       status: 'error',
       error: error.message,
@@ -990,7 +1013,7 @@ ipcMain.handle('ml:get-status', async () => {
       model_ready: true 
     };
   } catch (error) {
-    console.error('Error getting ML model status:', error);
+    // Error getting ML model status
     throw error;
   }
 });
@@ -1000,7 +1023,7 @@ ipcMain.handle('ml:is-ready', async () => {
     // LLM models are checked separately
     return { ready: true };
   } catch (error) {
-    console.error('Error checking ML model readiness:', error);
+    // Error checking ML model readiness
     return { ready: false, error: error.message };
   }
 });
@@ -1016,7 +1039,7 @@ ipcMain.handle('ml:initialize', async () => {
     console.log('🧠 LLM models initialized');
     return { success: true };
   } catch (error) {
-    console.error('Error initializing LLM models:', error);
+    // Error initializing LLM models
     return { success: false, error: error.message };
   }
 });
@@ -1046,13 +1069,13 @@ function getGmailMultiAuth() {
   }
   
   try {
-    console.log('Initializing GmailMultiAuth on first use...');
+    // Removed console.log that was causing EPIPE error
     gmailMultiAuth = new GmailMultiAuth();
     console.log('Gmail multi-auth initialized successfully');
     return gmailMultiAuth;
   } catch (error) {
-    console.error('Failed to initialize Gmail multi-auth:', error);
-    console.error('Full error details:', error.stack);
+    // Failed to initialize Gmail multi-auth
+    // Full error details
     gmailMultiAuthError = error.message;
     throw error;
   }
@@ -1093,12 +1116,8 @@ ipcMain.handle('auth:sign-in', async () => {
     console.log('🟢 IPC: Returning response to renderer:', response);
     return response;
   } catch (error) {
-    console.error('🔴 IPC: Sign in error:', error);
-    console.error('🔴 IPC: Error details:', {
-      message: error?.message,
-      stack: error?.stack,
-      toString: error?.toString()
-    });
+    // IPC: Sign in error
+    // IPC: Error details
     // Return a proper error object
     throw new Error(error?.message || error?.toString() || 'Authentication failed');
   }
@@ -1226,7 +1245,7 @@ function _extractDate(email) {
         return date.toISOString().split('T')[0];
       }
     } catch (error) {
-      console.error('Error parsing date:', error);
+      // Error parsing date
     }
   }
   
@@ -1241,7 +1260,7 @@ function _extractDate(email) {
         return date.toISOString().split('T')[0];
       }
     } catch (error) {
-      console.error('Error parsing internal date:', error);
+      // Error parsing internal date
     }
   }
   
@@ -1254,7 +1273,7 @@ ipcMain.handle('gmail:get-sync-status', async () => {
     const stmt = getDb().prepare('SELECT * FROM sync_status WHERE id = 1');
     return stmt.get();
   } catch (error) {
-    console.error('Error getting sync status:', error);
+    // Error getting sync status
     throw error;
   }
 });
@@ -1270,7 +1289,7 @@ ipcMain.handle('sync:get-history', async (event, limit = 20) => {
     
     return { success: true, history };
   } catch (error) {
-    console.error('Error getting sync history:', error);
+    // Error getting sync history
     return { success: false, error: error.message };
   }
 });
@@ -1289,7 +1308,7 @@ ipcMain.handle('settings:get', async () => {
       })
     };
   } catch (error) {
-    console.error('Error getting settings:', error);
+    // Error getting settings
     throw error;
   }
 });
@@ -1301,7 +1320,7 @@ ipcMain.handle('settings:update', async (event, settings) => {
     });
     return { success: true };
   } catch (error) {
-    console.error('Error updating settings:', error);
+    // Error updating settings
     throw error;
   }
 });
@@ -1327,7 +1346,7 @@ ipcMain.handle('data:export', async () => {
 
     return JSON.stringify(exportData, null, 2);
   } catch (error) {
-    console.error('Error exporting data:', error);
+    // Error exporting data
     throw error;
   }
 });
@@ -1400,7 +1419,7 @@ ipcMain.handle('data:import', async (event, jsonData) => {
       emailsImported: data.emailSync.length
     };
   } catch (error) {
-    console.error('Error importing data:', error);
+    // Error importing data
     throw error;
   }
 });
@@ -1423,7 +1442,7 @@ ipcMain.handle('dialog:select-file', async () => {
     
     return null;
   } catch (error) {
-    console.error('Error selecting file:', error);
+    // Error selecting file
     throw error;
   }
 });
@@ -1445,7 +1464,7 @@ ipcMain.handle('dialog:save-file', async (event, data) => {
     
     return null;
   } catch (error) {
-    console.error('Error saving file:', error);
+    // Error saving file
     throw error;
   }
 });
@@ -1458,7 +1477,7 @@ ipcMain.handle('system:notification', async (event, title, body) => {
     }
     return { success: true };
   } catch (error) {
-    console.error('Error showing notification:', error);
+    // Error showing notification
     throw error;
   }
 });
@@ -1473,7 +1492,7 @@ ipcMain.handle('system:open-external', async (event, url) => {
     console.log('Successfully opened external URL');
     return { success: true };
   } catch (error) {
-    console.error('Error opening external URL:', error);
+    // Error opening external URL
     throw error;
   }
 });
@@ -1512,7 +1531,7 @@ ipcMain.handle('initiate-oauth', async () => {
     await shell.openExternal(webAppUrl);
     return { success: true, url: webAppUrl };
   } catch (error) {
-    console.error('Error initiating OAuth:', error);
+    // Error initiating OAuth
     throw error;
   }
 });
@@ -1539,7 +1558,7 @@ ipcMain.handle('oauth-completed', async (event, data) => {
     
     return { success: true };
   } catch (error) {
-    console.error('Error handling OAuth completion:', error);
+    // Error handling OAuth completion
     throw error;
   }
 });
@@ -1551,7 +1570,7 @@ ipcMain.handle('gmail:get-accounts', async () => {
     const accounts = gmailMultiAuth.getAllAccounts();
     return { success: true, accounts };
   } catch (error) {
-    console.error('Error getting Gmail accounts:', error);
+    // Error getting Gmail accounts
     throw error;
   }
 });
@@ -1565,7 +1584,7 @@ ipcMain.handle('gmail:add-account', async () => {
     console.log('IPC: Gmail account added:', account.email);
     return { success: true, account };
   } catch (error) {
-    console.error('IPC: Error adding Gmail account:', error);
+    // IPC: Error adding Gmail account
     throw error;
   }
 });
@@ -1576,7 +1595,7 @@ ipcMain.handle('gmail:remove-account', async (event, email) => {
     gmailMultiAuth.removeAccount(email);
     return { success: true };
   } catch (error) {
-    console.error('Error removing Gmail account:', error);
+    // Error removing Gmail account
     throw error;
   }
 });
@@ -1636,13 +1655,19 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       processor = new ThreadAwareProcessor(mainWindow);
       console.log('✅ ThreadAwareProcessor loaded successfully');
     } catch (loadError) {
-      console.error('❌ Failed to load ThreadAwareProcessor:', loadError);
-      console.error('Stack:', loadError.stack);
+      // Failed to load ThreadAwareProcessor
+      // Stack trace
     }
     
     console.log(`Starting sync for ${accounts.length} accounts...`);
     const { daysToSync = 90, maxEmails = 50000, modelId = null } = options; // High default to get all emails in period
     console.log(`Sync options - daysToSync: ${daysToSync}, maxEmails: ${maxEmails}, modelId: ${modelId || 'default'}`);
+    
+    // Calculate sync date range for history logging
+    const syncFromDate = new Date();
+    syncFromDate.setDate(syncFromDate.getDate() - daysToSync);
+    const dateFrom = syncFromDate.toISOString().split('T')[0];
+    const dateTo = new Date().toISOString().split('T')[0];
     
     let totalEmailsFetched = 0;
     let totalEmailsClassified = 0;
@@ -1813,7 +1838,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
               // Get the first email ID to use as gmail_message_id (required field)
               const primaryEmailId = job.emails && job.emails.length > 0 ? job.emails[0].id : null;
               if (!primaryEmailId) {
-                console.error(`  ❌ No email ID found for job ${job.company} - ${job.position}`);
+                // No email ID found for job
                 continue;
               }
               
@@ -1902,13 +1927,8 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
                 updateSyncStmt.run(email.id, account.email);
               }
             } catch (dbError) {
-              console.error(`❌ Error saving job ${job.company} - ${job.position}:`, dbError);
-              console.error(`  Job data:`, {
-                threadId: job.threadId,
-                primaryEmailId,
-                emailCount: job.emails?.length || 0,
-                accountEmail: account.email
-              });
+              // Error saving job
+              // Job data
             }
           }
           console.log(`✅ Job saving complete: ${totalJobsFound} jobs saved successfully`);
@@ -1917,7 +1937,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
           totalEmailsClassified += fetchResult.messages.length;
           
         } catch (processingError) {
-          console.error('Error in thread-aware processing:', processingError);
+          // Error in thread-aware processing
           
           // Fall back to simple processing if thread processor fails
           console.log('⚠️ Falling back to simple email processing...');
@@ -1995,14 +2015,14 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
             });
             
             // Calculate confidence based on result completeness
-            confidence = 0.7; // Base confidence
+            confidence = CONFIDENCE_THRESHOLDS.MEDIUM; // Base confidence
             if (classification.is_job_related) {
               if (classification.company && classification.company !== 'Unknown') confidence += 0.1;
               if (classification.position && classification.position !== 'Unknown Position') confidence += 0.1;
               if (classification.status) confidence += 0.05;
-              confidence = Math.min(confidence, 0.95);
+              confidence = Math.min(confidence, CONFIDENCE_THRESHOLDS.VERY_HIGH - 0.05);
             } else {
-              confidence = 0.8; // Non-job emails are usually clear
+              confidence = CONFIDENCE_THRESHOLDS.DIGEST_FILTER; // Non-job emails are usually clear
             }
             
             // Log classification result
@@ -2013,12 +2033,12 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
               console.log(`   Status: ${classification.status || 'Unknown'}`);
             }
             
-            // Calculate retention days for uncertain classifications (confidence < 70%)
-            const retentionDays = confidence < 0.7 ? 7 : 0;
+            // Calculate retention days for uncertain classifications
+            const retentionDays = getRetentionDays(confidence, classification.is_job_related);
             
             // Decide where to store based on confidence and classification
-            const shouldStoreAsJob = classification.is_job_related && confidence >= 0.6;
-            const shouldStoreForReview = !shouldStoreAsJob && retentionDays > 0;
+            const shouldStoreAsJobRecord = classification.is_job_related && shouldStoreAsJob(confidence);
+            const shouldStoreForReview = !shouldStoreAsJobRecord && retentionDays > 0;
             
             // Send classification result update
             if (classification.is_job_related) {
@@ -2067,7 +2087,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
             }
             
             // If high-confidence job-related, create or update job entry
-            if (shouldStoreAsJob) {
+            if (shouldStoreAsJobRecord) {
               // Create similarity key for deduplication (still stored for backwards compatibility)
               const company = classification.company || 'Unknown';
               const position = classification.position || 'Unknown Position';
@@ -2116,7 +2136,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
                     break;
                   }
                 } catch (matchError) {
-                  console.error('Error in LLM job matching:', matchError);
+                  // Error in LLM job matching
                   // Fall back to similarity key matching if LLM fails
                   const jobSimilarityKey = `${potentialMatch.company.toLowerCase().replace(/[^a-z0-9]/g, '')}_${potentialMatch.position.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
                   if (jobSimilarityKey === similarityKey) {
@@ -2261,12 +2281,12 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
               }
             }
             } catch (error) {
-              console.error(`Error processing email ${email.id}:`, error);
+              // Error processing email
             }
           }
         }
       } catch (error) {
-        console.error(`Error syncing account ${account.email}:`, error);
+        // Error syncing account
       }
     }
     
@@ -2289,11 +2309,13 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
     const duration = syncEnd - syncStartTime;
     const historyInsert = getDb().prepare(`
       INSERT INTO sync_history (
-        accounts_synced, emails_fetched, emails_processed, emails_classified,
-        jobs_found, new_jobs, updated_jobs, duration_ms, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        sync_date, accounts_synced, emails_fetched, emails_processed, emails_classified,
+        jobs_found, new_jobs, updated_jobs, duration_ms, status,
+        date_from, date_to, days_synced
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     historyInsert.run(
+      new Date(syncStartTime).toISOString(), // Use local system time when sync started
       accounts.length,
       totalEmailsFetched,
       totalEmailsFetched,
@@ -2302,7 +2324,10 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       totalJobsFound, // For now, assume all are new
       0, // Updated jobs tracking needs improvement
       duration,
-      'completed'
+      'completed',
+      dateFrom,
+      dateTo,
+      daysToSync
     );
     
     mainWindow.webContents.send('sync-complete', {
@@ -2322,7 +2347,7 @@ ipcMain.handle('gmail:sync-all', async (event, options = {}) => {
       accounts: accounts.length
     };
   } catch (error) {
-    console.error('Multi-account sync error:', error);
+    // Multi-account sync error
     throw error;
   }
 });
@@ -2343,27 +2368,23 @@ ipcMain.handle('db:clear-all-records', async () => {
       emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
       jobs: db.prepare('SELECT COUNT(*) as count FROM jobs').get().count,
       gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count,
-      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0,
-      trainingFeedback: db.prepare('SELECT COUNT(*) as count FROM training_feedback').get()?.count || 0
+      emailPipeline: db.prepare('SELECT COUNT(*) as count FROM email_pipeline').get()?.count || 0
     };
     console.log('📊 Current record counts:', beforeCounts);
     
     // Use a transaction to ensure all operations succeed or fail together
     const clearAll = db.transaction(() => {
       // Clear all tables in the correct order (respecting foreign key constraints if any)
-      const clearClassificationQueue = db.prepare('DELETE FROM classification_queue');
-      const clearTrainingFeedback = db.prepare('DELETE FROM training_feedback');
+      // classification_queue and training_feedback tables removed - using email_pipeline instead
+      const clearEmailPipeline = db.prepare('DELETE FROM email_pipeline');
       const clearEmailSync = db.prepare('DELETE FROM email_sync');
       const clearJobs = db.prepare('DELETE FROM jobs');
       const clearGmailAccounts = db.prepare('DELETE FROM gmail_accounts');
       const clearLlmCache = db.prepare('DELETE FROM llm_cache');
       const resetSyncStatus = db.prepare('UPDATE sync_status SET last_fetch_time = NULL, last_classify_time = NULL, last_sync_status = NULL, total_emails_fetched = 0, total_emails_classified = 0, total_jobs_found = 0 WHERE id = 1');
       
-      const classificationQueueResult = clearClassificationQueue.run();
-      console.log(`Deleted ${classificationQueueResult.changes} classification_queue records`);
-      
-      const trainingFeedbackResult = clearTrainingFeedback.run();
-      console.log(`Deleted ${trainingFeedbackResult.changes} training_feedback records`);
+      const emailPipelineResult = clearEmailPipeline.run();
+      console.log(`Deleted ${emailPipelineResult.changes} email_pipeline records`);
       
       const emailSyncResult = clearEmailSync.run();
       console.log(`Deleted ${emailSyncResult.changes} email_sync records`);
@@ -2397,8 +2418,7 @@ ipcMain.handle('db:clear-all-records', async () => {
       emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
       jobs: db.prepare('SELECT COUNT(*) as count FROM jobs').get().count,
       gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count,
-      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0,
-      trainingFeedback: db.prepare('SELECT COUNT(*) as count FROM training_feedback').get()?.count || 0
+      emailPipeline: db.prepare('SELECT COUNT(*) as count FROM email_pipeline').get()?.count || 0
     };
     console.log('📊 After clearing - record counts:', afterCounts);
     
@@ -2410,8 +2430,8 @@ ipcMain.handle('db:clear-all-records', async () => {
       details: result
     };
   } catch (error) {
-    console.error('❌ Error clearing database:', error);
-    console.error('Error stack:', error.stack);
+    // Error clearing database
+    // Error stack
     throw error;
   }
 });
@@ -2429,15 +2449,13 @@ ipcMain.handle('db:clear-email-sync', async () => {
     };
     console.log(`📊 Current records - email_sync: ${beforeCounts.emailSync}, classification_queue: ${beforeCounts.classificationQueue}`);
     
-    // Clear both email_sync and classification_queue since they're related
+    // Clear email_sync table
     const clearEmailSync = db.prepare('DELETE FROM email_sync');
-    const clearClassificationQueue = db.prepare('DELETE FROM classification_queue');
     
     const emailSyncResult = clearEmailSync.run();
     console.log(`Deleted ${emailSyncResult.changes} email_sync records`);
     
-    const classificationResult = clearClassificationQueue.run();
-    console.log(`Deleted ${classificationResult.changes} classification_queue records`);
+    // classification_queue table removed - using email_pipeline instead
     
     // Reset sync status counters
     const resetStmt = db.prepare('UPDATE sync_status SET total_emails_fetched = 0, total_emails_classified = 0, last_sync_status = NULL WHERE id = 1');
@@ -2459,8 +2477,8 @@ ipcMain.handle('db:clear-email-sync', async () => {
       recordsDeleted: emailSyncResult.changes + classificationResult.changes
     };
   } catch (error) {
-    console.error('❌ Error clearing email sync history:', error);
-    console.error('Error stack:', error.stack);
+    // Error clearing email sync history
+    // Error stack
     throw error;
   }
 });
@@ -2476,8 +2494,7 @@ ipcMain.handle('db:clear-job-data', async () => {
     const beforeCounts = {
       emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
       jobs: db.prepare('SELECT COUNT(*) as count FROM jobs').get().count,
-      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0,
-      trainingFeedback: db.prepare('SELECT COUNT(*) as count FROM training_feedback').get()?.count || 0,
+      emailPipeline: db.prepare('SELECT COUNT(*) as count FROM email_pipeline').get()?.count || 0,
       llmCache: db.prepare('SELECT COUNT(*) as count FROM llm_cache').get()?.count || 0,
       gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count
     };
@@ -2491,11 +2508,9 @@ ipcMain.handle('db:clear-job-data', async () => {
     console.log(`Deleted ${jobsDeleted} jobs records`);
     
     // Clear classification-related tables
-    const classificationQueueDeleted = db.prepare('DELETE FROM classification_queue').run().changes;
-    console.log(`Deleted ${classificationQueueDeleted} classification_queue records`);
-    
-    const trainingFeedbackDeleted = db.prepare('DELETE FROM training_feedback').run().changes;
-    console.log(`Deleted ${trainingFeedbackDeleted} training_feedback records`);
+    // Clear email_pipeline and llm_cache (classification_queue and training_feedback tables removed)
+    const emailPipelineDeleted = db.prepare('DELETE FROM email_pipeline').run().changes;
+    console.log(`Deleted ${emailPipelineDeleted} email_pipeline records`);
     
     const llmCacheDeleted = db.prepare('DELETE FROM llm_cache').run().changes;
     console.log(`Deleted ${llmCacheDeleted} llm_cache records`);
@@ -2512,8 +2527,7 @@ ipcMain.handle('db:clear-job-data', async () => {
     const afterCounts = {
       emailSync: db.prepare('SELECT COUNT(*) as count FROM email_sync').get().count,
       jobs: db.prepare('SELECT COUNT(*) as count FROM jobs').get().count,
-      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0,
-      trainingFeedback: db.prepare('SELECT COUNT(*) as count FROM training_feedback').get()?.count || 0,
+      emailPipeline: db.prepare('SELECT COUNT(*) as count FROM email_pipeline').get()?.count || 0,
       llmCache: db.prepare('SELECT COUNT(*) as count FROM llm_cache').get()?.count || 0,
       gmailAccounts: db.prepare('SELECT COUNT(*) as count FROM gmail_accounts').get().count
     };
@@ -2524,14 +2538,13 @@ ipcMain.handle('db:clear-job-data', async () => {
       message: `Job data cleared successfully. ${beforeCounts.gmailAccounts} Gmail account(s) remain connected.`,
       emailSyncDeleted,
       jobsDeleted,
-      classificationQueueDeleted,
-      trainingFeedbackDeleted,
+      emailPipelineDeleted,
       llmCacheDeleted,
       gmailAccountsKept: beforeCounts.gmailAccounts
     };
   } catch (error) {
-    console.error('❌ Error clearing job data:', error);
-    console.error('Error stack:', error.stack);
+    // Error clearing job data
+    // Error stack
     throw error;
   }
 });
@@ -2545,18 +2558,15 @@ ipcMain.handle('db:clear-classifications', async () => {
     
     // Check current counts before clearing
     const beforeCounts = {
-      classificationQueue: db.prepare('SELECT COUNT(*) as count FROM classification_queue').get()?.count || 0,
-      trainingFeedback: db.prepare('SELECT COUNT(*) as count FROM training_feedback').get()?.count || 0,
+      emailPipeline: db.prepare('SELECT COUNT(*) as count FROM email_pipeline').get()?.count || 0,
       llmCache: db.prepare('SELECT COUNT(*) as count FROM llm_cache').get()?.count || 0
     };
     console.log('📊 Current classification counts:', beforeCounts);
     
     // Clear classification-related tables only
-    const classificationQueueDeleted = db.prepare('DELETE FROM classification_queue').run().changes;
-    console.log(`Deleted ${classificationQueueDeleted} classification_queue records`);
-    
-    const trainingFeedbackDeleted = db.prepare('DELETE FROM training_feedback').run().changes;
-    console.log(`Deleted ${trainingFeedbackDeleted} training_feedback records`);
+    // Clear email_pipeline and llm_cache (classification_queue and training_feedback tables removed)
+    const emailPipelineDeleted = db.prepare('DELETE FROM email_pipeline').run().changes;
+    console.log(`Deleted ${emailPipelineDeleted} email_pipeline records`);
     
     const llmCacheDeleted = db.prepare('DELETE FROM llm_cache').run().changes;
     console.log(`Deleted ${llmCacheDeleted} llm_cache records`);
@@ -2568,13 +2578,12 @@ ipcMain.handle('db:clear-classifications', async () => {
     return {
       success: true,
       message: 'Classification data cleared successfully. Email sync history and job records remain intact.',
-      classificationQueueDeleted,
-      trainingFeedbackDeleted,
+      emailPipelineDeleted,
       llmCacheDeleted
     };
   } catch (error) {
-    console.error('❌ Error clearing classification data:', error);
-    console.error('Error stack:', error.stack);
+    // Error clearing classification data
+    // Error stack
     throw error;
   }
 });
@@ -2600,7 +2609,7 @@ ipcMain.handle('get-job-email', async (event, jobId) => {
       return { success: false, error: 'Job not found' };
     }
   } catch (error) {
-    console.error('Error fetching job email:', error);
+    // Error fetching job email
     return { success: false, error: error.message };
   }
 });
@@ -2674,7 +2683,7 @@ ipcMain.handle('models:get-all', async () => {
       statuses 
     };
   } catch (error) {
-    console.error('Error getting models:', error);
+    // Error getting models
     return { success: false, error: error.message };
   }
 });
@@ -2698,7 +2707,7 @@ ipcMain.handle('models:download', async (event, modelId) => {
     
     return { success: true, result };
   } catch (error) {
-    console.error(`Error downloading model ${modelId}:`, error);
+    // Error downloading model
     return { success: false, error: error.message };
   }
 });
@@ -2709,7 +2718,7 @@ ipcMain.handle('models:delete', async (event, modelId) => {
     const deleted = await modelManager.deleteModel(modelId);
     return { success: true, deleted };
   } catch (error) {
-    console.error(`Error deleting model ${modelId}:`, error);
+    // Error deleting model
     return { success: false, error: error.message };
   }
 });
@@ -2784,7 +2793,7 @@ ipcMain.handle('models:run-comparison', async (event, { subject, body, customPro
     
     return { success: true, ...results };
   } catch (error) {
-    console.error('Error running comparison:', error);
+    // Error running comparison
     return { success: false, error: error.message };
   }
 });
@@ -2796,7 +2805,7 @@ ipcMain.handle('models:get-default-prompts', async () => {
     const prompts = getAllDefaultPrompts();
     return { success: true, prompts };
   } catch (error) {
-    console.error('Error getting default prompts:', error);
+    // Error getting default prompts
     return { success: false, error: error.message };
   }
 });
@@ -2904,7 +2913,7 @@ ipcMain.handle('models:get-recent-emails', async () => {
     };
     
   } catch (error) {
-    console.error('Error getting recent emails:', error);
+    // Error getting recent emails
     return { success: false, error: error.message, emails: [] };
   }
 });
@@ -2929,7 +2938,7 @@ ipcMain.handle('ml:test-email', async (event, emailData) => {
       recommendation: 'use_llm' // Always use LLM
     };
   } catch (error) {
-    console.error('Error testing email:', error);
+    // Error testing email
     return { success: false, error: error.message };
   }
 });
@@ -2982,7 +2991,7 @@ ipcMain.handle('ml:batch-test', async () => {
       }
     };
   } catch (error) {
-    console.error('Error in batch test:', error);
+    // Error in batch test
     return { success: false, error: error.message };
   }
 });
@@ -3032,7 +3041,7 @@ ipcMain.handle('models:get-test-history', async () => {
     
     return { success: true, history };
   } catch (error) {
-    console.error('Error getting test history:', error);
+    // Error getting test history
     return { success: false, error: error.message, history: [] };
   }
 });
@@ -3046,7 +3055,7 @@ ipcMain.handle('two-stage:get-prompts', async (event, modelId) => {
     const prompts = twoStage.getModelPrompts(modelId);
     return { success: true, prompts };
   } catch (error) {
-    console.error('Error getting prompts:', error);
+    // Error getting prompts
     return { success: false, error: error.message };
   }
 });
@@ -3057,7 +3066,7 @@ ipcMain.handle('two-stage:save-stage1', async (event, modelId, prompt) => {
     twoStage.saveStage1Prompt(modelId, prompt);
     return { success: true };
   } catch (error) {
-    console.error('Error saving Stage 1 prompt:', error);
+    // Error saving Stage 1 prompt
     return { success: false, error: error.message };
   }
 });
@@ -3068,7 +3077,7 @@ ipcMain.handle('two-stage:save-stage2', async (event, modelId, prompt) => {
     twoStage.saveStage2Prompt(modelId, prompt);
     return { success: true };
   } catch (error) {
-    console.error('Error saving Stage 2 prompt:', error);
+    // Error saving Stage 2 prompt
     return { success: false, error: error.message };
   }
 });
@@ -3079,7 +3088,7 @@ ipcMain.handle('two-stage:save-stage3', async (event, modelId, prompt) => {
     twoStage.saveStage3Prompt(modelId, prompt);
     return { success: true };
   } catch (error) {
-    console.error('Error saving Stage 3 prompt:', error);
+    // Error saving Stage 3 prompt
     return { success: false, error: error.message };
   }
 });
@@ -3090,7 +3099,7 @@ ipcMain.handle('two-stage:reset-prompts', async (event, modelId) => {
     twoStage.resetPrompts(modelId);
     return { success: true };
   } catch (error) {
-    console.error('Error resetting prompts:', error);
+    // Error resetting prompts
     return { success: false, error: error.message };
   }
 });
@@ -3101,7 +3110,7 @@ ipcMain.handle('two-stage:classify', async (event, modelId, modelPath, emailSubj
     const result = await twoStage.classifyTwoStage(modelId, modelPath, emailSubject, emailBody);
     return { success: true, result };
   } catch (error) {
-    console.error('Error in two-stage classification:', error);
+    // Error in two-stage classification
     return { success: false, error: error.message };
   }
 });
@@ -3183,7 +3192,7 @@ ipcMain.handle('sync:classify-only', async (event, options = {}) => {
       jobsFound: totalClassified
     };
   } catch (error) {
-    console.error('Classification-only sync error:', error);
+    // Classification-only sync error
     
     // Send sync error event
     event.sender.send('sync-error', {
@@ -3198,26 +3207,8 @@ ipcMain.handle('sync:classify-only', async (event, options = {}) => {
   }
 });
 
-// Update classification from user review
-ipcMain.handle('classification:update', async (event, id, isJobRelated, notes = '') => {
-  try {
-    const ClassificationOnlyProcessor = require('./processors/classification-only-processor');
-    const processor = new ClassificationOnlyProcessor();
-    
-    const result = await processor.updateClassification(id, isJobRelated, notes);
-    
-    return {
-      success: true,
-      ...result
-    };
-  } catch (error) {
-    console.error('Classification update error:', error);
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-});
+// Legacy handler - classification:update removed
+// Now using review-classification and bulk-approve-classifications handlers above
 
 // Add items to parse queue (mark for LLM parsing)
 ipcMain.handle('parse:queue', async (event, items) => {
@@ -3246,7 +3237,7 @@ ipcMain.handle('parse:queue', async (event, items) => {
       db.close();
     }
   } catch (error) {
-    console.error('Parse queue error:', error);
+    // Parse queue error
     return {
       success: false,
       error: error.message
@@ -3273,7 +3264,7 @@ ipcMain.handle('classification:get-queue-summary', async (event, accountEmail = 
           is_job_related,
           needs_review,
           COUNT(*) as count,
-          AVG(confidence) as avg_confidence
+          AVG(job_probability) as avg_confidence
         FROM email_pipeline
       `;
       
@@ -3346,7 +3337,7 @@ ipcMain.handle('classification:get-queue-summary', async (event, accountEmail = 
       db.close();
     }
   } catch (error) {
-    console.error('Classification queue summary error:', error);
+    // Classification queue summary error
     return {
       success: false,
       error: error.message,
@@ -3364,60 +3355,66 @@ ipcMain.handle('classification:get-queue-summary', async (event, accountEmail = 
   }
 });
 
-// Get all classification queue items for review
+// Legacy handler - classification:get-queue removed (uses old classification_queue table)
+// Now using email_pipeline table with pipeline stages
 ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
   try {
     const db = getDb();
     
     let query = `
       SELECT 
-        cq.id,
-        cq.gmail_message_id as email_id,
-        cq.thread_id,
-        cq.subject,
-        cq.from_address,
-        cq.body,
-        COALESCE(cq.email_date, cq.created_at) as received_date,
-        cq.is_job_related,
-        cq.job_probability,
-        cq.needs_review,
-        cq.user_feedback as user_classification,
-        cq.classification_status as review_status,
-        cq.company,
-        cq.position,
-        cq.status,
-        cq.created_at,
-        cq.updated_at,
-        cq.account_email
-      FROM classification_queue cq
-      WHERE 1=1
+        ep.id,
+        ep.gmail_message_id as email_id,
+        ep.thread_id,
+        ep.subject,
+        ep.from_address,
+        ep.plaintext,
+        ep.body_html,
+        ep.date_received,
+        ep.is_job_related,
+        ep.job_probability,
+        ep.needs_review,
+        ep.user_classification,
+        ep.pipeline_stage,
+        ep.review_reason,
+        ep.classification_method,
+        ep.is_classified,
+        ep.status,
+        ep.created_at,
+        ep.updated_at,
+        ep.account_email,
+        ep.classification_method,
+        ep.is_digest,
+        ep.digest_reason
+      FROM email_pipeline ep
+      WHERE ep.pipeline_stage IN ('classified', 'ready_for_extraction')
     `;
     
     const params = [];
     
     // Apply filters
     if (filters.accountEmail) {
-      query += ' AND cq.account_email = ?';
+      query += ' AND ep.account_email = ?';
       params.push(filters.accountEmail);
     }
     
     if (filters.needsReview !== undefined) {
-      query += ' AND cq.needs_review = ?';
+      query += ' AND ep.needs_review = ?';
       params.push(filters.needsReview ? 1 : 0);
     }
     
     if (filters.isJobRelated !== undefined) {
-      query += ' AND cq.is_job_related = ?';
+      query += ' AND ep.is_job_related = ?';
       params.push(filters.isJobRelated ? 1 : 0);
     }
     
     if (filters.status) {
-      query += ' AND cq.classification_status = ?';
+      query += ' AND ep.pipeline_stage = ?';
       params.push(filters.status);
     }
     
     // Order by date descending
-    query += ' ORDER BY cq.created_at DESC';
+    query += ' ORDER BY ep.created_at DESC';
     
     if (filters.limit) {
       query += ' LIMIT ?';
@@ -3441,12 +3438,22 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
       is_job_related: Boolean(row.is_job_related),
       needs_review: Boolean(row.needs_review),
       user_classification: row.user_classification !== null ? Boolean(row.user_classification) : null,
-      review_status: row.review_status || 'pending',
+      review_status: row.pipeline_stage === 'ready_for_extraction' ? 'queued_for_parsing' : 
+                     row.pipeline_stage === 'classified' && row.needs_review ? 'needs_review' : 
+                     row.pipeline_stage || 'pending',
+      pipeline_stage: row.pipeline_stage,
+      review_reason: row.review_reason,
+      classification_method: row.classification_method,
+      is_digest: Boolean(row.is_digest),
+      digest_reason: row.digest_reason,
       company: row.company || undefined,
       position: row.position || undefined,
       status: row.status || undefined,
       created_at: row.created_at,
-      updated_at: row.updated_at
+      updated_at: row.updated_at,
+      // Add backward compatibility fields
+      ml_confidence: row.job_probability,
+      raw_content: row.body
     }));
     
     // Calculate stats
@@ -3468,7 +3475,7 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
     };
     
   } catch (error) {
-    console.error('Error fetching classification queue:', error);
+    // Error fetching classification queue
     return {
       success: false,
       error: error.message,
@@ -3485,7 +3492,527 @@ ipcMain.handle('classification:get-queue', async (event, filters = {}) => {
   }
 });
 
-// Export classification data for training
+// ============================================================================
+// PIPELINE API HANDLERS - New standardized API for email pipeline
+// ============================================================================
+
+// Get emails for review (excludes digested by default)
+ipcMain.handle('pipeline:get-emails', async (event, filters = {}) => {
+  try {
+    const db = getDb();
+    
+    // Build query - by default exclude digested emails
+    let query = `
+      SELECT 
+        ep.id,
+        ep.gmail_message_id,
+        ep.thread_id,
+        ep.subject,
+        ep.from_address,
+        ep.plaintext,
+        ep.body_html,
+        ep.date_received,
+        ep.is_job_related,
+        ep.job_probability,
+        ep.needs_review,
+        ep.user_classification,
+        ep.pipeline_stage,
+        ep.review_reason,
+        ep.classification_method,
+        ep.is_classified,
+        ep.jobs_table_id,
+        ep.user_feedback,
+        ep.reviewed_at,
+        ep.reviewed_by,
+        ep.created_at,
+        ep.updated_at,
+        ep.account_email
+      FROM email_pipeline ep
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    
+    // Default: exclude digested unless specifically requested
+    if (!filters.includeDigested) {
+      query += ' AND ep.pipeline_stage != ?';
+      params.push('digested');
+    }
+    
+    // Filter by specific stages if provided
+    if (filters.stages && Array.isArray(filters.stages)) {
+      const placeholders = filters.stages.map(() => '?').join(',');
+      query += ` AND ep.pipeline_stage IN (${placeholders})`;
+      params.push(...filters.stages);
+    } else if (!filters.includeAll) {
+      // Default to stages that need review
+      query += ' AND ep.pipeline_stage IN (?, ?, ?)';
+      params.push('classified', 'HIL_approved', 'ready_for_extraction');
+    }
+    
+    // Filter by account
+    if (filters.accountEmail) {
+      query += ' AND ep.account_email = ?';
+      params.push(filters.accountEmail);
+    }
+    
+    // Filter by needs_review flag
+    if (filters.needsReview !== undefined) {
+      query += ' AND ep.needs_review = ?';
+      params.push(filters.needsReview ? 1 : 0);
+    }
+    
+    // Filter by job-related flag
+    if (filters.isJobRelated !== undefined) {
+      query += ' AND ep.is_job_related = ?';
+      params.push(filters.isJobRelated ? 1 : 0);
+    }
+    
+    // Order and limit
+    query += ' ORDER BY ep.created_at DESC';
+    
+    if (filters.limit) {
+      query += ' LIMIT ?';
+      params.push(filters.limit);
+    }
+    
+    const stmt = db.prepare(query);
+    const results = stmt.all(...params);
+    
+    // Transform for frontend compatibility
+    const emails = results.map(row => ({
+      id: row.id,
+      gmail_message_id: row.gmail_message_id,
+      thread_id: row.thread_id,
+      subject: row.subject || '',
+      from_address: row.from_address || '',
+      body: row.body || '',
+      email_date: row.email_date || new Date().toISOString(),
+      account_email: row.account_email || '',
+      job_probability: row.job_probability || 0,
+      confidence: row.job_probability || 0,  // Backward compatibility alias
+      is_job_related: Boolean(row.is_job_related),
+      needs_review: Boolean(row.needs_review),
+      human_verified: Boolean(row.human_verified),
+      pipeline_stage: row.pipeline_stage,
+      review_reason: row.review_reason,
+      classification_method: row.classification_method,
+      is_digest: Boolean(row.is_digest),
+      digest_reason: row.digest_reason,
+      company: row.company || undefined,
+      position: row.position || undefined,
+      status: row.status || undefined,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
+    
+    // Calculate statistics
+    const stats = {
+      total: emails.length,
+      needs_review: emails.filter(e => e.needs_review).length,
+      high_confidence: emails.filter(e => e.job_probability > 0.9).length,
+      classified: emails.filter(e => e.pipeline_stage === 'classified').length,
+      hil_approved: emails.filter(e => e.pipeline_stage === 'HIL_approved').length,
+      hil_rejected: emails.filter(e => e.pipeline_stage === 'HIL_rejected').length,
+      ready_for_extraction: emails.filter(e => e.pipeline_stage === 'ready_for_extraction').length,
+      avg_confidence: emails.length > 0 
+        ? emails.reduce((sum, e) => sum + e.job_probability, 0) / emails.length 
+        : 0
+    };
+    
+    return {
+      success: true,
+      emails,
+      stats
+    };
+    
+  } catch (error) {
+    // Silently handle error to avoid EPIPE
+    return {
+      success: false,
+      error: error.message,
+      emails: [],
+      stats: {}
+    };
+  }
+});
+
+// Get digested/filtered emails
+ipcMain.handle('pipeline:get-digested', async (event, filters = {}) => {
+  try {
+    const db = getDb();
+    
+    let query = `
+      SELECT 
+        ep.id,
+        ep.gmail_message_id,
+        ep.subject,
+        ep.from_address,
+        ep.email_date,
+        ep.digest_reason,
+        ep.digest_confidence,
+        ep.account_email,
+        ep.created_at
+      FROM email_pipeline ep
+      WHERE ep.pipeline_stage = 'digested'
+    `;
+    
+    const params = [];
+    
+    if (filters.accountEmail) {
+      query += ' AND ep.account_email = ?';
+      params.push(filters.accountEmail);
+    }
+    
+    if (filters.digestReason) {
+      query += ' AND ep.digest_reason = ?';
+      params.push(filters.digestReason);
+    }
+    
+    // Add date range filter for retention
+    if (filters.daysToKeep) {
+      query += ' AND ep.created_at > datetime("now", "-' + filters.daysToKeep + ' days")';
+    }
+    
+    query += ' ORDER BY ep.created_at DESC';
+    
+    if (filters.limit) {
+      query += ' LIMIT ?';
+      params.push(filters.limit);
+    }
+    
+    const stmt = db.prepare(query);
+    const results = stmt.all(...params);
+    
+    // Group by digest reason for stats
+    const reasonCounts = {};
+    results.forEach(row => {
+      const reason = row.digest_reason || 'unknown';
+      reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+    });
+    
+    return {
+      success: true,
+      digested: results,
+      stats: {
+        total: results.length,
+        byReason: reasonCounts
+      }
+    };
+    
+  } catch (error) {
+    // Error in pipeline:get-digested
+    return {
+      success: false,
+      error: error.message,
+      digested: [],
+      stats: {}
+    };
+  }
+});
+
+// Update single email review decision
+ipcMain.handle('pipeline:update-review', async (event, emailId, decision) => {
+  try {
+    const db = getDb();
+    const now = new Date().toISOString();
+    
+    // Validate decision
+    const validDecisions = ['HIL_approved', 'HIL_rejected', 'needs_more_info'];
+    if (!validDecisions.includes(decision)) {
+      throw new Error(`Invalid decision: ${decision}`);
+    }
+    
+    // Update pipeline stage based on decision
+    let newStage;
+    let isJobRelated;
+    
+    switch (decision) {
+      case 'HIL_approved':
+        newStage = 'ready_for_extraction';
+        isJobRelated = 1;
+        break;
+      case 'HIL_rejected':
+        newStage = 'HIL_rejected';
+        isJobRelated = 0;
+        break;
+      case 'needs_more_info':
+        newStage = 'classified';
+        isJobRelated = null;
+        break;
+    }
+    
+    const stmt = db.prepare(`
+      UPDATE email_pipeline
+      SET 
+        pipeline_stage = ?,
+        human_verified = 1,
+        is_job_related = ?,
+        needs_review = 0,
+        updated_at = ?
+      WHERE gmail_message_id = ?
+    `);
+    
+    const result = stmt.run(newStage, isJobRelated, now, emailId);
+    
+    if (result.changes === 0) {
+      throw new Error('Email not found');
+    }
+    
+    return {
+      success: true,
+      updated: result.changes,
+      newStage
+    };
+    
+  } catch (error) {
+    // Error in pipeline:update-review
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// Bulk approve emails as job-related
+ipcMain.handle('pipeline:bulk-approve', async (event, emailIds) => {
+  try {
+    const db = getDb();
+    const now = new Date().toISOString();
+    
+    if (!Array.isArray(emailIds) || emailIds.length === 0) {
+      throw new Error('No email IDs provided');
+    }
+    
+    const placeholders = emailIds.map(() => '?').join(',');
+    const stmt = db.prepare(`
+      UPDATE email_pipeline
+      SET 
+        pipeline_stage = 'ready_for_extraction',
+        human_verified = 1,
+        is_job_related = 1,
+        needs_review = 0,
+        updated_at = ?
+      WHERE gmail_message_id IN (${placeholders})
+        AND pipeline_stage = 'classified'
+    `);
+    
+    const result = stmt.run(now, ...emailIds);
+    
+    return {
+      success: true,
+      updated: result.changes,
+      message: `Approved ${result.changes} emails for extraction`
+    };
+    
+  } catch (error) {
+    // Error in pipeline:bulk-approve
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// Bulk reject emails as not job-related
+ipcMain.handle('pipeline:bulk-reject', async (event, emailIds) => {
+  try {
+    const db = getDb();
+    const now = new Date().toISOString();
+    
+    if (!Array.isArray(emailIds) || emailIds.length === 0) {
+      throw new Error('No email IDs provided');
+    }
+    
+    const placeholders = emailIds.map(() => '?').join(',');
+    const stmt = db.prepare(`
+      UPDATE email_pipeline
+      SET 
+        pipeline_stage = 'HIL_rejected',
+        human_verified = 1,
+        is_job_related = 0,
+        needs_review = 0,
+        updated_at = ?
+      WHERE gmail_message_id IN (${placeholders})
+        AND pipeline_stage = 'classified'
+    `);
+    
+    const result = stmt.run(now, ...emailIds);
+    
+    return {
+      success: true,
+      updated: result.changes,
+      message: `Rejected ${result.changes} emails as not job-related`
+    };
+    
+  } catch (error) {
+    // Error in pipeline:bulk-reject
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// Get pipeline statistics
+ipcMain.handle('pipeline:get-stats', async (event) => {
+  try {
+    const db = getDb();
+    
+    // Get counts by pipeline stage
+    const stageCounts = db.prepare(`
+      SELECT 
+        pipeline_stage,
+        COUNT(*) as count
+      FROM email_pipeline
+      GROUP BY pipeline_stage
+    `).all();
+    
+    // Get counts by classification method
+    const methodCounts = db.prepare(`
+      SELECT 
+        classification_method,
+        COUNT(*) as count
+      FROM email_pipeline
+      WHERE classification_method IS NOT NULL
+      GROUP BY classification_method
+    `).all();
+    
+    // Get digest statistics
+    const digestStats = db.prepare(`
+      SELECT 
+        digest_reason,
+        COUNT(*) as count
+      FROM email_pipeline
+      WHERE pipeline_stage = 'digested'
+      GROUP BY digest_reason
+    `).all();
+    
+    // Get review statistics
+    const reviewStats = db.prepare(`
+      SELECT 
+        COUNT(CASE WHEN needs_review = 1 THEN 1 END) as needs_review,
+        COUNT(CASE WHEN human_verified = 1 THEN 1 END) as human_verified,
+        COUNT(CASE WHEN pipeline_stage = 'HIL_approved' THEN 1 END) as approved,
+        COUNT(CASE WHEN pipeline_stage = 'HIL_rejected' THEN 1 END) as rejected,
+        AVG(job_probability) as avg_confidence
+      FROM email_pipeline
+      WHERE pipeline_stage != 'digested'
+    `).get();
+    
+    // Transform stage counts to object
+    const stages = {};
+    stageCounts.forEach(row => {
+      stages[row.pipeline_stage] = row.count;
+    });
+    
+    // Transform method counts to object
+    const methods = {};
+    methodCounts.forEach(row => {
+      methods[row.classification_method] = row.count;
+    });
+    
+    // Transform digest reasons to object
+    const digestReasons = {};
+    digestStats.forEach(row => {
+      digestReasons[row.digest_reason || 'unknown'] = row.count;
+    });
+    
+    return {
+      success: true,
+      stats: {
+        byStage: stages,
+        byMethod: methods,
+        digestReasons,
+        review: reviewStats,
+        total: Object.values(stages).reduce((sum, count) => sum + count, 0)
+      }
+    };
+    
+  } catch (error) {
+    // Error in pipeline:get-stats
+    return {
+      success: false,
+      error: error.message,
+      stats: {}
+    };
+  }
+});
+
+// Export training data from pipeline
+ipcMain.handle('pipeline:export-training', async (event, format = 'json') => {
+  try {
+    const db = getDb();
+    const fs = require('fs');
+    const path = require('path');
+    
+    // Get all human-verified emails for training
+    const trainingData = db.prepare(`
+      SELECT 
+        gmail_message_id,
+        subject,
+        from_address,
+        body,
+        is_job_related,
+        pipeline_stage,
+        classification_method,
+        confidence,
+        digest_reason,
+        company,
+        position,
+        status
+      FROM email_pipeline
+      WHERE human_verified = 1
+      ORDER BY updated_at DESC
+    `).all();
+    
+    if (trainingData.length === 0) {
+      return {
+        success: false,
+        error: 'No training data available'
+      };
+    }
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const fileName = `training-data-${timestamp}.${format}`;
+    const filePath = path.join(app.getPath('downloads'), fileName);
+    
+    if (format === 'json') {
+      fs.writeFileSync(filePath, JSON.stringify(trainingData, null, 2));
+    } else if (format === 'csv') {
+      // Create CSV with headers
+      const headers = Object.keys(trainingData[0]).join(',');
+      const rows = trainingData.map(row => 
+        Object.values(row).map(val => 
+          typeof val === 'string' ? `"${val.replace(/"/g, '""')}"` : val
+        ).join(',')
+      );
+      const csv = [headers, ...rows].join('\n');
+      fs.writeFileSync(filePath, csv);
+    }
+    
+    return {
+      success: true,
+      filePath,
+      recordCount: trainingData.length,
+      format
+    };
+    
+  } catch (error) {
+    // Error in pipeline:export-training
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// ============================================================================
+// END PIPELINE API HANDLERS
+// ============================================================================
+
+// Legacy handler - classification:export-training-data removed (uses old classification_queue and training_feedback tables)
+/* REMOVED - export-training-data handler
 ipcMain.handle('classification:export-training-data', async (event, format = 'json') => {
   try {
     // Minimal logging to avoid EPIPE errors
@@ -3526,7 +4053,7 @@ ipcMain.handle('classification:export-training-data', async (event, format = 'js
       rows = db.prepare(query).all();
       // Don't log row count to avoid potential EPIPE errors
     } catch (queryError) {
-      console.error('Query error:', queryError);
+      // Query error
       return {
         success: false,
         error: `Database query failed: ${queryError.message}`
@@ -3674,7 +4201,7 @@ ipcMain.handle('classification:export-training-data', async (event, format = 'js
     } catch (writeError) {
       // Use safer error logging
       try {
-        console.error('File write error:', writeError.message);
+        // File write error
       } catch (e) {
         // Ignore console errors
       }
@@ -3752,7 +4279,7 @@ ipcMain.handle('classification:export-training-data', async (event, format = 'js
       errorMessage = error.message || errorMessage;
       // Only log to console if it's safe
       if (process.stderr && process.stderr.writable) {
-        console.error('Export error:', errorMessage);
+        // Export error
       }
     } catch (e) {
       // Ignore console errors
@@ -3763,8 +4290,10 @@ ipcMain.handle('classification:export-training-data', async (event, format = 'js
     };
   }
 });
+*/ // END REMOVED - export-training-data handler
 
-// Bulk operation handler for classification review
+// Legacy handler - classification:bulk-operation removed (uses old classification_queue table)
+/* REMOVED - bulk-operation handler
 ipcMain.handle('classification:bulk-operation', async (event, request) => {
   try {
     const db = getDb();
@@ -3850,10 +4379,11 @@ ipcMain.handle('classification:bulk-operation', async (event, request) => {
     };
     
   } catch (error) {
-    console.error('Error in bulk operation:', error);
+    // Error in bulk operation
     return { success: false, error: error.message };
   }
 });
+*/ // END REMOVED - bulk-operation handler
 
 // ===== END HUMAN-IN-THE-LOOP HANDLERS =====
 
@@ -3903,9 +4433,9 @@ ipcMain.handle('get-pipeline-status', async (event, { accountEmail = null, stage
     params.push(limit);
     
     const results = db.prepare(query).all(...params);
-    return { success: true, data: results };
+    return { success: true, emails: results };
   } catch (error) {
-    console.error('Error getting pipeline status:', error);
+    // Error getting pipeline status
     return { success: false, error: error.message };
   }
 });
@@ -3919,7 +4449,7 @@ ipcMain.handle('get-extraction-comparison', async (event, { gmailMessageId, acco
     const comparison = await manager.getExtractionComparison(gmailMessageId, accountEmail);
     return { success: true, data: comparison };
   } catch (error) {
-    console.error('Error getting extraction comparison:', error);
+    // Error getting extraction comparison
     return { success: false, error: error.message };
   }
 });
@@ -3933,7 +4463,7 @@ ipcMain.handle('run-extraction', async (event, { modelId, modelPath, testRunId =
     const results = await manager.extractPendingEmails(modelId, modelPath, testRunId, limit);
     return { success: true, data: results };
   } catch (error) {
-    console.error('Error running extraction:', error);
+    // Error running extraction
     return { success: false, error: error.message };
   }
 });
@@ -3947,7 +4477,7 @@ ipcMain.handle('select-extraction', async (event, { gmailMessageId, accountEmail
     const selected = await manager.selectBestExtraction(gmailMessageId, accountEmail, method);
     return { success: true, data: selected };
   } catch (error) {
-    console.error('Error selecting extraction:', error);
+    // Error selecting extraction
     return { success: false, error: error.message };
   }
 });
@@ -3961,7 +4491,7 @@ ipcMain.handle('clear-model-extractions', async (event, { modelId, testRunId = n
     const cleared = await manager.clearModelExtractions(modelId, testRunId);
     return { success: true, cleared };
   } catch (error) {
-    console.error('Error clearing model extractions:', error);
+    // Error clearing model extractions
     return { success: false, error: error.message };
   }
 });
@@ -3975,7 +4505,7 @@ ipcMain.handle('get-model-performance', async (event, { modelId = null }) => {
     const performance = await manager.getModelPerformance(modelId);
     return { success: true, data: performance };
   } catch (error) {
-    console.error('Error getting model performance:', error);
+    // Error getting model performance
     return { success: false, error: error.message };
   }
 });
@@ -4002,7 +4532,7 @@ ipcMain.handle('create-test-run', async (event, { description, modelIds, dateFro
     
     return { success: true, testRunId };
   } catch (error) {
-    console.error('Error creating test run:', error);
+    // Error creating test run
     return { success: false, error: error.message };
   }
 });
@@ -4018,7 +4548,7 @@ ipcMain.handle('get-test-runs', async (event) => {
     
     return { success: true, data: runs };
   } catch (error) {
-    console.error('Error getting test runs:', error);
+    // Error getting test runs
     return { success: false, error: error.message };
   }
 });
@@ -4046,7 +4576,7 @@ ipcMain.handle('delete-test-run', async (event, { testRunId }) => {
     
     return { success: true, deleted: result.changes };
   } catch (error) {
-    console.error('Error deleting test run:', error);
+    // Error deleting test run
     return { success: false, error: error.message };
   }
 });
@@ -4112,7 +4642,7 @@ ipcMain.handle('reset-pipeline-stage', async (event, { stage, accountEmail = nul
     
     return { success: true, updated: result.changes };
   } catch (error) {
-    console.error('Error resetting pipeline stage:', error);
+    // Error resetting pipeline stage
     return { success: false, error: error.message };
   }
 });
@@ -4149,7 +4679,7 @@ ipcMain.handle('review-classification', async (event, { gmailMessageId, accountE
     
     return { success: true, updated: result.changes };
   } catch (error) {
-    console.error('Error reviewing classification:', error);
+    // Error reviewing classification
     return { success: false, error: error.message };
   }
 });
@@ -4180,7 +4710,7 @@ ipcMain.handle('bulk-approve-classifications', async (event, { accountEmail, con
     
     return { success: true, approved: result.changes };
   } catch (error) {
-    console.error('Error bulk approving classifications:', error);
+    // Error bulk approving classifications
     return { success: false, error: error.message };
   }
 });
@@ -4214,7 +4744,7 @@ ipcMain.handle('get-review-queue', async (event, { accountEmail, limit = 100 }) 
     
     return { success: true, data: results };
   } catch (error) {
-    console.error('Error getting review queue:', error);
+    // Error getting review queue
     return { success: false, error: error.message };
   }
 });

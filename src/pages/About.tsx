@@ -106,7 +106,7 @@ export default function About() {
                 </Typography>
                 <Typography variant="body1">
                   A desktop application that intelligently processes your Gmail to automatically track job applications 
-                  using a Human-in-the-Loop workflow with an optimized 3-stage stateless LLM classification system.
+                  using a Human-in-the-Loop workflow with ML classification, human review, and LLM extraction.
                 </Typography>
               </CardContent>
             </Card>
@@ -124,36 +124,36 @@ export default function About() {
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                         <Email sx={{ color: 'warning.main' }} />
                         <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                          Stage 1: Fetch & Classify
+                          Page 1: Fetch & Classify
                         </Typography>
                       </Box>
                       <List dense>
                         <ListItem>
                           <ListItemIcon><Speed color="warning" /></ListItemIcon>
                           <ListItemText 
-                            primary="Ultra-Fast Binary Classification"
-                            secondary="~0.5s per email (512 tokens)"
-                          />
-                        </ListItem>
-                        <ListItem>
-                          <ListItemIcon><Storage color="warning" /></ListItemIcon>
-                          <ListItemText 
-                            primary="Stateless Processing"
-                            secondary="Fresh context for each email"
+                            primary="Ultra-Fast ML Classification"
+                            secondary="~1-2ms per email (Random Forest)"
                           />
                         </ListItem>
                         <ListItem>
                           <ListItemIcon><FilterAlt color="warning" /></ListItemIcon>
                           <ListItemText 
-                            primary="Early Exit Strategy"
-                            secondary="70% emails filtered out quickly"
+                            primary="Digest Filter"
+                            secondary="Remove newsletters, job boards"
                           />
                         </ListItem>
                         <ListItem>
-                          <ListItemIcon><CheckCircle color="warning" /></ListItemIcon>
+                          <ListItemIcon><TrendingUp color="warning" /></ListItemIcon>
                           <ListItemText 
-                            primary="ML Pre-Classifier"
-                            secondary="Stage 0 for even faster filtering"
+                            primary="95% Accuracy"
+                            secondary="Continuously learning from feedback"
+                          />
+                        </ListItem>
+                        <ListItem>
+                          <ListItemIcon><Timeline color="warning" /></ListItemIcon>
+                          <ListItemText 
+                            primary="Automatic Processing"
+                            secondary="No manual intervention needed"
                           />
                         </ListItem>
                       </List>
@@ -165,7 +165,7 @@ export default function About() {
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                         <CheckCircle sx={{ color: 'success.main' }} />
                         <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                          Stage 2: Human Review
+                          Page 2: Review Classifications
                         </Typography>
                       </Box>
                       <List dense>
@@ -206,7 +206,7 @@ export default function About() {
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                         <CloudQueue sx={{ color: 'primary.main' }} />
                         <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                          Stage 3: Extract Details
+                          Page 3: Extract with LLM
                         </Typography>
                       </Box>
                       <List dense>
@@ -214,7 +214,7 @@ export default function About() {
                           <ListItemIcon><Psychology color="primary" /></ListItemIcon>
                           <ListItemText 
                             primary="LLM Extraction"
-                            secondary="~1s per email (1024 tokens)"
+                            secondary="~1-2s per approved email only"
                           />
                         </ListItem>
                         <ListItem>
@@ -227,8 +227,8 @@ export default function About() {
                         <ListItem>
                           <ListItemIcon><Memory color="primary" /></ListItemIcon>
                           <ListItemText 
-                            primary="Job Matching"
-                            secondary="~0.5s orphan detection"
+                            primary="Smart Job Matching"
+                            secondary="Detects and merges duplicates"
                           />
                         </ListItem>
                         <ListItem>
@@ -255,12 +255,12 @@ export default function About() {
                 <Box sx={{ position: 'relative', pl: 4 }}>
                   {[
                     { icon: <Email />, title: 'Fetch Emails', desc: 'Connect Gmail accounts and sync emails', color: 'text.secondary' },
-                    { icon: <Memory />, title: 'ML Classification', desc: 'Ultra-fast ML classification (~10ms) identifies job emails', color: 'warning.main' },
+                    { icon: <FilterAlt />, title: 'Digest Filter', desc: 'Remove newsletters, job boards, and spam', color: 'secondary.main' },
+                    { icon: <Memory />, title: 'ML Classification', desc: 'Ultra-fast ML classification (~1-2ms) identifies job emails', color: 'warning.main' },
                     { icon: <CheckCircle />, title: 'Human Review', desc: 'User verifies and corrects ML classifications', color: 'info.main' },
-                    { icon: <CloudQueue />, title: 'LLM Extraction', desc: 'Extract job details from confirmed emails (~1s, 1024 tokens)', color: 'primary.main' },
-                    { icon: <FilterAlt />, title: 'LLM Job Matching', desc: 'Match orphan emails to existing jobs (~0.5s, 512 tokens)', color: 'secondary.main' },
-                    { icon: <Storage />, title: 'Database Storage', desc: 'Store jobs with thread grouping and deduplication', color: 'text.primary' },
-                    { icon: <School />, title: 'Model Training', desc: 'User feedback continuously improves ML model', color: 'success.main' }
+                    { icon: <CloudQueue />, title: 'LLM Extraction', desc: 'Extract job details from approved emails (~1-2s)', color: 'primary.main' },
+                    { icon: <Storage />, title: 'Database Storage', desc: 'Store jobs with deduplication and thread grouping', color: 'text.primary' },
+                    { icon: <School />, title: 'Continuous Learning', desc: 'User feedback improves ML model accuracy', color: 'success.main' }
                   ].map((step, index) => (
                     <Box key={index} sx={{ display: 'flex', alignItems: 'flex-start', mb: 3, position: 'relative' }}>
                       {index < 6 && (
@@ -329,9 +329,9 @@ export default function About() {
                       fields: ['gmail_message_id', 'account_email', 'processed_at', 'is_job_related']
                     },
                     {
-                      table: 'classification_queue',
-                      desc: 'Human-in-the-Loop review queue',
-                      fields: ['gmail_message_id', 'thread_id', 'ml_classification', 'ml_confidence', 'user_classification', 'status']
+                      table: 'email_pipeline',
+                      desc: 'Central hub tracking emails through workflow',
+                      fields: ['gmail_message_id', 'pipeline_stage', 'ml_classification', 'job_probability', 'needs_review', 'user_classification']
                     },
                     {
                       table: 'training_feedback',

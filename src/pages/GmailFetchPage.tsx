@@ -13,12 +13,24 @@ import {
   Stepper,
   Step,
   StepLabel,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Chip,
 } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import {
   Email as EmailIcon,
   Analytics as AnalyticsIcon,
   ArrowForward as ArrowForwardIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  AccessTime as AccessTimeIcon,
+  History as HistoryIcon,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
@@ -36,18 +48,18 @@ import { useAuth } from '../contexts/ElectronAuthContext';
 
 const workflowSteps = [
   {
-    label: 'Fetch Emails',
-    description: 'Connect Gmail accounts and fetch emails for processing',
+    label: 'Step 1: Fetch & ML Classify',
+    description: 'Fetch from Gmail → Filter digests → ML classification',
     active: true
   },
   {
-    label: 'Review Classifications',
-    description: 'Review AI classifications and mark job-related emails',
+    label: 'Step 2: Review Classifications',
+    description: 'Human review of ML classifications',
     active: false
   },
   {
-    label: 'Extract Job Details',
-    description: 'Use LLM models to parse job details from confirmed job emails',
+    label: 'Step 3: LLM Extract',
+    description: 'LLM extraction for approved emails',
     active: false
   }
 ];
@@ -56,6 +68,7 @@ interface SyncStats {
   processed?: number;
   found?: number;
   skipped?: number;
+  needsReview?: number;
 }
 
 interface SyncProgress {
@@ -85,6 +98,15 @@ export default function GmailFetchPage() {
   const [syncStats, setSyncStats] = useState<SyncStats>({});
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const [syncHistory, setSyncHistory] = useState<any[]>([]);
+
+  const showSnackbar = (message: string, severity: typeof snackbar.severity) => {
+    setSnackbar({ open: true, message, severity });
+  };
+
+  const handleSnackbarClose = () => {
+    setSnackbar({ ...snackbar, open: false });
+  };
 
   useEffect(() => {
     // Listen for sync progress
@@ -103,6 +125,8 @@ export default function GmailFetchPage() {
         });
         const message = `Sync complete! Processed ${result.emailsFetched || 0} emails • Found ${result.jobsFound || 0} job applications`;
         showSnackbar(message, 'success');
+        // Reload sync history after successful sync
+        loadSyncHistory();
       });
 
       window.electronAPI.on('sync-error', (error: any) => {
@@ -119,6 +143,36 @@ export default function GmailFetchPage() {
     }
   }, []);
 
+  // Load sync history on mount and after syncs
+  useEffect(() => {
+    loadSyncHistory();
+  }, []);
+
+  const loadSyncHistory = async () => {
+    console.log('Loading sync history...');
+    console.log('window.electronAPI:', window.electronAPI);
+    console.log('window.electronAPI.gmail:', window.electronAPI?.gmail);
+    
+    if (window.electronAPI?.gmail?.getSyncHistory) {
+      try {
+        console.log('Calling getSyncHistory...');
+        const result = await window.electronAPI.gmail.getSyncHistory(10);
+        console.log('Sync history result:', result);
+        
+        if (result.success && result.history) {
+          console.log('Setting sync history:', result.history);
+          setSyncHistory(result.history);
+        } else {
+          console.log('No history in result or not successful');
+        }
+      } catch (error) {
+        console.error('Failed to load sync history:', error);
+      }
+    } else {
+      console.log('getSyncHistory API not available');
+    }
+  };
+
   const handleNavigateToClassification = () => {
     navigate('/classification-review');
   };
@@ -130,14 +184,6 @@ export default function GmailFetchPage() {
     } catch (error) {
       console.error('Logout failed:', error);
     }
-  };
-
-  const showSnackbar = (message: string, severity: typeof snackbar.severity) => {
-    setSnackbar({ open: true, message, severity });
-  };
-
-  const handleSnackbarClose = () => {
-    setSnackbar({ ...snackbar, open: false });
   };
 
   return (
@@ -155,7 +201,7 @@ export default function GmailFetchPage() {
             <TopBar
               currentUser={currentUser}
               onLogout={handleLogout}
-              title="Step 1 of 3: Fetch Emails"
+              title="Step 1 of 3: Fetch & ML Classify"
             />
           </Box>
 
@@ -220,8 +266,8 @@ export default function GmailFetchPage() {
                 Gmail Email Fetching
               </Typography>
               <Typography variant="body1" color="text.secondary">
-                Connect Gmail accounts and sync job-related emails for classification and parsing.
-                This is the first step in the Human-in-the-Loop workflow.
+                Connect Gmail accounts and sync emails. Automatically filters digests and uses ML classification (no LLM).
+                Classification happens locally in 1-2ms per email. Next step: Human review before LLM extraction.
               </Typography>
             </Box>
 
@@ -240,12 +286,12 @@ export default function GmailFetchPage() {
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <Box>
                         <Typography variant="h6" gutterBottom>
-                          Ready to proceed?
+                          ML Classification Complete
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
                           {syncStats.processed && syncStats.processed > 0
-                            ? `${syncStats.processed} emails fetched and ready for classification review`
-                            : "Once you've fetched emails, proceed to review classifications"}
+                            ? `${syncStats.processed} emails classified. ${syncStats.needsReview || 0} need human review.`
+                            : "Once you've fetched emails, proceed to review ML classifications"}
                         </Typography>
                       </Box>
                       <Button
@@ -363,6 +409,132 @@ export default function GmailFetchPage() {
                     </CardContent>
                   </Card>
                 )}
+
+                {/* Sync History */}
+                <Card sx={{ mt: 3 }}>
+                    <CardContent sx={{ p: 3 }}>
+                      <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <HistoryIcon />
+                        Sync History
+                      </Typography>
+                      {syncHistory.length > 0 ? (
+                        <>
+                          <TableContainer component={Paper} elevation={0}>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Sync Date</TableCell>
+                              <TableCell align="center">Start Date</TableCell>
+                              <TableCell align="center">End Date</TableCell>
+                              <TableCell align="center">Days</TableCell>
+                              <TableCell align="center">Accounts</TableCell>
+                              <TableCell align="center">Fetched</TableCell>
+                              <TableCell align="center">Jobs Found</TableCell>
+                              <TableCell align="center">Duration</TableCell>
+                              <TableCell align="center">Status</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {syncHistory.slice(0, 5).map((sync) => (
+                              <TableRow key={sync.id}>
+                                {/* Sync Date */}
+                                <TableCell>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <AccessTimeIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                    <Typography variant="body2">
+                                      {new Date(sync.sync_date).toLocaleDateString('en-US', {
+                                        month: 'short',
+                                        day: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                      })}
+                                    </Typography>
+                                  </Box>
+                                </TableCell>
+                                
+                                {/* Start Date */}
+                                <TableCell align="center">
+                                  <Typography variant="body2">
+                                    {sync.date_from ? new Date(sync.date_from).toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      day: 'numeric'
+                                    }) : '—'}
+                                  </Typography>
+                                </TableCell>
+                                
+                                {/* End Date */}
+                                <TableCell align="center">
+                                  <Typography variant="body2">
+                                    {sync.date_to ? new Date(sync.date_to).toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      day: 'numeric'
+                                    }) : '—'}
+                                  </Typography>
+                                </TableCell>
+                                
+                                {/* Days (calculated) */}
+                                <TableCell align="center">
+                                  <Typography variant="body2">
+                                    {sync.date_from && sync.date_to 
+                                      ? Math.ceil((new Date(sync.date_to).getTime() - new Date(sync.date_from).getTime()) / (1000 * 60 * 60 * 24))
+                                      : sync.days_synced || '—'}
+                                  </Typography>
+                                </TableCell>
+                                
+                                {/* Accounts */}
+                                <TableCell align="center">
+                                  <Typography variant="body2">{sync.accounts_synced}</Typography>
+                                </TableCell>
+                                
+                                {/* Fetched */}
+                                <TableCell align="center">
+                                  <Typography variant="body2">{sync.emails_fetched}</Typography>
+                                </TableCell>
+                                {/* Jobs Found */}
+                                <TableCell align="center">
+                                  <Chip 
+                                    label={sync.jobs_found} 
+                                    size="small" 
+                                    color={sync.jobs_found > 0 ? 'success' : 'default'}
+                                    variant={sync.jobs_found > 0 ? 'filled' : 'outlined'}
+                                  />
+                                </TableCell>
+                                
+                                {/* Duration */}
+                                <TableCell align="center">
+                                  <Typography variant="body2">
+                                    {(sync.duration_ms / 1000).toFixed(1)}s
+                                  </Typography>
+                                </TableCell>
+                                
+                                {/* Status */}
+                                <TableCell align="center">
+                                  {sync.status === 'success' || sync.status === 'completed' ? (
+                                    <CheckCircleIcon sx={{ fontSize: 20, color: 'success.main' }} />
+                                  ) : (
+                                    <ErrorIcon sx={{ fontSize: 20, color: 'error.main' }} />
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                          </TableContainer>
+                          {syncHistory.length > 5 && (
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                              Showing latest 5 of {syncHistory.length} syncs
+                            </Typography>
+                          )}
+                        </>
+                      ) : (
+                        <Box sx={{ py: 3, textAlign: 'center' }}>
+                          <Typography variant="body2" color="text.secondary">
+                            No sync history available yet. Sync your emails to see history here.
+                          </Typography>
+                        </Box>
+                      )}
+                    </CardContent>
+                  </Card>
               </Grid>
             </Grid>
 

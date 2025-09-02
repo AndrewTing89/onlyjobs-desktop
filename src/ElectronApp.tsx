@@ -11,9 +11,9 @@ const Jobs = lazy(() => import('./pages/Jobs'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Settings = lazy(() => import('./pages/Settings'));
 const AnalyticsDashboard = lazy(() => import('./pages/AnalyticsDashboard'));
-const ClassificationReview = lazy(() => import('./pages/ClassificationReview'));
-// Workflow pages
+// Workflow pages - 3-page workflow
 const GmailFetchPage = lazy(() => import('./pages/GmailFetchPage'));
+const ClassificationReview = lazy(() => import('./pages/ClassificationReview'));
 const ExtractionPage = lazy(() => import('./pages/ExtractionPage'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
@@ -102,15 +102,15 @@ function ElectronApp() {
                 {/* Default route - go to jobs */}
                 <Route path="/" element={<Navigate to="/jobs" replace />} />
                 
-                {/* Workflow routes */}
+                {/* Workflow routes - 3-page workflow */}
                 <Route path="/gmail-fetch" element={<GmailFetchPage />} />
+                <Route path="/classification-review" element={<ClassificationReview />} />
                 <Route path="/extraction" element={<ExtractionPage />} />
                 
                 {/* Main app routes */}
                 <Route path="/jobs" element={<Jobs />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/analytics" element={<AnalyticsDashboard />} />
-                <Route path="/classification-review" element={<ClassificationReview />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/about" element={<About />} />
                 

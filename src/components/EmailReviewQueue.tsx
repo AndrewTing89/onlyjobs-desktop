@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getConfidenceColor, getConfidenceLabel } from '../utils/confidence';
 import {
   Dialog,
   DialogTitle,
@@ -188,17 +189,7 @@ export function EmailReviewQueue({ open = false, onClose, embedded = false }: Em
     }
   };
 
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.7) return 'success';
-    if (confidence >= 0.5) return 'warning';
-    return 'error';
-  };
-
-  const getConfidenceLabel = (confidence: number) => {
-    if (confidence >= 0.7) return 'High';
-    if (confidence >= 0.5) return 'Medium';
-    return 'Low';
-  };
+  // Using standardized confidence utilities from utils/confidence.ts
 
   const filteredReviews = reviews.filter(review =>
     searchTerm === '' ||

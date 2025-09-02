@@ -1,39 +1,55 @@
 export interface EmailClassification {
   id: string;
-  email_id: string;
+  gmail_message_id: string;
   from_address: string;
   subject: string;
-  received_date: string;
+  date_received: string;
   account_email: string;
   thread_id?: string;
   
+  // Email content
+  plaintext: string;
+  body_html?: string;
+  
   // ML Classification results
-  job_probability: number; // 0-1 probability that email is job-related
+  ml_classification?: string; // JSON string of classification result
+  job_probability: number; // 0-1 probability that email is job-related (unified confidence field)
   is_job_related: boolean;
-  needs_review?: boolean;
+  is_classified: boolean;
+  
+  // Pipeline workflow stages
+  pipeline_stage: 'fetched' | 'classified' | 'ready_for_extraction' | 'extracted' | 'in_jobs';
+  classification_method?: 'digest_filter' | 'ml' | 'llm' | 'human' | 'rule_based';
   
   // Extracted job information (if applicable)
   company?: string;
   position?: string;
   status?: 'Applied' | 'Interview' | 'Offer' | 'Declined';
   
-  // Human review status
-  review_status: 'needs_review' | 'approved' | 'rejected' | 'queued_for_parsing';
-  reviewed_by?: string;
+  // Links and metadata
+  jobs_table_id?: string;
+  needs_review?: boolean;
+  review_reason?: string;
+  user_feedback?: string;
+  
+  // User review tracking
+  user_classification?: 'HIL_approved' | 'HIL_rejected';
   reviewed_at?: string;
+  reviewed_by?: string;
   
   // Processing metadata
   created_at: string;
   updated_at: string;
-  body: string;
-  processed_at?: string;
 }
 
 export interface ClassificationFilters {
   confidence_min?: number;
   confidence_max?: number;
-  review_status?: EmailClassification['review_status'][];
+  pipeline_stage?: EmailClassification['pipeline_stage'][];
+  classification_method?: EmailClassification['classification_method'][];
   is_job_related?: boolean;
+  is_classified?: boolean;
+  needs_review?: boolean;
   date_from?: string;
   date_to?: string;
   search_query?: string;
@@ -42,11 +58,11 @@ export interface ClassificationFilters {
 
 export interface BulkOperationRequest {
   email_ids: string[];
-  operation: 'approve_as_job' | 'reject_as_not_job' | 'queue_for_parsing' | 'mark_needs_review';
+  operation: 'approve_for_extraction' | 'reject_as_not_job' | 'mark_needs_review' | 'mark_reviewed';
   metadata?: {
-    company?: string;
-    position?: string;
-    status?: EmailClassification['status'];
+    user_classification?: 'HIL_approved' | 'HIL_rejected';
+    pipeline_stage?: EmailClassification['pipeline_stage'];
+    user_feedback?: string;
   };
 }
 
@@ -91,8 +107,8 @@ export const CONFIDENCE_LEVELS: Record<string, ConfidenceLevel> = {
   }
 };
 
-export function getConfidenceLevel(confidence: number): ConfidenceLevel {
-  if (confidence < 0.3) return CONFIDENCE_LEVELS.low;
-  if (confidence < 0.7) return CONFIDENCE_LEVELS.medium;
+export function getConfidenceLevel(job_probability: number): ConfidenceLevel {
+  if (job_probability < 0.3) return CONFIDENCE_LEVELS.low;
+  if (job_probability < 0.7) return CONFIDENCE_LEVELS.medium;
   return CONFIDENCE_LEVELS.high;
 }

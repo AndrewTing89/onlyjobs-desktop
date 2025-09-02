@@ -43,11 +43,11 @@ export interface SidebarSection {
 
 const sidebarSections: SidebarSection[] = [
   {
-    title: 'Workflow',
+    title: 'Email Processing',
     items: [
-      { text: 'Fetch Emails', icon: <Email />, path: '/gmail-fetch', active: false },
-      { text: 'Classify', icon: <RateReview />, path: '/classification-review', active: false },
-      { text: 'Extract', icon: <Psychology />, path: '/extraction', active: false },
+      { text: '1. Fetch & ML Classify', icon: <Email />, path: '/gmail-fetch', active: false },
+      { text: '2. Review Classifications', icon: <RateReview />, path: '/classification-review', active: false },
+      { text: '3. LLM Extract', icon: <Psychology />, path: '/extraction', active: false },
     ]
   },
   {
