@@ -15,6 +15,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const { app } = require('electron');
 const DigestDetector = require('../digest-detector');
+const { addEmailPipelineTables, migrateExistingData } = require('../database/migrations/add_email_pipeline');
 
 // Shared database connection for this processor
 let sharedDb = null;
@@ -37,6 +38,25 @@ class ClassificationOnlyProcessor {
     this.db = getSharedDb(); // Use shared connection
     this.BATCH_SAVE_SIZE = 50; // Save every 50 emails
     this.digestDetector = new DigestDetector(); // Initialize digest detector
+    
+    // Initialize pipeline tables if needed
+    this.initializePipelineTables();
+  }
+  
+  /**
+   * Initialize pipeline tables and migrate existing data
+   */
+  initializePipelineTables() {
+    try {
+      addEmailPipelineTables(this.db);
+      // Only migrate once - check if pipeline table is empty
+      const pipelineCount = this.db.prepare('SELECT COUNT(*) as count FROM email_pipeline').get();
+      if (pipelineCount.count === 0) {
+        migrateExistingData(this.db);
+      }
+    } catch (error) {
+      console.error('Error initializing pipeline tables:', error);
+    }
   }
 
   /**
@@ -119,9 +139,9 @@ class ClassificationOnlyProcessor {
       // Step 5: Combine all results (ML classified + digest filtered)
       const allResults = [...mlResults, ...digestResults];
 
-      // Step 6: Save everything to classification queue
+      // Step 6: Save everything to pipeline
       if (allResults.length > 0) {
-        await this.saveToClassificationQueue(allResults, account);
+        await this.saveToPipeline(allResults, account);
       }
 
       const stats = this.calculateStats(mlResults);
@@ -611,7 +631,7 @@ class ClassificationOnlyProcessor {
         this.sendProgress(`Saving batch ${saveBatchNum} of ${totalBatches} to database...`, progress + 2);
         
         const saveStartTime = Date.now();
-        await this.saveToClassificationQueue(toSave, account);
+        await this.saveToPipeline(toSave, account);
         const saveTime = Date.now() - saveStartTime;
         
         savedCount += toSave.length;
@@ -637,7 +657,7 @@ class ClassificationOnlyProcessor {
       this.sendProgress(`Saving final batch to database...`, 92);
       
       const saveStartTime = Date.now();
-      await this.saveToClassificationQueue(remaining, account);
+      await this.saveToPipeline(remaining, account);
       const saveTime = Date.now() - saveStartTime;
       
       console.log(`Saved final batch: ${remaining.length} emails`);
@@ -664,7 +684,150 @@ class ClassificationOnlyProcessor {
   }
 
   /**
-   * Save a batch of classification results to database
+   * Save classification results to the pipeline table
+   */
+  async saveToPipeline(results, account) {
+    console.log(`saveToPipeline: Starting to save ${results.length} results...`);
+    const db = this.db; // Use shared connection
+
+    try {
+      // Prepare UPSERT statement for pipeline
+      const upsertPipeline = db.prepare(`
+        INSERT INTO email_pipeline (
+          gmail_message_id,
+          thread_id,
+          account_email,
+          subject,
+          from_address,
+          body,
+          email_date,
+          raw_email_data,
+          is_digest,
+          digest_reason,
+          digest_confidence,
+          ml_is_job_related,
+          ml_confidence,
+          ml_processed_at,
+          ml_processing_time_ms,
+          pipeline_stage,
+          needs_review,
+          review_reason,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(gmail_message_id, account_email) DO UPDATE SET
+          thread_id = excluded.thread_id,
+          subject = excluded.subject,
+          from_address = excluded.from_address,
+          body = excluded.body,
+          email_date = excluded.email_date,
+          raw_email_data = excluded.raw_email_data,
+          is_digest = excluded.is_digest,
+          digest_reason = excluded.digest_reason,
+          digest_confidence = excluded.digest_confidence,
+          ml_is_job_related = excluded.ml_is_job_related,
+          ml_confidence = excluded.ml_confidence,
+          ml_processed_at = excluded.ml_processed_at,
+          ml_processing_time_ms = excluded.ml_processing_time_ms,
+          pipeline_stage = excluded.pipeline_stage,
+          needs_review = excluded.needs_review,
+          review_reason = excluded.review_reason,
+          updated_at = excluded.updated_at
+      `);
+
+      const updateEmailSync = db.prepare(`
+        INSERT OR REPLACE INTO email_sync (
+          gmail_message_id,
+          account_email,
+          processed_at,
+          is_job_related
+        ) VALUES (?, ?, ?, ?)
+      `);
+
+      // Begin transaction
+      const transaction = db.transaction(() => {
+        for (const result of results) {
+          const { email, classification, account_email, processed_at } = result;
+
+          // Determine pipeline stage
+          let pipelineStage;
+          if (classification.model_type === 'digest_filter') {
+            pipelineStage = 'digest_filtered';
+          } else if (!classification.is_job_related) {
+            pipelineStage = 'ml_classified';
+          } else if (classification.is_job_related && classification.company) {
+            // If we already have extraction data
+            pipelineStage = 'extraction_complete';
+          } else {
+            pipelineStage = 'extraction_pending';
+          }
+
+          // Convert dates
+          const emailDate = email.internalDate 
+            ? new Date(parseInt(email.internalDate)).toISOString()
+            : email.date 
+              ? new Date(email.date).toISOString()
+              : new Date().toISOString();
+
+          const now = new Date().toISOString();
+
+          // UPSERT to pipeline
+          upsertPipeline.run(
+            email.id,
+            email.threadId,
+            account_email,
+            email.subject,
+            email.from,
+            email.body,
+            emailDate,
+            JSON.stringify({
+              snippet: email.snippet,
+              labelIds: email.labelIds,
+              internalDate: email.internalDate,
+              date: email.date,
+              to: email.to,
+              bodyIsHtml: email.bodyIsHtml || false
+            }),
+            classification.model_type === 'digest_filter' ? 1 : 0,
+            classification.filter_reason || null,
+            classification.filter_confidence || null,
+            classification.is_job_related ? 1 : 0,
+            classification.job_probability || classification.confidence || 0,
+            now,
+            classification.processing_time || 0,
+            pipelineStage,
+            classification.needs_review ? 1 : 0,
+            classification.needs_review ? 'low_confidence' : null,
+            now,
+            now
+          );
+
+          // Update email sync tracking
+          updateEmailSync.run(
+            email.id,
+            account_email,
+            processed_at,
+            classification.is_job_related ? 1 : 0
+          );
+        }
+      });
+
+      console.log(`saveToPipeline: Starting transaction for ${results.length} results...`);
+      transaction();
+      console.log(`saveToPipeline: Successfully saved ${results.length} results to pipeline`);
+
+      // Also save to classification_queue for backward compatibility (temporary)
+      await this.saveToClassificationQueue(results, account);
+
+    } catch (error) {
+      console.error('Error saving to pipeline:', error);
+      // Fall back to old method
+      await this.saveToClassificationQueue(results, account);
+    }
+  }
+
+  /**
+   * Save a batch of classification results to database (legacy - kept for compatibility)
    */
   async saveToClassificationQueue(results, account) {
     console.log(`saveToClassificationQueue: Starting to save ${results.length} results...`);

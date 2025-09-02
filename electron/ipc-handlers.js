@@ -76,6 +76,21 @@ function getDb() {
           console.error('Human-in-the-loop migration error:', migrationError);
         }
         
+        // Add email pipeline tables migration
+        try {
+          const { addEmailPipelineTables, migrateExistingData } = require('./database/migrations/add_email_pipeline');
+          addEmailPipelineTables(db);
+          
+          // Check if pipeline is empty and needs migration
+          const pipelineCount = db.prepare('SELECT COUNT(*) as count FROM email_pipeline').get();
+          if (pipelineCount.count === 0) {
+            console.log('Migrating existing data to email_pipeline...');
+            migrateExistingData(db);
+          }
+        } catch (pipelineError) {
+          console.error('Email pipeline migration error:', pipelineError);
+        }
+        
         initialized = true;
         console.log('Database initialization and migrations completed successfully');
         
@@ -3934,6 +3949,265 @@ ipcMain.handle('classification:bulk-operation', async (event, request) => {
 });
 
 // ===== END HUMAN-IN-THE-LOOP HANDLERS =====
+
+// ===== EMAIL PIPELINE HANDLERS =====
+
+// Get pipeline status for emails
+ipcMain.handle('get-pipeline-status', async (event, { accountEmail = null, stage = null, limit = 100 }) => {
+  try {
+    const db = getDb();
+    let query = `
+      SELECT 
+        gmail_message_id,
+        thread_id,
+        account_email,
+        subject,
+        from_address,
+        email_date,
+        pipeline_stage,
+        is_digest,
+        ml_is_job_related,
+        ml_confidence,
+        needs_review,
+        CASE 
+          WHEN extraction_attempts IS NOT NULL 
+          THEN json_array_length(extraction_attempts) 
+          ELSE 0 
+        END as extraction_count,
+        selected_model_id,
+        jobs_table_id,
+        created_at,
+        updated_at
+      FROM email_pipeline
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    if (accountEmail) {
+      query += ' AND account_email = ?';
+      params.push(accountEmail);
+    }
+    if (stage) {
+      query += ' AND pipeline_stage = ?';
+      params.push(stage);
+    }
+    query += ' ORDER BY email_date DESC LIMIT ?';
+    params.push(limit);
+    
+    const results = db.prepare(query).all(...params);
+    return { success: true, data: results };
+  } catch (error) {
+    console.error('Error getting pipeline status:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Get extraction comparison for an email
+ipcMain.handle('get-extraction-comparison', async (event, { gmailMessageId, accountEmail }) => {
+  try {
+    const ExtractionManager = require('./pipeline/extraction-manager');
+    const manager = new ExtractionManager();
+    
+    const comparison = await manager.getExtractionComparison(gmailMessageId, accountEmail);
+    return { success: true, data: comparison };
+  } catch (error) {
+    console.error('Error getting extraction comparison:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Run extraction with specific model
+ipcMain.handle('run-extraction', async (event, { modelId, modelPath, testRunId = null, limit = 100 }) => {
+  try {
+    const ExtractionManager = require('./pipeline/extraction-manager');
+    const manager = new ExtractionManager();
+    
+    const results = await manager.extractPendingEmails(modelId, modelPath, testRunId, limit);
+    return { success: true, data: results };
+  } catch (error) {
+    console.error('Error running extraction:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Select best extraction for an email
+ipcMain.handle('select-extraction', async (event, { gmailMessageId, accountEmail, method = 'auto_best' }) => {
+  try {
+    const ExtractionManager = require('./pipeline/extraction-manager');
+    const manager = new ExtractionManager();
+    
+    const selected = await manager.selectBestExtraction(gmailMessageId, accountEmail, method);
+    return { success: true, data: selected };
+  } catch (error) {
+    console.error('Error selecting extraction:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Clear model extractions
+ipcMain.handle('clear-model-extractions', async (event, { modelId, testRunId = null }) => {
+  try {
+    const ExtractionManager = require('./pipeline/extraction-manager');
+    const manager = new ExtractionManager();
+    
+    const cleared = await manager.clearModelExtractions(modelId, testRunId);
+    return { success: true, cleared };
+  } catch (error) {
+    console.error('Error clearing model extractions:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Get model performance stats
+ipcMain.handle('get-model-performance', async (event, { modelId = null }) => {
+  try {
+    const ExtractionManager = require('./pipeline/extraction-manager');
+    const manager = new ExtractionManager();
+    
+    const performance = await manager.getModelPerformance(modelId);
+    return { success: true, data: performance };
+  } catch (error) {
+    console.error('Error getting model performance:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Create test run
+ipcMain.handle('create-test-run', async (event, { description, modelIds, dateFrom, dateTo, settings = {} }) => {
+  try {
+    const db = getDb();
+    const testRunId = `run-${new Date().toISOString().split('T')[0]}-${Date.now().toString().slice(-3)}`;
+    
+    const stmt = db.prepare(`
+      INSERT INTO test_runs (id, description, model_ids, date_from, date_to, settings)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    
+    stmt.run(
+      testRunId,
+      description,
+      JSON.stringify(modelIds),
+      dateFrom,
+      dateTo,
+      JSON.stringify(settings)
+    );
+    
+    return { success: true, testRunId };
+  } catch (error) {
+    console.error('Error creating test run:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Get test runs
+ipcMain.handle('get-test-runs', async (event) => {
+  try {
+    const db = getDb();
+    const runs = db.prepare(`
+      SELECT * FROM test_runs 
+      ORDER BY created_at DESC
+    `).all();
+    
+    return { success: true, data: runs };
+  } catch (error) {
+    console.error('Error getting test runs:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Delete test run
+ipcMain.handle('delete-test-run', async (event, { testRunId }) => {
+  try {
+    const db = getDb();
+    
+    // First clear associated extractions
+    const ExtractionManager = require('./pipeline/extraction-manager');
+    const manager = new ExtractionManager();
+    
+    // Get all models from the test run
+    const testRun = db.prepare('SELECT model_ids FROM test_runs WHERE id = ?').get(testRunId);
+    if (testRun && testRun.model_ids) {
+      const modelIds = JSON.parse(testRun.model_ids);
+      for (const modelId of modelIds) {
+        await manager.clearModelExtractions(modelId, testRunId);
+      }
+    }
+    
+    // Delete the test run record
+    const result = db.prepare('DELETE FROM test_runs WHERE id = ?').run(testRunId);
+    
+    return { success: true, deleted: result.changes };
+  } catch (error) {
+    console.error('Error deleting test run:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Reset pipeline to stage
+ipcMain.handle('reset-pipeline-stage', async (event, { stage, accountEmail = null }) => {
+  try {
+    const db = getDb();
+    let query;
+    const params = [];
+    
+    switch (stage) {
+      case 'pre_ml':
+        query = `UPDATE email_pipeline SET 
+          ml_is_job_related = NULL, 
+          ml_confidence = NULL,
+          ml_processed_at = NULL,
+          ml_processing_time_ms = NULL,
+          extraction_attempts = NULL,
+          selected_extraction = NULL,
+          selected_model_id = NULL,
+          pipeline_stage = 'fetched',
+          updated_at = CURRENT_TIMESTAMP`;
+        break;
+        
+      case 'pre_extraction':
+        query = `UPDATE email_pipeline SET 
+          extraction_attempts = NULL,
+          selected_extraction = NULL,
+          selected_model_id = NULL,
+          pipeline_stage = CASE 
+            WHEN ml_is_job_related = 1 THEN 'extraction_pending'
+            WHEN ml_is_job_related = 0 THEN 'ml_classified'
+            ELSE pipeline_stage
+          END,
+          updated_at = CURRENT_TIMESTAMP`;
+        break;
+        
+      case 'pre_promotion':
+        query = `UPDATE email_pipeline SET 
+          jobs_table_id = NULL,
+          pipeline_stage = CASE
+            WHEN selected_extraction IS NOT NULL THEN 'extraction_complete'
+            WHEN ml_is_job_related = 1 THEN 'extraction_pending'
+            ELSE pipeline_stage
+          END,
+          updated_at = CURRENT_TIMESTAMP
+          WHERE pipeline_stage = 'promoted_to_jobs'`;
+        break;
+        
+      default:
+        throw new Error('Invalid stage: ' + stage);
+    }
+    
+    if (accountEmail) {
+      query += ' WHERE account_email = ?';
+      params.push(accountEmail);
+    }
+    
+    const result = db.prepare(query).run(...params);
+    
+    return { success: true, updated: result.changes };
+  } catch (error) {
+    console.error('Error resetting pipeline stage:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ===== END EMAIL PIPELINE HANDLERS =====
 
 // Cleanup on app quit
 app.on('before-quit', () => {
