@@ -295,6 +295,15 @@ class DigestDetector {
       };
     }
     
+    // Special check for Indeed job recommendations - these are ALWAYS digests
+    if (from.includes('donotreply@match.indeed.com')) {
+      return {
+        is_digest: true,
+        reason: 'digest_domain:donotreply@match.indeed.com',
+        confidence: 0.99
+      };
+    }
+    
     // First check if it's definitely an application email (whitelist)
     // This MUST be checked before domain filtering
     if (this.isApplicationEmail(subject, body)) {
