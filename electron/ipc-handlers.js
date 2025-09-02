@@ -91,6 +91,14 @@ function getDb() {
           console.error('Email pipeline migration error:', pipelineError);
         }
         
+        // Clean up legacy tables
+        try {
+          const { cleanupLegacyTables } = require('./database/migrations/cleanup_legacy_tables');
+          cleanupLegacyTables(db);
+        } catch (cleanupError) {
+          console.error('Legacy table cleanup error:', cleanupError);
+        }
+        
         initialized = true;
         console.log('Database initialization and migrations completed successfully');
         
@@ -3246,103 +3254,7 @@ ipcMain.handle('parse:queue', async (event, items) => {
   }
 });
 
-// Process parse queue (LLM parsing)
-ipcMain.handle('parse:batch', async (event, options = {}) => {
-  try {
-    const ParseQueueWorker = require('./processors/parse-queue-worker');
-    const worker = new ParseQueueWorker(event.sender);
-    
-    const result = await worker.processParseQueue(options);
-    
-    return {
-      success: true,
-      ...result
-    };
-  } catch (error) {
-    console.error('Parse batch error:', error);
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-});
-
-// Get items needing review (low confidence classifications)
-ipcMain.handle('classification:get-pending', async (event, accountEmail = null) => {
-  try {
-    const ClassificationOnlyProcessor = require('./processors/classification-only-processor');
-    const processor = new ClassificationOnlyProcessor();
-    
-    const items = await processor.getPendingReview(accountEmail);
-    
-    return {
-      success: true,
-      items
-    };
-  } catch (error) {
-    console.error('Get pending review error:', error);
-    return {
-      success: false,
-      error: error.message,
-      items: []
-    };
-  }
-});
-
-// Training feedback removed - will export classified data directly instead
-
-// Get parse queue statistics
-ipcMain.handle('parse:get-stats', async (event, accountEmail = null) => {
-  try {
-    const ParseQueueWorker = require('./processors/parse-queue-worker');
-    const worker = new ParseQueueWorker();
-    
-    const stats = await worker.getParseQueueStats(accountEmail);
-    
-    return {
-      success: true,
-      stats
-    };
-  } catch (error) {
-    console.error('Parse stats error:', error);
-    return {
-      success: false,
-      error: error.message,
-      stats: {
-        pending: 0,
-        parsing: 0,
-        parsed: 0,
-        failed: 0,
-        skip: 0,
-        total: 0
-      }
-    };
-  }
-});
-
-// Retry failed parse items
-ipcMain.handle('parse:retry-failed', async (event, options = {}) => {
-  try {
-    const ParseQueueWorker = require('./processors/parse-queue-worker');
-    const worker = new ParseQueueWorker(event.sender);
-    
-    const result = await worker.retryFailedItems(
-      options.maxRetries || 50,
-      options.modelId || 'llama-3-8b-instruct-q5_k_m'
-    );
-    
-    return {
-      success: true,
-      ...result
-    };
-  } catch (error) {
-    console.error('Parse retry error:', error);
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-});
+// Legacy handlers removed - using email_pipeline now
 
 // Get classification queue summary
 ipcMain.handle('classification:get-queue-summary', async (event, accountEmail = null) => {
@@ -3357,13 +3269,12 @@ ipcMain.handle('classification:get-queue-summary', async (event, accountEmail = 
     try {
       let query = `
         SELECT 
-          classification_status,
-          parse_status,
+          pipeline_stage,
           is_job_related,
           needs_review,
           COUNT(*) as count,
           AVG(confidence) as avg_confidence
-        FROM classification_queue
+        FROM email_pipeline
       `;
       
       const params = [];
@@ -3372,7 +3283,7 @@ ipcMain.handle('classification:get-queue-summary', async (event, accountEmail = 
         params.push(accountEmail);
       }
       
-      query += ' GROUP BY classification_status, parse_status, is_job_related, needs_review';
+      query += ' GROUP BY pipeline_stage, is_job_related, needs_review';
       
       const stmt = db.prepare(query);
       const results = stmt.all(...params);
@@ -3395,7 +3306,7 @@ ipcMain.handle('classification:get-queue-summary', async (event, accountEmail = 
       for (const row of results) {
         summary.total += row.count;
         
-        if (row.classification_status === 'classified' || row.classification_status === 'reviewed') {
+        if (row.pipeline_stage === 'classified' || row.pipeline_stage === 'ready_for_extraction' || row.pipeline_stage === 'extracted') {
           summary.classified += row.count;
         }
         
@@ -3407,16 +3318,12 @@ ipcMain.handle('classification:get-queue-summary', async (event, accountEmail = 
           summary.needsReview += row.count;
         }
         
-        if (row.parse_status === 'pending' && row.is_job_related === 1) {
+        if (row.pipeline_stage === 'ready_for_extraction') {
           summary.pendingParse += row.count;
         }
         
-        if (row.parse_status === 'parsed') {
+        if (row.pipeline_stage === 'extracted' || row.pipeline_stage === 'in_jobs') {
           summary.parsed += row.count;
-        }
-        
-        if (row.parse_status === 'failed') {
-          summary.failed += row.count;
         }
         
         if (row.avg_confidence) {

@@ -841,21 +841,51 @@ class ClassificationOnlyProcessor {
     }
   }
 
+  // Legacy methods removed (saveToClassificationQueue and createClassificationTables)
+  // These were used with the old classification_queue table
+  // Now using email_pipeline table exclusively
+
   /**
-   * Save a batch of classification results to database (legacy - kept for compatibility)
+   * Calculate statistics from results
    */
-  async saveToClassificationQueue(results, account) {
-    console.log(`saveToClassificationQueue: Starting to save ${results.length} results...`);
-    const db = this.db; // Use shared connection
+  calculateStats(results) {
+    const classified = results.length;
+    const jobRelated = results.filter(r => r.classification.is_job_related).length;
+    const needsReview = results.filter(r => r.classification.needs_review).length;
+    const highConfidence = results.filter(r => r.classification.confidence >= 0.8).length;
+    const lowConfidence = results.filter(r => r.classification.confidence < 0.8).length;
 
-    try {
-      // Ensure tables exist
-      this.createClassificationTables(db);
-      console.log(`saveToClassificationQueue: Tables verified`);
+    return {
+      totalEmails: classified,
+      classified,
+      jobRelated,
+      nonJobRelated: classified - jobRelated,
+      needsReview,
+      highConfidence,
+      lowConfidence,
+      averageConfidence: classified > 0 
+        ? results.reduce((sum, r) => sum + r.classification.confidence, 0) / classified 
+        : 0
+    };
+  }
 
-      // Prepare statements
-      const insertClassification = db.prepare(`
-        INSERT OR REPLACE INTO classification_queue (
+  /**
+   * Send progress updates to UI
+   */
+  sendProgress(message, progress) {
+    if (this.webContents) {
+      this.webContents.send('sync-progress', {
+        stage: message,
+        progress: progress
+      });
+    }
+  }
+
+  /**
+   * Send activity updates to UI
+   */
+  sendActivity(type, message, data = {}) {
+    // Content will be fixed below
           gmail_message_id,
           thread_id,
           account_email,
