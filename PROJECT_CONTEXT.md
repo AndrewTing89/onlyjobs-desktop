@@ -17,6 +17,12 @@ This file is automatically maintained by Claude Code hooks to track edits and ma
 ## Recent Edits (Auto-Generated)
 <!-- Edits are automatically logged here by hooks -->
 
+- **[2025-09-02 23:15:23]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/electron/database/migrations/add_human_in_loop_tables.js
+- **[2025-09-02 23:15:03]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/electron/database/migrations/add_email_pipeline.js
+- **[2025-09-02 23:13:31]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/electron/preload.js
+- **[2025-09-02 23:01:41]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/CLAUDE.md
+- **[2025-09-02 23:01:31]** Write: /Users/ndting/Desktop/onlyjobs-desktop/ARCHITECTURE.md
+- **[2025-09-02 23:00:19]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/CLAUDE.md
 - **[2025-09-02 22:52:54]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/electron/processors/classification-only-processor.js
 - **[2025-09-02 22:38:12]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/electron/processors/classification-only-processor.js
 - **[2025-09-02 22:38:06]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/electron/processors/classification-only-processor.js
@@ -111,12 +117,12 @@ This file is automatically maintained by Claude Code hooks to track edits and ma
 - **[2025-09-02 16:43:13]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/src/pages/ClassificationReview.tsx
 - **[2025-09-02 16:43:01]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/electron/ipc-handlers.js
 - **[2025-09-02 16:39:16]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/src/pages/ClassificationReview.tsx
-- **[2025-09-02 16:39:07]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/src/types/classification.ts
-- **[2025-09-02 16:36:07]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/src/pages/ClassificationReview.tsx
-- **[2025-09-02 16:35:52]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/src/pages/ClassificationReview.tsx
-- **[2025-09-02 16:35:48]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/src/pages/ClassificationReview.tsx
-- **[2025-09-02 16:35:43]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/src/pages/ClassificationReview.tsx
-- **[2025-09-02 16:35:38]** Edit: /Users/ndting/Desktop/onlyjobs-desktop/src/pages/ClassificationReview.tsx
+
+
+
+
+
+
 
 
 

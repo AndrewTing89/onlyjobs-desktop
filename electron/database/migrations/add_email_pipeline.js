@@ -1,5 +1,8 @@
 /**
- * Migration to add unified email_pipeline table
+ * DEPRECATED: Migration to add unified email_pipeline table
+ * This migration has been superseded by improve_pipeline_schema.js
+ * Kept for historical record only - do not use for new installations
+ * 
  * This consolidates email processing into a single table with JSON storage for extraction attempts
  */
 

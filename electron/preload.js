@@ -86,7 +86,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAuthStatus: () => ipcRenderer.invoke('gmail:get-auth-status'),
     fetchEmails: (options) => ipcRenderer.invoke('gmail:fetch-emails', options),
     disconnect: () => ipcRenderer.invoke('gmail:disconnect'),
-    sync: (options) => ipcRenderer.invoke('gmail:sync-all', options), // Map sync to sync-all
     cancelSync: () => ipcRenderer.invoke('gmail:cancel-sync'),
     fetch: (options) => ipcRenderer.invoke('gmail:fetch', options),
     getSyncStatus: () => ipcRenderer.invoke('gmail:get-sync-status'),
@@ -94,7 +93,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAccounts: () => ipcRenderer.invoke('gmail:get-accounts'),
     addAccount: () => ipcRenderer.invoke('gmail:add-account'),
     removeAccount: (email) => ipcRenderer.invoke('gmail:remove-account', email),
-    syncAll: (options) => ipcRenderer.invoke('gmail:sync-all', options),
     syncClassifyOnly: (options) => ipcRenderer.invoke('sync:classify-only', options),
     getSyncHistory: (limit) => ipcRenderer.invoke('sync:get-history', limit),
   },

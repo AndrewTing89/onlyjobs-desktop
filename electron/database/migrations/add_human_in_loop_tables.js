@@ -1,5 +1,7 @@
 /**
- * Database migration to add human-in-the-loop classification system
+ * DEPRECATED: Database migration to add human-in-the-loop classification system
+ * This migration has been superseded by improve_pipeline_schema.js
+ * Kept for historical record only - do not use for new installations
  * 
  * This migration adds support for:
  * 1. Enhanced job classification status tracking
