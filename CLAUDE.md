@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OnlyJobs is an AI-powered job application tracking desktop application built with Electron, React, and TypeScript. It automatically syncs with Gmail, uses ML classification with human review followed by local LLM extraction to accurately track job applications, and provides real-time analytics.
 
+📖 **For comprehensive system architecture, database schema, IPC handlers, and workflow documentation, see [ARCHITECTURE.md](./ARCHITECTURE.md)**
+
 ## Common Development Commands
 
 ### Development
@@ -142,6 +144,12 @@ Gmail Fetch → Digest Filter → ML Classification (1-2ms) →
 
 #### Page 1: Fetch & Classify
 - **Purpose**: Sync Gmail and classify emails
+- **Gmail Content Extraction**: Multi-layered approach for clean content
+  - **Standard MIME Parsing**: Extract content from Gmail JSON API
+  - **Enhanced Multipart Handling**: Process complex email structures
+  - **RAW Format Fallback**: For incomplete LinkedIn rejection emails
+  - **Quality over Length Logic**: Prioritize clean rejection messages over truncated footer content
+  - **Quoted-Printable Decoding**: Handle email encoding (=3D, =20, etc.)
 - **Digest Filter**: Removes newsletters, job boards, spam
 - **ML Classifier**: Random Forest with TF-IDF features
 - **Speed**: ~1-2ms per email (200x faster than LLM)
