@@ -100,10 +100,14 @@ class MLClassifierBridge {
             
             // Convert confidence to job_probability and determine is_job_related based on threshold
             const job_probability = result.confidence || 0;
+            
+            // Check if this is a rejection email that should be reviewed regardless of ML confidence
+            const isRejectionEmail = this.isLikelyRejectionEmail(subject, body);
+            
             const processedResult = {
               job_probability,
               is_job_related: job_probability >= 0.9,  // Only mark as job if 90%+ probability
-              needs_review: job_probability >= 0.3 && job_probability < 0.9,  // 30-90% needs review
+              needs_review: isRejectionEmail || (job_probability >= 0.3 && job_probability < 0.9),  // Rejection emails always need review
               model_type: result.model_type,
               error: result.error
             };
@@ -153,6 +157,50 @@ class MLClassifierBridge {
         error: error.message
       };
     }
+  }
+
+  /**
+   * Check if email is likely a rejection that should be reviewed regardless of ML confidence
+   */
+  isLikelyRejectionEmail(subject, body) {
+    if (!subject && !body) return false;
+    
+    const subjectLower = (subject || '').toLowerCase();
+    const bodyLower = (body || '').toLowerCase();
+    const combined = subjectLower + ' ' + bodyLower;
+    
+    // Must have application-related subject
+    const hasApplicationSubject = subjectLower.includes('application') || 
+                                  subjectLower.includes('your update from') ||
+                                  subjectLower.includes('applied');
+    
+    if (!hasApplicationSubject) return false;
+    
+    // Look for rejection indicators
+    const rejectionIndicators = [
+      'unfortunately',
+      'regret to inform',
+      'not moving forward',
+      'not proceeding',
+      'decided to move',
+      'decided to go',
+      'decided to proceed',
+      'position has been filled',
+      'thank you for your interest',
+      'we will not be',
+      'not selected',
+      'not be moving forward'
+    ];
+    
+    // Check if content contains rejection language
+    const hasRejectionLanguage = rejectionIndicators.some(indicator => 
+      combined.includes(indicator)
+    );
+    
+    // Must be from LinkedIn (since these are the problematic ones)
+    const isLinkedIn = combined.includes('linkedin');
+    
+    return hasApplicationSubject && hasRejectionLanguage && isLinkedIn;
   }
 
   /**

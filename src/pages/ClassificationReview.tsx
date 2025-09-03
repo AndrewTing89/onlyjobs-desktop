@@ -46,7 +46,6 @@ import {
   CalendarToday,
   Business,
   Work,
-  Visibility,
   ArrowForward,
   RateReview
 } from '@mui/icons-material';
@@ -148,6 +147,39 @@ export default function ClassificationReview() {
         });
         
         if (result.success && result.emails) {
+          console.log('Debug: Frontend received', result.emails.length, 'emails from backend');
+          
+          // Debug: Look for Finezi email specifically
+          const fineziEmails = result.emails.filter((e: any) => e.subject?.toLowerCase().includes('finezi'));
+          console.log('Debug: Frontend Finezi emails:', fineziEmails.map((e: any) => ({
+            id: e.gmail_message_id?.substring(0, 8),
+            subject: e.subject,
+            is_job_related: e.is_job_related,
+            is_classified: e.is_classified,
+            pipeline_stage: e.pipeline_stage,
+            classification_method: e.classification_method,
+            needs_review: e.needs_review,
+            user_classification: e.user_classification,
+            date_received: e.email_date,
+            job_probability: e.job_probability
+          })));
+          
+          console.log('Debug: First 3 raw emails:', result.emails.slice(0, 3).map((e: any) => ({
+            id: e.gmail_message_id?.substring(0, 8),
+            is_job_related: e.is_job_related,
+            is_classified: e.is_classified,
+            pipeline_stage: e.pipeline_stage,
+            classification_method: e.classification_method,
+            needs_review: e.needs_review,
+            subject: e.subject?.substring(0, 30)
+          })));
+          
+          console.log('Debug: After frontend filtering, kept', result.emails.filter((email: any) => 
+            email.needs_review || 
+            email.pipeline_stage === 'classified' || 
+            email.pipeline_stage === 'ready_for_extraction'
+          ).length, 'emails');
+          
           // Transform the data to match our EmailClassification type
           const transformedEmails: EmailClassification[] = result.emails
             .filter((email: any) => 
@@ -161,9 +193,9 @@ export default function ClassificationReview() {
             thread_id: email.thread_id,
             subject: email.subject || '',
             from_address: email.from_address || '',
-            plaintext: email.plaintext,
+            plaintext: email.body,
             body_html: email.body_html,
-            date_received: email.date_received,
+            date_received: email.email_date,
             account_email: email.account_email || '',
             
             // ML Classification results
@@ -198,9 +230,9 @@ export default function ClassificationReview() {
           // Calculate stats from the emails
           const calculatedStats = {
             total_emails: transformedEmails.length,
-            needs_review: transformedEmails.filter(e => e.needs_review && !e.user_classification).length,
-            high_confidence_jobs: transformedEmails.filter(e => e.job_probability > 0.9 && e.is_job_related).length,
-            rejected: transformedEmails.filter(e => e.user_classification === 'HIL_rejected' || (!e.is_job_related && e.is_classified)).length,
+            needs_review: transformedEmails.filter(e => e.needs_review).length,
+            job_opportunities: transformedEmails.filter(e => e.job_probability > 0.7 && e.is_job_related).length,
+            non_job_opportunities: transformedEmails.filter(e => !e.is_job_related && e.pipeline_stage === 'classified').length,
             queued_for_parsing: transformedEmails.filter(e => e.pipeline_stage === 'ready_for_extraction' || e.user_classification === 'HIL_approved').length,
             avg_confidence: transformedEmails.length > 0 
               ? transformedEmails.reduce((sum, e) => sum + e.job_probability, 0) / transformedEmails.length 
@@ -221,8 +253,8 @@ export default function ClassificationReview() {
           setStats({
             total_emails: 0,
             needs_review: 0,
-            high_confidence_jobs: 0,
-            rejected: 0,
+            job_opportunities: 0,
+            non_job_opportunities: 0,
             queued_for_parsing: 0,
             avg_confidence: 0
           });
@@ -234,8 +266,8 @@ export default function ClassificationReview() {
         setStats({
           total_emails: 0,
           needs_review: 0,
-          high_confidence_jobs: 0,
-          rejected: 0,
+          job_opportunities: 0,
+          non_job_opportunities: 0,
           queued_for_parsing: 0,
           avg_confidence: 0
         });
@@ -252,16 +284,56 @@ export default function ClassificationReview() {
   const filteredEmails = useMemo(() => {
     let filtered = emails;
 
+    // Debug: Check Finezi email against each tab's criteria
+    const fineziEmails = emails.filter(email => email.subject?.toLowerCase().includes('finezi'));
+    if (fineziEmails.length > 0) {
+      fineziEmails.forEach(email => {
+        console.log('Debug: Finezi email tab analysis:', {
+          subject: email.subject,
+          needsReview: email.needs_review && !email.user_classification,
+          jobOpportunity: email.job_probability > 0.7 && email.is_job_related,
+          nonJobOpportunity: !email.is_job_related && email.pipeline_stage === 'classified',
+          fields: {
+            needs_review: email.needs_review,
+            user_classification: email.user_classification,
+            job_probability: email.job_probability,
+            is_job_related: email.is_job_related,
+            pipeline_stage: email.pipeline_stage
+          }
+        });
+      });
+    }
+
     // Filter by tab
     switch (currentTab) {
       case 0: // Needs Review
         filtered = filtered.filter(email => email.needs_review && !email.user_classification);
         break;
-      case 1: // High Confidence Jobs
+      case 1: // Job Opportunities  
         filtered = filtered.filter(email => email.job_probability > 0.7 && email.is_job_related);
         break;
-      case 2: // Rejected
-        filtered = filtered.filter(email => email.user_classification === 'HIL_rejected' || (!email.is_job_related && email.is_classified));
+      case 2: // Non-Job Opportunities
+        console.log('Debug: Filtering non-job opportunities from', emails.length, 'emails');
+        filtered = filtered.filter(email => {
+          // Use available backend fields: is_job_related and pipeline_stage
+          const isNotJobRelated = !email.is_job_related;
+          const isClassifiedStage = email.pipeline_stage === 'classified';
+          const shouldShow = isNotJobRelated && isClassifiedStage;
+          
+          // Debug logging for first 5 emails
+          if (filtered.length < 5) {
+            console.log('Debug email:', {
+              subject: email.subject?.substring(0, 50),
+              is_job_related: email.is_job_related,
+              pipeline_stage: email.pipeline_stage,
+              classification_method: email.classification_method,
+              shouldShow: shouldShow
+            });
+          }
+          
+          return shouldShow;
+        });
+        console.log('Debug: Found', filtered.length, 'non-job opportunities');
         break;
       case 3: // All
         break;
@@ -393,6 +465,33 @@ export default function ClassificationReview() {
     setSnackbar({ open: true, message, severity });
   };
 
+  // Helper function to get classification method info
+  const getClassificationMethodInfo = (email: EmailClassification) => {
+    if (email.user_classification === 'HIL_rejected') {
+      return {
+        label: 'Human Rejected',
+        icon: '👤',
+        color: '#f44336',
+        backgroundColor: '#f4433610',
+      };
+    } else if (email.classification_method === 'digest_filter') {
+      return {
+        label: 'Digest Filtered', 
+        icon: '📧',
+        color: '#2196f3',
+        backgroundColor: '#2196f310',
+      };
+    } else if (email.classification_method === 'ml' && !email.is_job_related) {
+      return {
+        label: 'ML Classified',
+        icon: '🤖', 
+        color: '#ff9800',
+        backgroundColor: '#ff980010',
+      };
+    }
+    return null;
+  };
+
   const handleLogout = async () => {
     try {
       await authData.signOut();
@@ -434,11 +533,24 @@ export default function ClassificationReview() {
               <CardContent>
                 <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <RateReview color="primary" />
-                  Classification Workflow Progress
+                  Workflow
                 </Typography>
                 <Stepper activeStep={1} orientation="horizontal">
                   {workflowSteps.map((step, index) => (
-                    <Step key={step.label} completed={index < 1}>
+                    <Step 
+                      key={step.label} 
+                      completed={index < 1}
+                      sx={{
+                        '& .MuiStepLabel-root': {
+                          ...(index === 1 && {
+                            padding: '8px',
+                            border: '2px solid #FF7043',
+                            borderRadius: '8px',
+                            backgroundColor: 'rgba(255, 112, 67, 0.04)'
+                          })
+                        }
+                      }}
+                    >
                       <StepLabel>
                         <Box>
                           <Typography variant="subtitle2">{step.label}</Typography>
@@ -474,10 +586,10 @@ export default function ClassificationReview() {
                   <Card sx={{ textAlign: 'center' }}>
                     <CardContent sx={{ py: 2 }}>
                       <Typography variant="h4" color="success.main" sx={{ fontWeight: 600 }}>
-                        {stats.high_confidence_jobs}
+                        {stats.job_opportunities}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        High Confidence
+                        Job Opportunities
                       </Typography>
                     </CardContent>
                   </Card>
@@ -486,10 +598,10 @@ export default function ClassificationReview() {
                   <Card sx={{ textAlign: 'center' }}>
                     <CardContent sx={{ py: 2 }}>
                       <Typography variant="h4" color="error.main" sx={{ fontWeight: 600 }}>
-                        {stats.rejected}
+                        {stats.non_job_opportunities}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        Rejected
+                        Non-Job Opportunities
                       </Typography>
                     </CardContent>
                   </Card>
@@ -532,15 +644,15 @@ export default function ClassificationReview() {
                       />
                       <Tab 
                         label={
-                          <Badge badgeContent={stats?.high_confidence_jobs} color="success">
-                            High Confidence
+                          <Badge badgeContent={stats?.job_opportunities} color="success">
+                            Job Opportunities
                           </Badge>
                         } 
                       />
                       <Tab 
                         label={
-                          <Badge badgeContent={stats?.rejected} color="error">
-                            Rejected
+                          <Badge badgeContent={stats?.non_job_opportunities} color="error">
+                            Non-Job Opportunities
                           </Badge>
                         } 
                       />
@@ -641,6 +753,7 @@ export default function ClassificationReview() {
                                     </Box>
                                   </Box>
                                 }
+                                secondaryTypographyProps={{ component: 'div' }}
                                 secondary={
                                   <Box sx={{ mt: 1 }}>
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
@@ -650,6 +763,22 @@ export default function ClassificationReview() {
                                         size="small"
                                         showPercentage
                                       />
+                                      {(() => {
+                                        const methodInfo = getClassificationMethodInfo(email);
+                                        return methodInfo && (
+                                          <Chip
+                                            label={`${methodInfo.icon} ${methodInfo.label}`}
+                                            size="small"
+                                            sx={{
+                                              backgroundColor: methodInfo.backgroundColor,
+                                              color: methodInfo.color,
+                                              border: `1px solid ${methodInfo.color}30`,
+                                              fontWeight: 500,
+                                              fontSize: '0.75rem'
+                                            }}
+                                          />
+                                        );
+                                      })()}
                                       {email.is_job_related && email.company && (
                                         <Chip 
                                           label={`${email.company}${email.position ? ` - ${email.position}` : ''}`}
@@ -697,15 +826,6 @@ export default function ClassificationReview() {
                                       </IconButton>
                                     </>
                                   )}
-                                  <IconButton
-                                    size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedEmailForPreview(email);
-                                    }}
-                                  >
-                                    <Visibility />
-                                  </IconButton>
                                 </Stack>
                               </ListItemSecondaryAction>
                             </ListItem>

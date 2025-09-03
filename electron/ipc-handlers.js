@@ -3174,6 +3174,48 @@ ipcMain.handle('sync:classify-only', async (event, options = {}) => {
     
     console.log(`Sync completed: ${totalProcessed} emails in ${syncDuration.toFixed(1)}s (${emailsPerSecond} emails/sec)`);
     
+    // Update sync_status table (same as full sync)
+    const statusUpdate = getDb().prepare(`
+      UPDATE sync_status SET 
+        last_sync_status = 'completed',
+        total_emails_fetched = total_emails_fetched + ?,
+        total_emails_classified = total_emails_classified + ?,
+        total_jobs_found = total_jobs_found + ?
+      WHERE id = 1
+    `);
+    statusUpdate.run(totalProcessed, totalClassified, totalJobRelated);
+    
+    // Log to sync history (same format as full sync)
+    const syncDurationMs = Date.now() - syncStartTime;
+    const historyInsert = getDb().prepare(`
+      INSERT INTO sync_history (
+        sync_date, accounts_synced, emails_fetched, emails_processed, emails_classified,
+        jobs_found, new_jobs, updated_jobs, duration_ms, status,
+        date_from, date_to, days_synced
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    // Extract date range from options (same as used by ClassificationOnlyProcessor)
+    const dateFrom = options.dateFrom;
+    const dateTo = options.dateTo;
+    const daysToSync = options.daysToSync || 30;
+    
+    historyInsert.run(
+      new Date(syncStartTime).toISOString(),
+      accounts.length,
+      totalProcessed,
+      totalProcessed,  // emails_processed = emails_fetched for classification-only
+      totalClassified,
+      totalJobRelated,
+      totalJobRelated, // For now, assume all job-related are new
+      0, // Updated jobs tracking needs improvement
+      syncDurationMs,
+      'completed',
+      dateFrom,
+      dateTo,
+      daysToSync
+    );
+    
     // Send sync complete event with comprehensive stats
     event.sender.send('sync-complete', {
       emailsFetched: totalProcessed,
@@ -3579,6 +3621,45 @@ ipcMain.handle('pipeline:get-emails', async (event, filters = {}) => {
     const stmt = db.prepare(query);
     const results = stmt.all(...params);
     
+    // Debug: Log query results
+    console.log(`Pipeline: get-emails query returned ${results.length} emails`);
+    
+    // Debug: Look for Finezi email specifically
+    const fineziEmails = results.filter(r => r.subject?.toLowerCase().includes('finezi'));
+    console.log('Debug: Finezi emails found:', fineziEmails.map(r => ({
+      id: r.gmail_message_id?.substring(0, 8),
+      subject: r.subject,
+      is_job_related: r.is_job_related,
+      is_classified: r.is_classified,
+      pipeline_stage: r.pipeline_stage,
+      classification_method: r.classification_method,
+      needs_review: r.needs_review,
+      date_received: r.date_received,
+      job_probability: r.job_probability
+    })));
+    
+    console.log('Debug: First 3 emails:', results.slice(0, 3).map(r => ({
+      id: r.gmail_message_id?.substring(0, 8),
+      is_job_related: r.is_job_related,
+      is_classified: r.is_classified,
+      pipeline_stage: r.pipeline_stage,
+      classification_method: r.classification_method,
+      needs_review: r.needs_review,
+      subject: r.subject?.substring(0, 30)
+    })));
+    
+    // Count by classification method and job status
+    const digestFiltered = results.filter(r => r.classification_method === 'digest_filter');
+    const mlClassified = results.filter(r => r.classification_method === 'ml');
+    const nonJobEmails = results.filter(r => !r.is_job_related);
+    console.log('Debug: Email breakdown:', {
+      total: results.length,
+      digestFiltered: digestFiltered.length,
+      mlClassified: mlClassified.length,
+      nonJobEmails: nonJobEmails.length,
+      classified: results.filter(r => r.is_classified).length
+    });
+    
     // Transform for frontend compatibility
     const emails = results.map(row => ({
       id: row.id,
@@ -3586,8 +3667,8 @@ ipcMain.handle('pipeline:get-emails', async (event, filters = {}) => {
       thread_id: row.thread_id,
       subject: row.subject || '',
       from_address: row.from_address || '',
-      body: row.body || '',
-      email_date: row.email_date || new Date().toISOString(),
+      body: row.plaintext || '',
+      email_date: row.date_received || new Date().toISOString(),
       account_email: row.account_email || '',
       job_probability: row.job_probability || 0,
       confidence: row.job_probability || 0,  // Backward compatibility alias
@@ -3597,6 +3678,8 @@ ipcMain.handle('pipeline:get-emails', async (event, filters = {}) => {
       pipeline_stage: row.pipeline_stage,
       review_reason: row.review_reason,
       classification_method: row.classification_method,
+      is_classified: Boolean(row.is_classified),
+      user_classification: row.user_classification,
       is_digest: Boolean(row.is_digest),
       digest_reason: row.digest_reason,
       company: row.company || undefined,

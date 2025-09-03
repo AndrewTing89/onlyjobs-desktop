@@ -3,12 +3,12 @@ export interface EmailClassification {
   gmail_message_id: string;
   from_address: string;
   subject: string;
-  date_received: string;
+  date_received: string; // Maps to backend's email_date field
   account_email: string;
   thread_id?: string;
   
   // Email content
-  plaintext: string;
+  plaintext: string; // Maps to backend's body field
   body_html?: string;
   
   // ML Classification results
@@ -69,8 +69,8 @@ export interface BulkOperationRequest {
 export interface ClassificationStats {
   total_emails: number;
   needs_review: number;
-  high_confidence_jobs: number;
-  rejected: number;
+  job_opportunities: number;
+  non_job_opportunities: number;
   queued_for_parsing: number;
   avg_confidence: number;
 }

@@ -13,6 +13,7 @@ const { getMLClassifier } = require('../ml-classifier-bridge');
 const GmailMultiAuth = require('../gmail-multi-auth');
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 const { app } = require('electron');
 const DigestDetector = require('../digest-detector');
 const { improvePipelineSchema } = require('../database/migrations/improve_pipeline_schema');
@@ -39,8 +40,50 @@ class ClassificationOnlyProcessor {
     this.BATCH_SAVE_SIZE = 50; // Save every 50 emails
     this.digestDetector = new DigestDetector(); // Initialize digest detector
     
+    // Cache for successful extractions to prevent overwriting
+    this.extractionCache = new Map();
+    
+    // Initialize log file (overwrites previous log)
+    this.initializeLogFile();
+    
     // Initialize pipeline tables if needed
     this.initializePipelineTables();
+  }
+  
+  /**
+   * Initialize log file for sync debugging - overwrites previous log
+   */
+  initializeLogFile() {
+    try {
+      const userDataPath = app.getPath('userData');
+      this.logFilePath = path.join(userDataPath, 'sync-debug.log');
+      
+      // Create or overwrite the log file
+      const timestamp = new Date().toISOString();
+      const header = `=== OnlyJobs Sync Debug Log ===\nSync started at: ${timestamp}\n\n`;
+      fs.writeFileSync(this.logFilePath, header);
+      
+      console.log(`📝 Debug log file initialized: ${this.logFilePath}`);
+      this.logWithFile(`📝 Debug log file initialized: ${this.logFilePath}`);
+    } catch (error) {
+      console.error('Failed to initialize log file:', error);
+      this.logFilePath = null;
+    }
+  }
+  
+  /**
+   * Log to both console and file
+   */
+  logWithFile(message) {
+    console.log(message);
+    if (this.logFilePath) {
+      try {
+        const timestamp = new Date().toISOString().substring(11, 19); // HH:MM:SS format
+        fs.appendFileSync(this.logFilePath, `[${timestamp}] ${message}\n`);
+      } catch (error) {
+        // Silently fail to avoid disrupting sync
+      }
+    }
   }
   
   /**
@@ -77,7 +120,7 @@ class ClassificationOnlyProcessor {
       dateFrom,
       dateTo,
       daysToSync = 30, // Fallback for backward compatibility
-      query = 'is:unread OR label:job-applications',
+      query = 'in:inbox OR in:sent',
       maxResults = options.maxEmails || 100000  // Effectively unlimited - will fetch all emails in date range
       // NO modelId - no LLM during sync, only ML classification
     } = options;
@@ -87,8 +130,14 @@ class ClassificationOnlyProcessor {
     if (dateFrom && dateTo) {
       // Convert dates to Gmail query format (YYYY/MM/DD)
       const fromDate = new Date(dateFrom).toISOString().split('T')[0].replace(/-/g, '/');
-      const toDate = new Date(dateTo).toISOString().split('T')[0].replace(/-/g, '/');
+      
+      // Add 1 day to toDate to include the entire end date regardless of timezone
+      const toDateObj = new Date(dateTo);
+      toDateObj.setDate(toDateObj.getDate() + 1);
+      const toDate = toDateObj.toISOString().split('T')[0].replace(/-/g, '/');
+      
       dateQuery = `after:${fromDate} before:${toDate}`;
+      console.log(`Date range adjusted for timezone: ${dateFrom} to ${dateTo} → Gmail query: after:${fromDate} before:${toDate}`);
     } else if (daysToSync) {
       // Fallback to days-based query
       const fromDate = new Date();
@@ -100,7 +149,7 @@ class ClassificationOnlyProcessor {
     // Combine with existing query
     const fullQuery = dateQuery ? `${query} ${dateQuery}` : query;
 
-    console.log(`Starting classification-only sync for ${account.email} with query: ${fullQuery}`);
+    this.logWithFile(`🔍 Starting classification-only sync for ${account.email} with query: ${fullQuery}`);
     
     try {
       // Step 1: Fetch emails from Gmail
@@ -119,9 +168,51 @@ class ClassificationOnlyProcessor {
         };
       }
 
-      // Step 2: Filter out job digests/newsletters
-      const { filteredEmails, digestEmails, digestCount } = this.filterDigests(emails);
-      console.log(`Filtered ${digestCount} digest emails out of ${emails.length} total emails`);
+      // Step 2: Filter out already-processed emails
+      const { newEmails, skippedCount } = this.filterAlreadyProcessed(emails, account);
+      console.log(`Filtered out ${skippedCount} already-processed emails, ${newEmails.length} emails remaining`);
+      
+      this.sendActivity('filter', `⏭️ Skipped ${skippedCount} already-processed emails, processing ${newEmails.length} new emails`, {
+        totalEmails: emails.length,
+        skippedEmails: skippedCount,
+        newEmails: newEmails.length
+      });
+      
+      if (newEmails.length === 0) {
+        console.log('No new emails to process - all emails already classified');
+        return {
+          totalEmails: emails.length,
+          classified: 0,
+          needsReview: 0,
+          digestsFiltered: 0,
+          skipped: skippedCount
+        };
+      }
+
+      // Step 3: Filter out job digests/newsletters
+      const { filteredEmails, digestEmails, digestCount } = this.filterDigests(newEmails);
+      console.log(`Filtered ${digestCount} digest emails out of ${newEmails.length} total emails`);
+      
+      // Debug: Check if LinkedIn emails survived digest filtering
+      const linkedInAfterDigest = filteredEmails.filter(email => 
+        email.from?.toLowerCase().includes('linkedin') || 
+        email.subject?.toLowerCase().includes('finezi') ||
+        email.from?.toLowerCase().includes('finezi')
+      );
+      const linkedInDigested = digestEmails.filter(digest => 
+        digest.email.from?.toLowerCase().includes('linkedin') || 
+        digest.email.subject?.toLowerCase().includes('finezi') ||
+        digest.email.from?.toLowerCase().includes('finezi')
+      );
+      this.logWithFile(`🔍 DEBUG: LinkedIn/Finezi emails after digest filtering: ${linkedInAfterDigest.length} kept, ${linkedInDigested.length} digested`);
+      linkedInDigested.forEach(digest => {
+        const digestInfo = {
+          subject: digest.email.subject?.substring(0, 60),
+          from: digest.email.from?.substring(0, 50),
+          reason: digest.filterReason
+        };
+        this.logWithFile(`📧 LinkedIn/Finezi email DIGESTED: ${JSON.stringify(digestInfo)}`);
+      });
       
       // Step 3: Process digest emails as rejected classifications
       const digestResults = digestEmails.map(digest => ({
@@ -157,7 +248,8 @@ class ClassificationOnlyProcessor {
       const stats = this.calculateStats(mlResults);
       stats.digestsFiltered = digestCount;
       stats.totalEmails = emails.length;
-      console.log(`Classification complete: ${stats.classified} ML classified, ${digestCount} digests filtered, ${stats.needsReview} need review`);
+      stats.skipped = skippedCount;
+      console.log(`Classification complete: ${stats.classified} ML classified, ${digestCount} digests filtered, ${skippedCount} emails skipped (already processed), ${stats.needsReview} need review`);
 
       return stats;
 
@@ -202,6 +294,27 @@ class ClassificationOnlyProcessor {
       }
 
       console.log(`Fetched ${emails.length} emails successfully`);
+      
+      // Debug: Look for LinkedIn emails in Gmail response
+      const linkedInEmails = emails.filter(email => {
+        const subject = email.payload?.headers?.find(h => h.name === 'Subject')?.value || '';
+        const from = email.payload?.headers?.find(h => h.name === 'From')?.value || '';
+        return from.toLowerCase().includes('linkedin') || subject.toLowerCase().includes('finezi');
+      });
+      this.logWithFile(`🔍 DEBUG: LinkedIn/Finezi emails in Gmail response: ${linkedInEmails.length}`);
+      linkedInEmails.forEach(email => {
+        const subject = email.payload?.headers?.find(h => h.name === 'Subject')?.value || '';
+        const from = email.payload?.headers?.find(h => h.name === 'From')?.value || '';
+        const date = email.payload?.headers?.find(h => h.name === 'Date')?.value || '';
+        const emailInfo = {
+          subject: subject.substring(0, 60),
+          from: from.substring(0, 50),
+          date: date,
+          internalDate: email.internalDate ? new Date(parseInt(email.internalDate)).toISOString() : 'N/A'
+        };
+        this.logWithFile(`📧 LinkedIn/Finezi email found: ${JSON.stringify(emailInfo)}`);
+      });
+      
       this.sendActivity('fetch', `✅ Successfully fetched ${emails.length} emails in ${fetchTime}ms`, {
         emailCount: emails.length,
         duration: fetchTime
@@ -214,23 +327,61 @@ class ClassificationOnlyProcessor {
       
       const parseStartTime = Date.now();
       const parsedEmails = [];
-      for (let i = 0; i < emails.length; i++) {
-        if (i % 50 === 0) {
-          console.log(`Parsing email ${i + 1} of ${emails.length}...`);
-          this.sendActivity('parse', `📝 Parsing batch: ${i + 1}-${Math.min(i + 50, emails.length)} of ${emails.length}`, {
-            current: i + 1,
-            total: emails.length
-          });
-          this.sendProgress(`Parsing emails (${i + 1} of ${emails.length})...`, 20 + Math.round((i / emails.length) * 30));
-        }
-        const parsed = this.parseGmailMessage(emails[i]);
-        if (parsed) {
-          parsedEmails.push(parsed);
-        }
+      
+      // Process emails in batches to handle async properly
+      const batchSize = 50;
+      for (let i = 0; i < emails.length; i += batchSize) {
+        const batch = emails.slice(i, i + batchSize);
+        const batchEnd = Math.min(i + batchSize, emails.length);
+        
+        console.log(`Parsing batch ${i + 1}-${batchEnd} of ${emails.length}...`);
+        this.sendActivity('parse', `📝 Parsing batch: ${i + 1}-${batchEnd} of ${emails.length}`, {
+          current: i + 1,
+          batchEnd: batchEnd,
+          total: emails.length
+        });
+        this.sendProgress(`Parsing emails (${i + 1}-${batchEnd} of ${emails.length})...`, 20 + Math.round(((i + batchSize) / emails.length) * 30));
+        
+        // Parse batch with proper async handling
+        const batchResults = await Promise.allSettled(
+          batch.map(async (email) => {
+            try {
+              return await this.parseGmailMessage(email);
+            } catch (error) {
+              console.error(`Error parsing email ${email.id}:`, error);
+              return null;
+            }
+          })
+        );
+        
+        // Add successful results to parsed emails
+        batchResults.forEach(result => {
+          if (result.status === 'fulfilled' && result.value) {
+            parsedEmails.push(result.value);
+          }
+        });
       }
       
       const parseTime = Date.now() - parseStartTime;
       console.log(`Finished parsing ${parsedEmails.length} emails`);
+      
+      // Debug: Check if LinkedIn emails survived parsing
+      const parsedLinkedInEmails = parsedEmails.filter(email => 
+        email.from?.toLowerCase().includes('linkedin') || 
+        email.subject?.toLowerCase().includes('finezi') ||
+        email.from?.toLowerCase().includes('finezi')
+      );
+      this.logWithFile(`🔍 DEBUG: LinkedIn/Finezi emails after parsing: ${parsedLinkedInEmails.length}`);
+      parsedLinkedInEmails.forEach(email => {
+        const emailInfo = {
+          subject: email.subject?.substring(0, 60),
+          from: email.from?.substring(0, 50),
+          date: email.date,
+          internalDate: email.internalDate
+        };
+        this.logWithFile(`📧 Parsed LinkedIn/Finezi email: ${JSON.stringify(emailInfo)}`);
+      });
+      
       this.sendActivity('parse', `✅ Parsed ${parsedEmails.length} emails in ${parseTime}ms`, {
         emailCount: parsedEmails.length,
         duration: parseTime
@@ -248,7 +399,7 @@ class ClassificationOnlyProcessor {
   /**
    * Parse Gmail message into our format (MINIMAL for ML classification only)
    */
-  parseGmailMessage(message) {
+  async parseGmailMessage(message) {
     try {
       if (!message || !message.payload) {
         console.warn('Invalid message structure:', message?.id);
@@ -268,6 +419,57 @@ class ClassificationOnlyProcessor {
         const bodyResult = this.extractLimitedBody(message.payload, null); // null = no limit
         body = bodyResult.body;
         bodyIsHtml = bodyResult.isHtml;
+        
+        // Debug logging for LinkedIn/Finezi emails
+        const isLinkedInEmail = from.toLowerCase().includes('linkedin');
+        const isFineziBatch = subject.toLowerCase().includes('finezi') || 
+                             subject.toLowerCase().includes('milestone') ||
+                             body.toLowerCase().includes('finezi') ||
+                             body.toLowerCase().includes('milestone');
+        
+        if (isLinkedInEmail && isFineziBatch) {
+          this.logWithFile(`🔍 LINKEDIN EMAIL DEBUG - Subject: ${subject}`);
+          this.logWithFile(`🔍 Raw body length: ${body.length}, isHtml: ${bodyIsHtml}`);
+          this.logWithFile(`🔍 Raw body content (first 500 chars): ${body.substring(0, 500)}`);
+          this.logWithFile(`🔍 Gmail snippet: ${message.snippet}`);
+        }
+        
+        // Check if this looks like an incomplete LinkedIn rejection email
+        if (this.isIncompleteLinkedInEmail(body, subject, from)) {
+          this.logWithFile(`🔍 RAW FALLBACK: Detected incomplete LinkedIn email, trying RAW format`);
+          
+          try {
+            const rawBodyResult = await this.extractFromRawFormat(message.id);
+            if (rawBodyResult && rawBodyResult.body && rawBodyResult.body.length > 50) {
+              // For LinkedIn rejection emails, prioritize quality over length
+              // RAW extraction gives us clean rejection content vs truncated LinkedIn footer
+              const isLinkedInRejection = subject && subject.toLowerCase().includes('application');
+              const shouldUseRaw = isLinkedInRejection || rawBodyResult.body.length > body.length + 100;
+              
+              if (shouldUseRaw) {
+                this.logWithFile(`🔍 RAW FALLBACK: Using RAW content - Quality over length for rejection emails`);
+                this.logWithFile(`🔍 RAW FALLBACK: Original length: ${body.length}, RAW length: ${rawBodyResult.body.length}`);
+                this.logWithFile(`🔍 RAW FALLBACK: RAW content preview: ${rawBodyResult.body.substring(0, 500)}`);
+                
+                body = rawBodyResult.body;
+                bodyIsHtml = rawBodyResult.isHtml;
+                
+                // Log successful integration for rejection emails
+                if (subject && (subject.includes('Finezi') || subject.includes('Milestone'))) {
+                  this.logWithFile(`🔍 RAW INTEGRATION: Using RAW-extracted content for ${subject.substring(0, 60)}`);
+                  this.logWithFile(`🔍 RAW INTEGRATION: Final body length: ${body.length}`);
+                  this.logWithFile(`🔍 RAW INTEGRATION: Preview: ${body.substring(0, 300)}`);
+                }
+              } else {
+                this.logWithFile(`🔍 RAW FALLBACK: RAW content not better, keeping original`);
+              }
+            } else {
+              this.logWithFile(`🔍 RAW FALLBACK: RAW format didn't provide additional content`);
+            }
+          } catch (rawError) {
+            this.logWithFile(`🔍 RAW FALLBACK: Error fetching RAW format: ${rawError.message}`);
+          }
+        }
         
         // If we still have no body, fall back to snippet
         if (!body) {
@@ -313,11 +515,37 @@ class ClassificationOnlyProcessor {
   extractLimitedBody(payload, maxLength = null) {
     if (!payload) return { body: '', isHtml: false };
 
-    // Direct body data (single part email)
+    // Debug logging for complex email structures
+    const debugMimeStructure = (payload, depth = 0) => {
+      if (depth > 3) return; // Prevent infinite recursion
+      const indent = '  '.repeat(depth);
+      this.logWithFile(`🔍 MIME DEBUG ${indent}mimeType: ${payload.mimeType}, hasBody: ${!!payload.body?.data}, hasParts: ${!!payload.parts?.length}`);
+      if (payload.parts) {
+        payload.parts.forEach((part, index) => {
+          this.logWithFile(`🔍 MIME DEBUG ${indent}Part ${index}:`);
+          debugMimeStructure(part, depth + 1);
+        });
+      }
+    };
+
+    // Enable debug for LinkedIn emails
+    const isLinkedInEmail = this.isLinkedInEmailPayload(payload);
+    if (isLinkedInEmail) {
+      this.logWithFile(`🔍 MIME DEBUG: Analyzing LinkedIn email structure`);
+      debugMimeStructure(payload);
+    }
+
+    // Strategy 1: Direct body data (single part email)
     if (payload.body && payload.body.data) {
       try {
         const decoded = Buffer.from(payload.body.data, 'base64').toString('utf-8');
         const isHtml = payload.mimeType === 'text/html';
+        
+        if (isLinkedInEmail) {
+          this.logWithFile(`🔍 MIME DEBUG: Found direct body content, length: ${decoded.length}, isHtml: ${isHtml}`);
+          this.logWithFile(`🔍 MIME DEBUG: Content preview: ${decoded.substring(0, 200)}`);
+        }
+        
         return {
           body: maxLength ? decoded.substring(0, maxLength) : decoded,
           isHtml
@@ -328,34 +556,703 @@ class ClassificationOnlyProcessor {
       }
     }
 
-    // Multipart email - try to find text/plain first
+    // Strategy 2: Enhanced multipart traversal for LinkedIn emails
     if (payload.parts) {
-      // First pass: look for plain text
-      for (const part of payload.parts) {
-        if (part.mimeType === 'text/plain') {
-          const result = this.extractLimitedBody(part, maxLength);
-          if (result.body) return result;
-        }
+      const allParts = this.getAllMessageParts(payload);
+      
+      if (isLinkedInEmail) {
+        this.logWithFile(`🔍 MIME DEBUG: Found ${allParts.length} total parts in email`);
       }
 
-      // Second pass: look for HTML if no plain text found
-      for (const part of payload.parts) {
-        if (part.mimeType === 'text/html') {
-          const result = this.extractLimitedBody(part, maxLength);
-          if (result.body) {
-            return { body: result.body, isHtml: true };
+      // Priority 1: Look for text/plain parts (more readable for LinkedIn)
+      // For LinkedIn emails, we need to select the RIGHT text/plain part
+      const textParts = allParts.filter(part => part.mimeType === 'text/plain' && part.body?.data);
+      
+      for (const part of textParts) {
+        try {
+          const decoded = Buffer.from(part.body.data, 'base64').toString('utf-8');
+          if (decoded.length > 100) { // Skip short/empty parts
+            if (isLinkedInEmail) {
+              this.logWithFile(`🔍 MIME DEBUG: Found text/plain content, length: ${decoded.length}`);
+              this.logWithFile(`🔍 MIME DEBUG: Content preview: ${decoded.substring(0, 300)}`);
+              
+              // Check if this part contains rejection/application content vs footer
+              const hasRejectionContent = this.hasRejectionContent(decoded);
+              const hasFooterContent = this.hasLinkedInFooterContent(decoded);
+              
+              this.logWithFile(`🔍 MIME DEBUG: Has rejection content: ${hasRejectionContent}, has footer: ${hasFooterContent}`);
+              
+              // For LinkedIn emails, prefer parts with rejection content over footer-only parts
+              if (hasRejectionContent && !hasFooterContent) {
+                this.logWithFile(`🔍 MIME DEBUG: Selected part with rejection content (length: ${decoded.length})`);
+                return {
+                  body: maxLength ? decoded.substring(0, maxLength) : decoded,
+                  isHtml: false
+                };
+              } else if (!hasFooterContent && decoded.length > 500) {
+                // If no rejection keywords but substantial content and no footer, use it
+                this.logWithFile(`🔍 MIME DEBUG: Selected substantial non-footer part (length: ${decoded.length})`);
+                return {
+                  body: maxLength ? decoded.substring(0, maxLength) : decoded,
+                  isHtml: false
+                };
+              }
+            } else {
+              // For non-LinkedIn emails, use the first substantial text/plain part
+              return {
+                body: maxLength ? decoded.substring(0, maxLength) : decoded,
+                isHtml: false
+              };
+            }
+          }
+        } catch (error) {
+          console.error('Error decoding text/plain part:', error);
+        }
+      }
+      
+      // If no preferred parts found for LinkedIn, fall back to any text/plain part
+      if (isLinkedInEmail) {
+        this.logWithFile(`🔍 MIME DEBUG: No preferred parts found, using fallback text/plain`);
+        for (const part of textParts) {
+          try {
+            const decoded = Buffer.from(part.body.data, 'base64').toString('utf-8');
+            if (decoded.length > 100) {
+              this.logWithFile(`🔍 MIME DEBUG: Fallback part length: ${decoded.length}`);
+              return {
+                body: maxLength ? decoded.substring(0, maxLength) : decoded,
+                isHtml: false
+              };
+            }
+          } catch (error) {
+            // Skip this part
           }
         }
       }
 
-      // Recursive search in nested parts
-      for (const part of payload.parts) {
-        const result = this.extractLimitedBody(part, maxLength);
-        if (result.body) return result;
+      // Priority 2: Look for text/html parts and convert to text
+      for (const part of allParts) {
+        if (part.mimeType === 'text/html' && part.body?.data) {
+          try {
+            const decoded = Buffer.from(part.body.data, 'base64').toString('utf-8');
+            if (decoded.length > 100) { // Skip short/empty parts
+              if (isLinkedInEmail) {
+                this.logWithFile(`🔍 MIME DEBUG: Found text/html content, length: ${decoded.length}`);
+                this.logWithFile(`🔍 MIME DEBUG: HTML preview: ${decoded.substring(0, 300)}`);
+              }
+              return {
+                body: maxLength ? decoded.substring(0, maxLength) : decoded,
+                isHtml: true
+              };
+            }
+          } catch (error) {
+            console.error('Error decoding text/html part:', error);
+          }
+        }
+      }
+
+      // Priority 3: Look for any part with substantial content
+      for (const part of allParts) {
+        if (part.body?.data) {
+          try {
+            const decoded = Buffer.from(part.body.data, 'base64').toString('utf-8');
+            if (decoded.length > 200 && !decoded.match(/^[\s\n\r]*$/)) { // Skip whitespace-only
+              if (isLinkedInEmail) {
+                this.logWithFile(`🔍 MIME DEBUG: Found fallback content in ${part.mimeType}, length: ${decoded.length}`);
+              }
+              return {
+                body: maxLength ? decoded.substring(0, maxLength) : decoded,
+                isHtml: part.mimeType === 'text/html'
+              };
+            }
+          } catch (error) {
+            console.error('Error decoding fallback part:', error);
+          }
+        }
       }
     }
 
+    if (isLinkedInEmail) {
+      this.logWithFile(`🔍 MIME DEBUG: No content found in any parts`);
+    }
+
     return { body: '', isHtml: false };
+  }
+
+  /**
+   * Recursively collect all message parts from MIME structure
+   */
+  getAllMessageParts(payload) {
+    const parts = [];
+    
+    const collectParts = (part) => {
+      if (!part) return;
+      
+      // Add current part if it has data
+      if (part.body?.data || part.mimeType) {
+        parts.push(part);
+      }
+      
+      // Recursively collect from nested parts
+      if (part.parts) {
+        part.parts.forEach(collectParts);
+      }
+    };
+    
+    collectParts(payload);
+    return parts;
+  }
+
+  /**
+   * Check if this payload is from a LinkedIn email
+   */
+  isLinkedInEmailPayload(payload) {
+    // Simple heuristic - look for LinkedIn in the MIME structure or common LinkedIn patterns
+    const checkForLinkedIn = (part) => {
+      if (!part) return false;
+      
+      // Check for LinkedIn domains in any data
+      if (part.body?.data) {
+        try {
+          const decoded = Buffer.from(part.body.data, 'base64').toString('utf-8');
+          if (decoded.includes('linkedin.com') || decoded.includes('This email was intended for')) {
+            return true;
+          }
+        } catch (e) {
+          // Ignore decode errors
+        }
+      }
+      
+      // Check nested parts
+      if (part.parts) {
+        return part.parts.some(checkForLinkedIn);
+      }
+      
+      return false;
+    };
+    
+    return checkForLinkedIn(payload);
+  }
+
+  /**
+   * Check if text content contains rejection or application-related keywords
+   */
+  hasRejectionContent(text) {
+    const rejectionKeywords = [
+      'unfortunately', 'regret to inform', 'not moving forward', 'not proceeding',
+      'position has been filled', 'decided to move', 'decided to go', 'decided to proceed',
+      'thank you for your interest', 'thank you for applying', 'application was', 
+      'application to', 'application status', 'application update', 'regarding your application',
+      'after careful consideration', 'we have decided', 'we will not be',
+      'other candidates', 'different direction', 'not selected', 'not the right fit'
+    ];
+    
+    const lowerText = text.toLowerCase();
+    return rejectionKeywords.some(keyword => lowerText.includes(keyword));
+  }
+
+  /**
+   * Check if text content is primarily LinkedIn footer/unsubscribe content
+   */
+  hasLinkedInFooterContent(text) {
+    const footerKeywords = [
+      'this email was intended for',
+      'unsubscribe',
+      'update your email preferences',
+      'linkedin corporation',
+      'you\'re receiving this email because',
+      'if you no longer wish',
+      'member directory',
+      'privacy policy'
+    ];
+    
+    const lowerText = text.toLowerCase();
+    const footerCount = footerKeywords.filter(keyword => lowerText.includes(keyword)).length;
+    
+    // Consider it footer content if it has multiple footer keywords and is relatively short
+    // OR if most of the content (>50%) matches footer patterns
+    const hasMultipleFooterKeywords = footerCount >= 2;
+    const isShortText = text.length < 1000;
+    
+    return hasMultipleFooterKeywords && (isShortText || footerCount >= 3);
+  }
+
+  /**
+   * Detect if a LinkedIn email appears to be incomplete (only has header/footer)
+   */
+  isIncompleteLinkedInEmail(body, subject, from) {
+    // Must be from LinkedIn
+    if (!from.toLowerCase().includes('linkedin')) {
+      return false;
+    }
+    
+    // Check for 'update' pattern in subject or body (simpler and more general)
+    const hasUpdate = subject.toLowerCase().includes('update') ||
+                     body.toLowerCase().includes('update');
+    
+    if (!hasUpdate) {
+      return false;
+    }
+    
+    // Look for signs of incomplete content:
+    // 1. Contains LinkedIn footer patterns
+    // 2. Relatively short content (< 3000 chars)
+    // 3. Contains "This email was intended for" but missing substantial content
+    const hasFooter = body.includes('This email was intended for') ||
+                     body.includes('You are receiving LinkedIn notification emails') ||
+                     body.includes('Unsubscribe:');
+    
+    const isShort = body.length < 3000;
+    
+    // Look for rejection/update patterns that should have more content
+    const isUpdateEmail = subject.toLowerCase().includes('update from') ||
+                         body.includes('Your update from');
+    
+    // Missing substantial content indicators
+    const lacksContent = !body.includes('Thank you for your interest') &&
+                        !body.includes('Unfortunately') &&
+                        !body.includes('we will not be moving forward') &&
+                        !body.includes('we regret') &&
+                        !body.includes('position has been filled');
+    
+    const seemsIncomplete = hasFooter && isShort && isUpdateEmail && lacksContent;
+    
+    return seemsIncomplete;
+  }
+
+  /**
+   * Parse RAW MIME email content with boundary parsing and quoted-printable decoding
+   */
+  parseRawMimeContent(rawEmail) {
+    try {
+      this.logWithFile(`🔍 MIME RAW: Starting MIME parsing`);
+      
+      // Split headers from body
+      const emailParts = rawEmail.split(/\r?\n\r?\n/);
+      if (emailParts.length < 2) {
+        return null;
+      }
+      
+      const headers = emailParts[0];
+      const body = emailParts.slice(1).join('\n\n');
+      
+      // Look for Content-Type and boundary in headers
+      const contentTypeMatch = headers.match(/Content-Type:\s*([^;\r\n]+)(?:;\s*boundary=([^\r\n]+))?/i);
+      const boundary = contentTypeMatch && contentTypeMatch[2] ? contentTypeMatch[2].replace(/['"]/g, '') : null;
+      
+      this.logWithFile(`🔍 MIME RAW: Boundary found: ${boundary}`);
+      
+      if (!boundary) {
+        // No boundary, try to decode as single part
+        return this.decodeEmailContent(body, headers);
+      }
+      
+      // Parse multipart content with boundary
+      const boundaryStr = `--${boundary}`;
+      const parts = body.split(boundaryStr);
+      
+      this.logWithFile(`🔍 MIME RAW: Found ${parts.length} parts`);
+      
+      // Find the best text content
+      let bestTextContent = null;
+      let bestHtmlContent = null;
+      
+      for (const part of parts) {
+        if (part.trim().length < 10) continue;
+        
+        // Extract part headers and content
+        const partParts = part.split(/\r?\n\r?\n/);
+        if (partParts.length < 2) continue;
+        
+        const partHeaders = partParts[0];
+        const partContent = partParts.slice(1).join('\n\n');
+        
+        this.logWithFile(`🔍 MIME RAW: Part headers: ${partHeaders.substring(0, 200)}`);
+        
+        if (partHeaders.includes('Content-Type: text/plain')) {
+          const decoded = this.decodeEmailContent(partContent, partHeaders);
+          if (decoded && decoded.body.length > 100) {
+            bestTextContent = decoded;
+            this.logWithFile(`🔍 MIME RAW: Found text/plain content, length: ${decoded.body.length}`);
+          }
+        } else if (partHeaders.includes('Content-Type: text/html')) {
+          const decoded = this.decodeEmailContent(partContent, partHeaders);
+          if (decoded && decoded.body.length > 100) {
+            bestHtmlContent = decoded;
+            this.logWithFile(`🔍 MIME RAW: Found text/html content, length: ${decoded.body.length}`);
+          }
+        }
+      }
+      
+      // Prefer text/plain over text/html
+      const result = bestTextContent || bestHtmlContent;
+      if (result) {
+        this.logWithFile(`🔍 MIME RAW: Selected content preview: ${result.body.substring(0, 200)}`);
+      }
+      
+      return result;
+      
+    } catch (error) {
+      this.logWithFile(`🔍 MIME RAW: Error parsing MIME content: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Decode email content (handles quoted-printable and base64)
+   */
+  decodeEmailContent(content, headers) {
+    try {
+      let decoded = content;
+      
+      // Check for quoted-printable encoding
+      if (headers.includes('quoted-printable')) {
+        this.logWithFile(`🔍 DECODE: Applying quoted-printable decoding`);
+        decoded = this.decodeQuotedPrintable(content);
+      }
+      // Check for base64 encoding
+      else if (headers.includes('base64')) {
+        this.logWithFile(`🔍 DECODE: Applying base64 decoding`);
+        try {
+          decoded = Buffer.from(content.replace(/\s+/g, ''), 'base64').toString('utf-8');
+        } catch (b64Error) {
+          this.logWithFile(`🔍 DECODE: Base64 decode failed: ${b64Error.message}`);
+          decoded = content; // Fallback to original
+        }
+      }
+      
+      // Clean up the content
+      decoded = decoded.trim();
+      
+      // Remove any remaining MIME artifacts
+      decoded = decoded.replace(/^--.*?$/gm, ''); // Remove boundary lines
+      decoded = decoded.replace(/Content-[^:]+:[^\r\n]*[\r\n]*/gi, ''); // Remove Content-* headers
+      decoded = decoded.trim();
+      
+      // For LinkedIn emails, extract only the essential rejection message
+      if (headers.includes('linkedin') || decoded.includes('linkedin')) {
+        decoded = this.extractEssentialRejectionMessage(decoded);
+      }
+      
+      const isHtml = decoded.includes('<html') || decoded.includes('<HTML') || headers.includes('text/html');
+      
+      return {
+        body: decoded,
+        isHtml: isHtml
+      };
+      
+    } catch (error) {
+      this.logWithFile(`🔍 DECODE: Error decoding content: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Extract clean plaintext from email with intelligent LinkedIn handling
+   */
+  extractCleanPlaintext(email) {
+    // Check cache first to avoid re-processing successfully extracted content
+    if (this.extractionCache.has(email.id)) {
+      const cachedResult = this.extractionCache.get(email.id);
+      
+      // Debug logging for cached results
+      if (email.subject && (email.subject.includes('Finezi') || email.subject.includes('Milestone'))) {
+        this.logWithFile(`🔍 CACHE HIT - Subject: ${email.subject.substring(0, 60)}`);
+        this.logWithFile(`🔍 CACHE HIT - Using cached result (length: ${cachedResult.length})`);
+        this.logWithFile(`🔍 CACHE HIT - Content preview: ${cachedResult.substring(0, 200)}`);
+      }
+      
+      return cachedResult;
+    }
+    
+    // Detect LinkedIn rejection emails with truncated content - skip processing to preserve RAW extraction
+    const isLinkedInEmail = (email.from || '').toLowerCase().includes('linkedin');
+    const isApplicationEmail = (email.subject || '').toLowerCase().includes('application') ||
+                              (email.subject || '').toLowerCase().includes('update from') ||
+                              (email.body || '').toLowerCase().includes('your application');
+    const bodyLength = (email.body || '').length;
+    
+    if (isLinkedInEmail && isApplicationEmail && bodyLength < 5000) {
+      // This is likely truncated content - skip processing to preserve RAW extraction results
+      if (email.subject && (email.subject.includes('Finezi') || email.subject.includes('Milestone'))) {
+        this.logWithFile(`🔍 SKIP TRUNCATED - Subject: ${email.subject.substring(0, 60)}`);
+        this.logWithFile(`🔍 SKIP TRUNCATED - Body length: ${bodyLength} (too short, likely truncated)`);
+        this.logWithFile(`🔍 SKIP TRUNCATED - Preserving RAW extraction results`);
+      }
+      
+      // Return the truncated body as-is - this will be overwritten by RAW extraction anyway
+      // The important thing is we don't run the extraction logic that produces dashes
+      return email.body || '';
+    }
+    
+    // Debug logging for LinkedIn emails to understand the flow
+    
+    if (isLinkedInEmail && (email.subject.includes('Finezi') || email.subject.includes('Milestone'))) {
+      this.logWithFile(`🔍 EXTRACT FLOW DEBUG - Subject: ${email.subject}`);
+      this.logWithFile(`🔍 EXTRACT FLOW DEBUG - bodyIsHtml: ${email.bodyIsHtml}`);
+      this.logWithFile(`🔍 EXTRACT FLOW DEBUG - isLinkedInEmail: ${isLinkedInEmail}`);
+      this.logWithFile(`🔍 EXTRACT FLOW DEBUG - isApplicationEmail: ${isApplicationEmail}`);
+      this.logWithFile(`🔍 EXTRACT FLOW DEBUG - Body length: ${email.body ? email.body.length : 0}`);
+    }
+
+    let extractedText = '';
+
+    if (!email.bodyIsHtml) {
+      // Already plain text - but for LinkedIn emails, we still need to extract the essential message
+      if (isLinkedInEmail && isApplicationEmail) {
+        extractedText = this.extractEssentialRejectionMessage(email.body || '');
+        
+        // Debug logging
+        if (email.subject && (email.subject.includes('Finezi') || email.subject.includes('Milestone'))) {
+          this.logWithFile(`🔍 EXTRACT DEBUG (plaintext) - Subject: ${email.subject.substring(0, 60)}`);
+          this.logWithFile(`🔍 EXTRACT DEBUG (plaintext) - Original length: ${(email.body || '').length}`);
+          this.logWithFile(`🔍 EXTRACT DEBUG (plaintext) - Final length: ${extractedText.length}`);
+          this.logWithFile(`🔍 EXTRACT DEBUG (plaintext) - Final content: ${extractedText.substring(0, 300)}`);
+        }
+      } else {
+        extractedText = email.body || '';
+      }
+    } else {
+      // For LinkedIn emails, use intelligent extraction
+      if (isLinkedInEmail && isApplicationEmail) {
+        // First strip HTML tags to get basic text
+        let plaintext = this.stripHtmlTags(email.body);
+        
+        // Then apply LinkedIn-specific extraction
+        extractedText = this.extractEssentialRejectionMessage(plaintext);
+        
+        // Debug logging
+        if (email.subject && (email.subject.includes('Finezi') || email.subject.includes('Milestone'))) {
+          this.logWithFile(`🔍 EXTRACT DEBUG (html) - Subject: ${email.subject.substring(0, 60)}`);
+          this.logWithFile(`🔍 EXTRACT DEBUG (html) - Original length: ${email.body.length}`);
+          this.logWithFile(`🔍 EXTRACT DEBUG (html) - Final length: ${extractedText.length}`);
+          this.logWithFile(`🔍 EXTRACT DEBUG (html) - Final content: ${extractedText.substring(0, 300)}`);
+        }
+      } else {
+        // For non-LinkedIn emails, just strip HTML tags
+        extractedText = this.stripHtmlTags(email.body);
+      }
+    }
+
+    // Cache ALL LinkedIn rejection email extractions (good or bad) to prevent overwriting
+    if (isLinkedInEmail && isApplicationEmail) {
+      this.extractionCache.set(email.id, extractedText);
+      
+      if (email.subject && (email.subject.includes('Finezi') || email.subject.includes('Milestone'))) {
+        this.logWithFile(`🔍 CACHE SET - Cached extraction for ${email.id} (length: ${extractedText.length})`);
+      }
+    }
+
+    return extractedText;
+  }
+
+  /**
+   * Extract only the essential rejection message from LinkedIn emails
+   */
+  extractEssentialRejectionMessage(content) {
+    try {
+      this.logWithFile(`🔍 EXTRACT: Starting LinkedIn RAW rejection message extraction`);
+      this.logWithFile(`🔍 EXTRACT: Input content length: ${content.length}`);
+      
+      // Step 1: Clean up quoted-printable encoding first  
+      let cleaned = content;
+      cleaned = cleaned.replace(/=3D/g, '='); // =3D is '=' in quoted-printable
+      cleaned = cleaned.replace(/=20/g, ' '); // =20 is space in quoted-printable
+      cleaned = cleaned.replace(/=\r?\n/g, ''); // Remove quoted-printable soft line breaks
+      cleaned = cleaned.replace(/&middot;/g, '·'); // HTML entity for middle dot
+      cleaned = cleaned.replace(/&amp;/g, '&'); // HTML entity for ampersand
+      
+      this.logWithFile(`🔍 EXTRACT: Cleaned quoted-printable encoding`);
+      
+      // Step 2: Find the actual rejection message content
+      // Look for patterns that indicate the start of the real message
+      const rejectionPatterns = [
+        /Thank you for your interest in the ([^.]+) position at ([^.]+)\./i,
+        /Thank you for your interest in our ([^.]+) position/i,
+        /Thank you for applying to ([^.]+) at ([^.]+)/i,
+        /We appreciate your interest in the ([^.]+) role/i,
+        /Thank you for your application to ([^.]+)/i
+      ];
+      
+      let messageStart = -1;
+      let messageMatch = null;
+      
+      for (const pattern of rejectionPatterns) {
+        const match = cleaned.match(pattern);
+        if (match) {
+          messageStart = match.index;
+          messageMatch = match;
+          this.logWithFile(`🔍 EXTRACT: Found rejection message start: "${match[0]}"`);
+          break;
+        }
+      }
+      
+      if (messageStart === -1) {
+        this.logWithFile(`🔍 EXTRACT: Could not find rejection message pattern, using fallback`);
+        // Fallback to looking after "Your update from"
+        const fallbackPattern = /Your update from [^.\n]+\.?\s*/i;
+        const fallbackMatch = cleaned.match(fallbackPattern);
+        if (fallbackMatch) {
+          messageStart = fallbackMatch.index + fallbackMatch[0].length;
+          this.logWithFile(`🔍 EXTRACT: Using fallback: content after company header`);
+        } else {
+          // Last resort - find content start with old method
+          const startPattern = /(Your application to|Your update from)\s+([^=\n]+)/i;
+          const startMatch = cleaned.match(startPattern);
+          if (startMatch) {
+            messageStart = startMatch.index;
+            this.logWithFile(`🔍 EXTRACT: Using old method as final fallback`);
+          } else {
+            this.logWithFile(`🔍 EXTRACT: No fallback worked, returning original`);
+            return content;
+          }
+        }
+      }
+      
+      // Step 3: Find where the message ends (before LinkedIn footer)
+      const endPatterns = [
+        /--\s*This email was intended for/i,
+        /--\s*Learn why we included this/i,
+        /Top jobs looking for your skills/i,
+        /LinkedIn Corporation/i,
+        /This email was intended for Andrew Ting/i,
+        /See more jobs/i,
+        /Get the new LinkedIn/i
+      ];
+      
+      let messageEnd = cleaned.length;
+      for (const pattern of endPatterns) {
+        const match = cleaned.match(pattern);
+        if (match && match.index > messageStart) {
+          messageEnd = match.index;
+          this.logWithFile(`🔍 EXTRACT: Found message end: "${match[0].substring(0, 30)}..."`);
+          break;
+        }
+      }
+      
+      // Step 4: Extract the core message
+      let message = cleaned.substring(messageStart, messageEnd);
+      
+      // Step 5: Clean up the extracted message
+      message = message.replace(/^\s*Your update from [^.\n]+\.?\s*/i, ''); // Remove header if still there
+      message = message.replace(/^\s*Your application to [^.\n]+\.?\s*/i, ''); // Remove application header too
+      message = message.replace(/\s+/g, ' '); // Normalize spaces
+      message = message.replace(/^\s*--\s*/gm, ''); // Remove dashes
+      message = message.replace(/<[^>]*>/g, ' '); // Remove any HTML tags
+      message = message.trim();
+      
+      this.logWithFile(`🔍 EXTRACT: Final message length: ${message.length}`);
+      this.logWithFile(`🔍 EXTRACT: Final message preview: ${message.substring(0, 200)}`);
+      
+      // Return the extracted message if it's reasonable, otherwise return original
+      if (message.length > 20) {
+        this.logWithFile(`🔍 EXTRACT: Successfully extracted clean rejection message`);
+        return message;
+      } else {
+        this.logWithFile(`🔍 EXTRACT: Extraction too short, returning original content`);
+        return content;
+      }
+      
+    } catch (error) {
+      this.logWithFile(`🔍 EXTRACT: Error extracting rejection message: ${error.message}`);
+      return content; // Fallback to original
+    }
+  }
+
+  /**
+   * Decode quoted-printable content
+   */
+  decodeQuotedPrintable(input) {
+    if (!input) return '';
+    
+    // Replace =XX with the corresponding character
+    let decoded = input.replace(/=([0-9A-Fa-f]{2})/g, (match, hex) => {
+      return String.fromCharCode(parseInt(hex, 16));
+    });
+    
+    // Handle soft line breaks (= at end of line)
+    decoded = decoded.replace(/=\r?\n/g, '');
+    
+    // Handle remaining = characters
+    decoded = decoded.replace(/=$/gm, '');
+    
+    return decoded;
+  }
+
+  /**
+   * Fetch email in RAW format and extract content
+   */
+  async extractFromRawFormat(messageId) {
+    try {
+      // We need access to the Gmail API client - get it from the Gmail auth
+      const accounts = this.gmailAuth.getAllAccounts();
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No Gmail accounts available');
+      }
+      
+      // Use the first account's OAuth client
+      const account = accounts[0];
+      const oauth2Client = this.gmailAuth.getOAuthClient(account.email);
+      
+      // Import gmail from googleapis
+      const { google } = require('googleapis');
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+      
+      this.logWithFile(`🔍 RAW FALLBACK: Fetching RAW format for message ${messageId}`);
+      
+      // Fetch the message in RAW format
+      const response = await gmail.users.messages.get({
+        userId: 'me',
+        id: messageId,
+        format: 'raw'
+      });
+      
+      const rawData = response.data.raw;
+      if (!rawData) {
+        throw new Error('No RAW data returned from Gmail API');
+      }
+      
+      // Decode the base64url RAW data
+      const rawEmail = Buffer.from(rawData, 'base64url').toString('utf-8');
+      
+      this.logWithFile(`🔍 RAW FALLBACK: Got RAW email, length: ${rawEmail.length}`);
+      this.logWithFile(`🔍 RAW FALLBACK: RAW preview: ${rawEmail.substring(0, 300)}`);
+      
+      // Enhanced MIME parsing for RAW format
+      const extractedContent = this.parseRawMimeContent(rawEmail);
+      
+      if (extractedContent && extractedContent.body && extractedContent.body.length > 100) {
+        this.logWithFile(`🔍 RAW FALLBACK: Successfully extracted content, length: ${extractedContent.body.length}`);
+        this.logWithFile(`🔍 RAW FALLBACK: Extracted content preview: ${extractedContent.body.substring(0, 300)}`);
+        return extractedContent;
+      }
+      
+      // Fallback: Simple RFC822 parsing - look for the body after headers
+      const emailParts = rawEmail.split('\r\n\r\n');
+      if (emailParts.length < 2) {
+        // Try with just \n\n separator
+        const altParts = rawEmail.split('\n\n');
+        if (altParts.length >= 2) {
+          const bodyPart = altParts.slice(1).join('\n\n');
+          return { body: bodyPart.trim(), isHtml: bodyPart.includes('<html') };
+        }
+        throw new Error('Could not separate headers from body in RAW email');
+      }
+      
+      // Get body part (everything after first double newline)
+      const bodyPart = emailParts.slice(1).join('\r\n\r\n');
+      const isHtml = bodyPart.toLowerCase().includes('<html') || bodyPart.toLowerCase().includes('content-type: text/html');
+      
+      this.logWithFile(`🔍 RAW FALLBACK: Extracted body length: ${bodyPart.length}, isHtml: ${isHtml}`);
+      
+      return {
+        body: bodyPart.trim(),
+        isHtml
+      };
+      
+    } catch (error) {
+      this.logWithFile(`🔍 RAW FALLBACK: Error in extractFromRawFormat: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
@@ -772,8 +1669,8 @@ class ClassificationOnlyProcessor {
             account_email,                // 3. account_email
             email.from,                   // 4. from_address
             email.subject,                // 5. subject
-            email.body,                   // 6. plaintext
-            email.bodyIsHtml ? email.body : null,  // 7. body_html
+            this.extractCleanPlaintext(email),  // 6. plaintext (clean text)
+            email.bodyIsHtml ? email.body : null,  // 7. body_html (original HTML)
             emailDate,                    // 8. date_received
             JSON.stringify({              // 9. ml_classification
               model_type: classification.model_type,
@@ -845,6 +1742,171 @@ class ClassificationOnlyProcessor {
         ? results.reduce((sum, r) => sum + r.classification.confidence, 0) / classified 
         : 0
     };
+  }
+
+  /**
+   * Filter out emails that are already processed
+   */
+  filterAlreadyProcessed(emails, account) {
+    const db = this.db;
+    
+    // Get all existing gmail_message_ids for this account
+    const existingIds = db.prepare(`
+      SELECT gmail_message_id 
+      FROM email_pipeline 
+      WHERE account_email = ?
+    `).all(account.email).map(row => row.gmail_message_id);
+    
+    const existingIdsSet = new Set(existingIds);
+    
+    // Filter out emails that already exist in the database
+    const newEmails = [];
+    const skippedEmails = [];
+    
+    emails.forEach(email => {
+      if (existingIdsSet.has(email.id)) {
+        skippedEmails.push(email);
+      } else {
+        newEmails.push(email);
+      }
+    });
+    
+    const skippedCount = skippedEmails.length;
+    
+    // Debug logging for skipped emails
+    this.logWithFile(`🔍 DEBUG: Duplicate filtering - ${newEmails.length} new emails, ${skippedCount} already processed`);
+    
+    // Log LinkedIn/Finezi emails that are being skipped as duplicates
+    const skippedLinkedIn = skippedEmails.filter(email => 
+      email.from?.toLowerCase().includes('linkedin') || 
+      email.subject?.toLowerCase().includes('finezi') ||
+      email.from?.toLowerCase().includes('finezi')
+    );
+    
+    if (skippedLinkedIn.length > 0) {
+      this.logWithFile(`⚠️ WARNING: ${skippedLinkedIn.length} LinkedIn/Finezi emails skipped as duplicates:`);
+      skippedLinkedIn.forEach(email => {
+        const emailInfo = {
+          subject: email.subject?.substring(0, 60),
+          from: email.from?.substring(0, 50),
+          date: email.date,
+          id: email.id
+        };
+        this.logWithFile(`📧 SKIPPED LinkedIn/Finezi: ${JSON.stringify(emailInfo)}`);
+      });
+    }
+    
+    return {
+      newEmails,
+      skippedCount
+    };
+  }
+
+  /**
+   * Convert HTML content to clean plain text with improved LinkedIn email handling
+   */
+  stripHtmlTags(html) {
+    if (!html || typeof html !== 'string') {
+      return '';
+    }
+
+    // Debug logging for LinkedIn emails
+    const isLinkedInEmail = html.includes('This email was intended for') || 
+                           html.includes('linkedin.com') ||
+                           html.toLowerCase().includes('finezi');
+    
+    if (isLinkedInEmail) {
+      this.logWithFile(`🔍 HTML STRIP DEBUG - Input length: ${html.length}`);
+      this.logWithFile(`🔍 HTML STRIP DEBUG - First 300 chars: ${html.substring(0, 300)}`);
+    }
+
+    let text = html
+      // Remove script and style tags and their content
+      .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '')
+      
+      // LinkedIn specific: Try to extract main content before footer sections
+      // Remove LinkedIn tracking pixels and hidden content
+      .replace(/<img[^>]*?1px[^>]*?>/gi, '')
+      .replace(/<div[^>]*?style="[^"]*display\s*:\s*none[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '')
+      
+      // LinkedIn: Remove footer sections that contain unsubscribe/help links
+      .replace(/<div[^>]*?class="[^"]*footer[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '')
+      .replace(/<table[^>]*?class="[^"]*footer[^"]*"[^>]*>[\s\S]*?<\/table>/gi, '')
+      
+      // LinkedIn: Try to preserve main content sections
+      .replace(/<div[^>]*?class="[^"]*content[^"]*"[^>]*>/gi, '\n')
+      .replace(/<div[^>]*?class="[^"]*message[^"]*"[^>]*>/gi, '\n')
+      
+      // Convert common block elements to line breaks
+      .replace(/<\/(div|p|br|h[1-6]|li|tr|td)>/gi, '\n')
+      .replace(/<(br|hr)\s*\/?>/gi, '\n')
+      .replace(/<\/?(p|div|h[1-6]|li|ul|ol)[^>]*>/gi, '\n')
+      
+      // Convert list items to bullet points
+      .replace(/<li[^>]*>/gi, '• ')
+      
+      // Remove all remaining HTML tags
+      .replace(/<[^>]+>/g, ' ')
+      
+      // Decode common HTML entities
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&zwnj;/g, '')  // LinkedIn uses zero-width non-joiner
+      
+      // Clean up whitespace
+      .replace(/\s+/g, ' ')
+      .replace(/\n\s+/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    // LinkedIn specific: If the text is mostly footer/unsubscribe content, 
+    // try to find the actual message content
+    if (text.includes('This email was intended for') && text.includes('Unsubscribe')) {
+      // Try to extract content between header and footer
+      const lines = text.split('\n');
+      const mainContent = [];
+      let inMainSection = false;
+      
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        
+        // Skip empty lines
+        if (!trimmedLine) continue;
+        
+        // Skip LinkedIn footer indicators
+        if (trimmedLine.includes('This email was intended for') ||
+            trimmedLine.includes('Learn why we included this') ||
+            trimmedLine.includes('You are receiving LinkedIn') ||
+            trimmedLine.includes('Unsubscribe:') ||
+            trimmedLine.includes('Help:') ||
+            trimmedLine.includes('LinkedIn Corporation') ||
+            trimmedLine.startsWith('http') && trimmedLine.includes('linkedin.com')) {
+          continue;
+        }
+        
+        // Look for actual content
+        if (trimmedLine.length > 10 && !trimmedLine.match(/^[a-zA-Z0-9\-_]+$/)) {
+          mainContent.push(trimmedLine);
+        }
+      }
+      
+      if (mainContent.length > 0) {
+        return mainContent.join('\n\n');
+      }
+    }
+
+    // Debug logging for LinkedIn emails - show final result
+    if (isLinkedInEmail) {
+      this.logWithFile(`🔍 HTML STRIP DEBUG - Final output length: ${text.length}`);
+      this.logWithFile(`🔍 HTML STRIP DEBUG - Final output: ${text.substring(0, 500)}`);
+    }
+
+    return text;
   }
 
   /**

@@ -286,13 +286,68 @@ class DigestDetector {
   detectDigest(email) {
     const { subject = '', from = '', body = '' } = email;
     
-    // Special check for LinkedIn notifications-noreply - these are NEVER job applications
+    // Define application/rejection patterns first
+    const neverFilterPatterns = [
+      'your application',
+      'application to',
+      'application was',
+      'application has',
+      'application status',
+      'application update',
+      'interview',
+      'offer letter',
+      'thank you for applying',
+      'thank you for your interest',
+      'we received your',
+      'we have received',
+      'regarding your application',
+      'next steps',
+      'assessment',
+      'coding challenge',
+      'technical assessment',
+      'take-home',
+      'background check',
+      'reference check',
+      // Rejection-related patterns
+      'unfortunately',
+      'we regret',
+      'not moving forward',
+      'decided not to',
+      'position has been filled',
+      'other candidates',
+      'we will not be',
+      'application unsuccessful',
+      'not selected',
+      'rejected',
+      'declined',
+      // LinkedIn specific rejection patterns
+      'finezi',  // Company name from user's example
+      'rejection',
+      'thank you for your time',
+      'wish you the best'
+    ];
+    
+    // Special check for LinkedIn notifications-noreply - MOST are digests, but check content first
     if (from.includes('notifications-noreply@linkedin.com')) {
-      return {
-        is_digest: true,
-        reason: 'digest_domain:notifications-noreply@linkedin.com',
-        confidence: 0.99
-      };
+      // First check if it contains application/rejection content
+      const combinedContent = `${subject} ${body}`.toLowerCase();
+      const hasJobContent = neverFilterPatterns.some(pattern => 
+        combinedContent.includes(pattern)
+      );
+      
+      if (hasJobContent) {
+        return {
+          is_digest: false,
+          reason: 'linkedin_notification_with_job_content',
+          confidence: 0.95
+        };
+      } else {
+        return {
+          is_digest: true,
+          reason: 'digest_domain:notifications-noreply@linkedin.com',
+          confidence: 0.99
+        };
+      }
     }
     
     // Special check for Indeed job recommendations - these are ALWAYS digests
@@ -317,34 +372,25 @@ class DigestDetector {
     // Quick subject check for obvious application-related emails
     // These should NEVER be filtered as digests regardless of sender
     const subjectLower = subject.toLowerCase();
-    const neverFilterPatterns = [
-      'your application',
-      'application to',
-      'application was',
-      'application has',
-      'application status',
-      'application update',
-      'interview',
-      'offer letter',
-      'thank you for applying',
-      'thank you for your interest',
-      'we received your',
-      'we have received',
-      'regarding your application',
-      'next steps',
-      'assessment',
-      'coding challenge',
-      'technical assessment',
-      'take-home',
-      'background check',
-      'reference check'
-    ];
     
+    // Check subject line for application/rejection patterns
     for (const phrase of neverFilterPatterns) {
       if (subjectLower.includes(phrase)) {
         return {
           is_digest: false,
           reason: 'application_keyword_in_subject',
+          confidence: 1.0
+        };
+      }
+    }
+    
+    // Also check body content for rejection/application patterns
+    const bodyLower = body.toLowerCase();
+    for (const phrase of neverFilterPatterns) {
+      if (bodyLower.includes(phrase)) {
+        return {
+          is_digest: false,
+          reason: 'application_keyword_in_body',
           confidence: 1.0
         };
       }

@@ -371,44 +371,6 @@ export default function GmailFetchPage() {
                   </Card>
                 )}
 
-                {/* Sync Results */}
-                {syncStats.processed !== undefined && !syncing && (
-                  <Card>
-                    <CardContent sx={{ p: 3 }}>
-                      <Typography variant="h6" sx={{ mb: 2 }}>
-                        Last Sync Results
-                      </Typography>
-                      <Stack spacing={2}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <Typography variant="body2" color="text.secondary">
-                            Emails Processed:
-                          </Typography>
-                          <Typography variant="body2" color="primary.main" sx={{ fontWeight: 600 }}>
-                            {syncStats.processed || 0}
-                          </Typography>
-                        </Box>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <Typography variant="body2" color="text.secondary">
-                            Job Applications Found:
-                          </Typography>
-                          <Typography variant="body2" color="success.main" sx={{ fontWeight: 600 }}>
-                            {syncStats.found || 0}
-                          </Typography>
-                        </Box>
-                        {syncStats.skipped && syncStats.skipped > 0 && (
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <Typography variant="body2" color="text.secondary">
-                              Already Processed:
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                              {syncStats.skipped}
-                            </Typography>
-                          </Box>
-                        )}
-                      </Stack>
-                    </CardContent>
-                  </Card>
-                )}
 
                 {/* Sync History */}
                 <Card sx={{ mt: 3 }}>

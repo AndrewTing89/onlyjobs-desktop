@@ -399,16 +399,42 @@ export default function ExtractionPage() {
           />
           
           <Box sx={{ p: 3, flexGrow: 1 }}>
-            {/* Workflow Stepper */}
-            <Paper sx={{ p: 2, mb: 3 }}>
-              <Stepper activeStep={2} alternativeLabel>
-                {workflowSteps.map((step) => (
-                  <Step key={step.label}>
-                    <StepLabel>{step.label}</StepLabel>
-                  </Step>
-                ))}
-              </Stepper>
-            </Paper>
+            {/* Workflow Progress */}
+            <Card sx={{ mb: 3 }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Email color="primary" />
+                  Workflow
+                </Typography>
+                <Stepper activeStep={2} orientation="horizontal">
+                  {workflowSteps.map((step, index) => (
+                    <Step 
+                      key={step.label} 
+                      completed={index < 2}
+                      sx={{
+                        '& .MuiStepLabel-root': {
+                          ...(index === 2 && {
+                            padding: '8px',
+                            border: '2px solid #FF7043',
+                            borderRadius: '8px',
+                            backgroundColor: 'rgba(255, 112, 67, 0.04)'
+                          })
+                        }
+                      }}
+                    >
+                      <StepLabel>
+                        <Box>
+                          <Typography variant="subtitle2">{step.label}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {step.description}
+                          </Typography>
+                        </Box>
+                      </StepLabel>
+                    </Step>
+                  ))}
+                </Stepper>
+              </CardContent>
+            </Card>
 
             {/* Stats Overview */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
